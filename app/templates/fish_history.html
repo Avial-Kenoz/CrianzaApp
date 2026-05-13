@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Historia de Pez</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+      min-height: 100vh;
+    }
+    header {
+      background: #111827;
+      color: #fff;
+      padding: 16px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 { font-size: 1.1rem; }
+    .meta { font-size: .82rem; opacity: .8; margin-top: 2px; }
+    .back-link {
+      color: #fff;
+      text-decoration: none;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: .85rem;
+    }
+    .container { max-width: 1280px; margin: 0 auto; padding: 20px; }
+    .flash {
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      margin-bottom: 14px;
+      font-weight: 600;
+    }
+    .flash.ok {
+      color: #166534;
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+    }
+    .flash.error {
+      color: #991b1b;
+      background: #fff1f2;
+      border: 1px solid #fca5a5;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 12px 14px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+    }
+    .label { font-size: .72rem; text-transform: uppercase; color: #6b7280; font-weight: 600; }
+    .value { margin-top: 4px; font-weight: 700; font-size: 1rem; }
+    .pit-edit-wrap { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+    .pit-display { font-weight: 700; font-size: 1rem; }
+    .edit-btn {
+      background: none; border: none; cursor: pointer; color: #6b7280; padding: 2px 4px;
+      border-radius: 4px; font-size: .85rem; line-height: 1;
+    }
+    .edit-btn:hover { color: #1d4ed8; background: #eff6ff; }
+    .pit-edit-form { display: none; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+    .pit-edit-form input {
+      border: 1.5px solid #d1d5db; border-radius: 6px; padding: 4px 8px;
+      font-size: .9rem; width: 180px; font-family: inherit;
+    }
+    .pit-edit-form input:focus { outline: none; border-color: #1d4ed8; }
+    .save-btn {
+      background: #1d4ed8; color: #fff; border: none; border-radius: 6px;
+      padding: 5px 12px; font-size: .82rem; cursor: pointer;
+    }
+    .save-btn:hover { background: #1e40af; }
+    .cancel-btn {
+      background: none; color: #6b7280; border: 1px solid #d1d5db; border-radius: 6px;
+      padding: 4px 10px; font-size: .82rem; cursor: pointer;
+    }
+    .cancel-btn:hover { background: #f3f4f6; }
+    .pit-error { color: #dc2626; font-size: .78rem; width: 100%; margin-top: 2px; }
+    .notes-section {
+      background: #fff;
+      border-radius: 10px;
+      padding: 12px 14px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      margin-bottom: 18px;
+    }
+    .notes-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .notes-display { font-size: .9rem; color: #374151; white-space: pre-wrap; min-height: 20px; }
+    #notes-input {
+      width: 100%; border: 1.5px solid #d1d5db; border-radius: 6px;
+      padding: 6px 10px; font-size: .9rem; font-family: inherit;
+      resize: vertical;
+    }
+    #notes-input:focus { outline: none; border-color: #1d4ed8; }
+    .notes-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .notes-header .sampling-title { margin: 0; }
+    #notes-form { display: none; }
+    .pit-uppercase { text-transform: uppercase; }
+    .notes-empty { color: #9ca3af; font-style: italic; }
+    /* also hide notes-display when editing */
+    #notes-form:not([style*="none"]) ~ #notes-display { display: none; }
+    .pit-lock-note { margin-top: 6px; font-size: .78rem; color: #92400e; }
+    .drug-section {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 8px rgba(0,0,0,.08);
+      padding: 14px;
+      margin-bottom: 18px;
+    }
+    .drug-table-wrap { overflow-x: auto; }
+    .drug-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .88rem;
+      margin-top: 8px;
+    }
+    .drug-table th,
+    .drug-table td {
+      border-bottom: 1px solid #eef2f7;
+      padding: 8px 10px;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .drug-table th {
+      text-transform: uppercase;
+      letter-spacing: .4px;
+      color: #6b7280;
+      font-size: .72rem;
+    }
+    .drug-table tbody tr:last-child td { border-bottom: none; }
+    .drug-add-row input {
+      width: 100%;
+      border: 1.5px solid #d1d5db;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: .85rem;
+      font-family: inherit;
+      min-width: 110px;
+    }
+    .drug-add-row input:focus { outline: none; border-color: #1d4ed8; }
+    .drug-add-row button {
+      border: none;
+      border-radius: 6px;
+      background: #1d4ed8;
+      color: #fff;
+      font-weight: 600;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .drug-add-row button:hover { background: #1e40af; }
+    .drug-add-actions { display: flex; gap: 8px; align-items: center; }
+    .drug-warning {
+      margin-bottom: 8px;
+      border: 1px solid #fcd34d;
+      background: #fffbeb;
+      color: #92400e;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: .82rem;
+      font-weight: 600;
+    }
+    .sampling-section {
+      margin-bottom: 18px;
+    }
+    .sampling-title {
+      font-size: .75rem;
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: .5px;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+    .sampling-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
+    }
+    .s-card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      border-left: 3px solid #6366f1;
+    }
+    .timeline {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 8px rgba(0,0,0,.08);
+      overflow: hidden;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 190px 150px 1fr;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid #eef2f7;
+      align-items: center;
+      font-size: .9rem;
+    }
+    .row:last-child { border-bottom: none; }
+    .time { color: #374151; font-variant-numeric: tabular-nums; }
+    .type {
+      font-weight: 700;
+      color: #1d4ed8;
+      text-transform: uppercase;
+      font-size: .73rem;
+      letter-spacing: .4px;
+    }
+    .detail { color: #111827; }
+    .empty { padding: 28px; text-align: center; color: #9ca3af; }
+    @media (max-width: 760px) {
+      .row { grid-template-columns: 1fr; gap: 6px; }
+      .type { margin-top: -2px; }
+    }
+  </style>
+</head>
+<body>
+  {% include '_sidebar.html' %}
+
+  <header>
+    <div>
+      <h1>Historia del pez <span id="header-pit">{{ fish.internal_id or 'N/D' }}</span></h1>
+      <div class="meta">Cronologia desde primer registro</div>
+    </div>
+    <a class="back-link" href="javascript:history.back()">Volver</a>
+  </header>
+
+  <div class="container">
+    {% if msg %}
+    <div class="flash {{ 'ok' if status == 'ok' else 'error' }}">{{ msg }}</div>
+    {% endif %}
+
+    <div class="summary">
+      <div class="card">
+        <div class="label">PIT tag</div>
+        <div class="pit-edit-wrap" id="pit-edit-wrap">
+          <span class="pit-display" id="pit-display">{{ fish.internal_id or 'N/D' }}</span>
+          {% if fish.can_edit_internal_id %}
+          <button class="edit-btn" id="pit-edit-btn" title="Editar PIT tag" onclick="showPitEdit()">✏️</button>
+          {% endif %}
+        </div>
+        {% if not fish.can_edit_internal_id %}
+        <div class="pit-lock-note">PIT tag bloqueado por registro de fármacos (sufijo _R).</div>
+        {% endif %}
+        {% if fish.can_edit_internal_id %}
+        <div class="pit-edit-form" id="pit-edit-form">
+          <input type="text" id="pit-input" value="{{ fish.internal_id or '' }}" maxlength="120" class="pit-uppercase" oninput="this.value=this.value.toUpperCase()" />
+          <button class="save-btn" onclick="savePitTag()">Guardar</button>
+          <button class="cancel-btn" onclick="cancelPitEdit()">Cancelar</button>
+          <span class="pit-error" id="pit-error"></span>
+        </div>
+        {% endif %}
+      </div>
+      <div class="card">
+        <div class="label">Lote</div>
+        <div class="value">{{ fish.lot_name or fish.lot or 'N/D' }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Sexo</div>
+        <div class="value">{{ fish.sex_display or 'N/D' }}</div>
+      </div>
+      <div class="card">
+        <div class="label">PIT tag secundario</div>
+        <div class="pit-edit-wrap" id="sec-pit-wrap">
+          <span class="pit-display" id="sec-pit-display">{{ fish.secondary_internal_id or '—' }}</span>
+          <button class="edit-btn" title="Editar PIT tag secundario" onclick="showSecPitEdit()">✏️</button>
+        </div>
+        <div class="pit-edit-form" id="sec-pit-form">
+          <input type="text" id="sec-pit-input" value="{{ fish.secondary_internal_id or '' }}" maxlength="120" class="pit-uppercase" oninput="this.value=this.value.toUpperCase()" placeholder="Vacío para borrar" />
+          <button class="save-btn" onclick="saveSecPitTag()">Guardar</button>
+          <button class="cancel-btn" onclick="cancelSecPitEdit()">Cancelar</button>
+          <span class="pit-error" id="sec-pit-error"></span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="label">Estanque actual</div>
+        <div class="value">{{ current_pond or 'N/D' }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Estado</div>
+        <div class="value">{{ fish.state or 'N/D' }}</div>
+      </div>
+    </div>
+
+    <div class="drug-section">
+      <div class="sampling-title">Uso de fármacos</div>
+      {% if fish.needs_drug_log %}
+      <div class="drug-warning">Este pez tiene sufijo _R pero no tiene registros de fármacos. Cargar al menos un registro para completar trazabilidad.</div>
+      {% endif %}
+      <div class="drug-table-wrap">
+        <table class="drug-table">
+          <thead>
+            <tr>
+              <th>Fármaco</th>
+              <th>Dosis</th>
+              <th>Fecha</th>
+              <th>Carencia</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if drug_uses %}
+            {% for du in drug_uses %}
+            <tr>
+              <td>{{ du.drug_name }}</td>
+              <td>{{ du.dose }}</td>
+              <td>{{ du.date }}</td>
+              <td>{{ du.withdrawal_period }}</td>
+            </tr>
+            {% endfor %}
+            {% else %}
+            <tr>
+              <td colspan="4" class="empty">Sin registros de fármacos.</td>
+            </tr>
+            {% endif %}
+            <tr class="drug-add-row">
+              <td>
+                <form id="drug-use-form" method="post" action="/views/ui/fish/{{ fish.id }}/drug-use"></form>
+                <input type="text" name="drug_name" placeholder="Nombre" form="drug-use-form" required />
+              </td>
+              <td><input type="text" name="dose" placeholder="Ej: 0.5 ml/kg" form="drug-use-form" required /></td>
+              <td><input type="date" name="application_date" title="Fecha de aplicación" form="drug-use-form" required /></td>
+              <td>
+                <div class="drug-add-actions">
+                  <input type="text" name="withdrawal_period" placeholder="Ej: 30 días" form="drug-use-form" required />
+                  <button type="submit" form="drug-use-form">Agregar</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="notes-section">
+      <div class="notes-header">
+        <span class="sampling-title">Notas</span>
+        <button class="edit-btn" id="notes-edit-btn" onclick="showNotesEdit()" title="Editar notas">✏️</button>
+      </div>
+      <div id="notes-display" class="notes-display">{{ fish.notes or '<em class="notes-empty">Sin notas</em>' }}</div>
+      <div id="notes-form">
+        <textarea id="notes-input" rows="3">{{ fish.notes or '' }}</textarea>
+        <div class="notes-actions">
+          <button class="save-btn" onclick="saveNotes()">Guardar</button>
+          <button class="cancel-btn" onclick="cancelNotesEdit()">Cancelar</button>
+          <span class="pit-error" id="notes-error"></span>
+        </div>
+      </div>
+    </div>
+
+    {% if last_sampling %}
+    <div class="sampling-section">
+      <div class="sampling-title">Último muestreo{% if last_sampling.date %} — {{ last_sampling.date }}{% endif %}</div>
+      <div class="sampling-grid">
+        <div class="s-card"><div class="label">Peso (g)</div><div class="value">{{ last_sampling.weight or 'N/D' }}</div></div>
+        <div class="s-card"><div class="label">Largo (cm)</div><div class="value">{{ last_sampling.length or 'N/D' }}</div></div>
+        <div class="s-card"><div class="label">Factor K</div><div class="value">{{ last_sampling.k or 'N/D' }}</div></div>
+        <div class="s-card"><div class="label">Estado desarrollo</div><div class="value">{{ last_sampling.development_state or 'N/D' }}</div></div>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="timeline">
+      {% if events %}
+      {% for e in events %}
+      <div class="row">
+        <div class="time">{{ e.time }}</div>
+        <div class="type">{{ e.type }}</div>
+        <div class="detail">{{ e.detail }}</div>
+      </div>
+      {% endfor %}
+      {% else %}
+      <div class="empty">No hay eventos para este pez.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <script>
+    const FISH_ID = Number("{{ fish.id }}");
+
+    function showPitEdit() {
+      const wrap = document.getElementById('pit-edit-wrap');
+      const form = document.getElementById('pit-edit-form');
+      if (!wrap || !form) return;
+      wrap.style.display = 'none';
+      form.style.display = 'flex';
+      const inp = document.getElementById('pit-input');
+      inp.focus();
+      inp.select();
+    }
+
+    function cancelPitEdit() {
+      const wrap = document.getElementById('pit-edit-wrap');
+      const form = document.getElementById('pit-edit-form');
+      const err = document.getElementById('pit-error');
+      if (wrap) wrap.style.display = 'flex';
+      if (form) form.style.display = 'none';
+      if (err) err.textContent = '';
+    }
+
+    async function savePitTag() {
+      const inp = document.getElementById('pit-input');
+      const val = inp.value.trim();
+      const errEl = document.getElementById('pit-error');
+      errEl.textContent = '';
+      if (!val) { errEl.textContent = 'No puede estar vacío'; return; }
+
+      const form = new FormData();
+      form.append('new_internal_id', val);
+
+      const resp = await fetch(`/views/ui/fish/${FISH_ID}/edit-internal-id`, {
+        method: 'POST',
+        body: form
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        document.getElementById('pit-display').textContent = data.internal_id;
+        document.getElementById('header-pit').textContent = data.internal_id;
+        cancelPitEdit();
+      } else {
+        errEl.textContent = data.error || 'Error al guardar';
+      }
+    }
+
+    const pitInputEl = document.getElementById('pit-input');
+    if (pitInputEl) {
+      pitInputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); savePitTag(); }
+        if (e.key === 'Escape') cancelPitEdit();
+      });
+    }
+
+    // ── Secondary PIT tag ──
+    function showSecPitEdit() {
+      document.getElementById('sec-pit-wrap').style.display = 'none';
+      document.getElementById('sec-pit-form').style.display = 'flex';
+      const inp = document.getElementById('sec-pit-input');
+      inp.focus(); inp.select();
+    }
+    function cancelSecPitEdit() {
+      document.getElementById('sec-pit-wrap').style.display = 'flex';
+      document.getElementById('sec-pit-form').style.display = 'none';
+      document.getElementById('sec-pit-error').textContent = '';
+    }
+    async function saveSecPitTag() {
+      const inp = document.getElementById('sec-pit-input');
+      const val = inp.value.trim();
+      const errEl = document.getElementById('sec-pit-error');
+      errEl.textContent = '';
+      const form = new FormData();
+      form.append('new_secondary_internal_id', val);
+      const resp = await fetch(`/views/ui/fish/${FISH_ID}/edit-secondary-internal-id`, { method: 'POST', body: form });
+      const data = await resp.json();
+      if (data.ok) {
+        document.getElementById('sec-pit-display').textContent = data.secondary_internal_id || '—';
+        cancelSecPitEdit();
+      } else {
+        errEl.textContent = data.error || 'Error al guardar';
+      }
+    }
+    document.getElementById('sec-pit-input').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); saveSecPitTag(); }
+      if (e.key === 'Escape') cancelSecPitEdit();
+    });
+
+    // ── Notes ──
+    function showNotesEdit() {
+      document.getElementById('notes-display').style.display = 'none';
+      document.getElementById('notes-edit-btn').style.display = 'none';
+      document.getElementById('notes-form').style.display = 'block';
+      document.getElementById('notes-input').focus();
+    }
+    function cancelNotesEdit() {
+      document.getElementById('notes-display').style.display = '';
+      document.getElementById('notes-edit-btn').style.display = '';
+      document.getElementById('notes-form').style.display = 'none';
+      document.getElementById('notes-error').textContent = '';
+    }
+    async function saveNotes() {
+      const val = document.getElementById('notes-input').value.trim();
+      const errEl = document.getElementById('notes-error');
+      errEl.textContent = '';
+      const form = new FormData();
+      form.append('notes', val);
+      const resp = await fetch(`/views/ui/fish/${FISH_ID}/edit-notes`, { method: 'POST', body: form });
+      const data = await resp.json();
+      if (data.ok) {
+        const display = document.getElementById('notes-display');
+        display.innerHTML = data.notes ? data.notes.replace(/\n/g,'<br>') : '<em style="color:#9ca3af">Sin notas</em>';
+        cancelNotesEdit();
+      } else {
+        errEl.textContent = data.error || 'Error al guardar';
+      }
+    }
+  </script>
+
+</div><!-- /.main-content -->
+</div><!-- /.app-shell -->
+</body>
+</html>

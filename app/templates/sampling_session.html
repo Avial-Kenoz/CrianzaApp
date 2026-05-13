@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Muestreo Rutinario – {{ session.pond_name }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title-wrap h1 { font-size: 1.2rem; font-weight: 700; }
+    .title-wrap p { font-size: .82rem; opacity: .7; margin-top: 2px; }
+    .back-link {
+      color: #fff;
+      text-decoration: none;
+      font-size: .85rem;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 8px;
+      padding: 6px 10px;
+    }
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+    }
+    .card .label {
+      font-size: .72rem;
+      color: #6b7280;
+      text-transform: uppercase;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .card .value { font-size: 1.3rem; font-weight: 700; }
+    .card .sub { font-size: .78rem; color: #6b7280; margin-top: 2px; }
+
+    /* Flash */
+    .flash {
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: .88rem;
+      font-weight: 500;
+      margin-bottom: 16px;
+    }
+    .flash.ok   { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+    .flash.error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    .flash.info  { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+    .closed-banner {
+      background: #fef9c3; color: #92400e;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: .88rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+      display:flex; align-items:center; gap:8px;
+    }
+    .lot-stats-wrap {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      overflow: hidden;
+      margin-top: 20px;
+    }
+    .lot-stats-title {
+      padding: 12px 16px;
+      font-size: .82rem;
+      font-weight: 700;
+      color: #374151;
+      background: #f8fafc;
+      border-bottom: 1px solid #e5e7eb;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .btn-close-session {
+      background: #dc2626; color: #fff;
+      border: none; border-radius: 8px;
+      padding: 8px 16px; font-size: .85rem;
+      font-weight: 700; cursor: pointer;
+    }
+    .btn-close-session:hover { background: #b91c1c; }
+
+    /* Tabla */
+    .table-wrap {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      overflow: hidden;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .85rem;
+    }
+    thead th {
+      background: #f8fafc;
+      padding: 10px 10px;
+      text-align: left;
+      font-weight: 600;
+      font-size: .78rem;
+      color: #6b7280;
+      text-transform: uppercase;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    tbody tr { border-bottom: 1px solid #f1f5f9; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #fafbfc; }
+
+    /* Fila de ingreso (sticky under header) */
+    .input-row td {
+      background: #eff6ff;
+      border-bottom: 2px solid #bfdbfe;
+      padding: 8px 6px;
+      vertical-align: middle;
+    }
+    .data-row td { padding: 8px 10px; vertical-align: middle; }
+    .data-row.editing td { background: #fefce8; }
+
+    input[type=text], input[type=number], select, textarea {
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      padding: 5px 7px;
+      font-size: .85rem;
+      width: 100%;
+      outline: none;
+    }
+    input[type=text]:focus, input[type=number]:focus, select:focus {
+      border-color: #6366f1;
+      box-shadow: 0 0 0 2px rgba(99,102,241,.15);
+    }
+
+    .btn {
+      border: none;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: .82rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-primary { background: #6366f1; color: #fff; }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-save { background: #16a34a; color: #fff; }
+    .btn-save:hover { background: #15803d; }
+    .btn-edit { background: #f59e0b; color: #fff; }
+    .btn-edit:hover { background: #d97706; }
+    .btn-cancel { background: #6b7280; color: #fff; font-size: .78rem; }
+    .btn-cancel:hover { background: #4b5563; }
+
+    .header-actions { display: flex; gap: 8px; align-items: center; }
+    .session-closed-pill { font-size: .82rem; color: #fde68a; font-weight: 600; }
+    .card-highlight { border-left: 4px solid #16a34a; }
+    .value-highlight { color: #16a34a; }
+    .th-w130 { width: 130px; }
+    .th-w90 { width: 90px; }
+    .th-w140 { width: 140px; }
+    .th-w110 { width: 110px; }
+    .lot-display-auto { font-size: .82rem; color: #6b7280; }
+    .pit-muted { color: #9ca3af; font-size: .78rem; }
+    .edit-mode-hidden { display: none; }
+    .edit-form-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .edit-pill-pit { font-size: .82rem; color: #6b7280; min-width: 80px; }
+    .edit-pill-lot { font-size: .82rem; color: #6b7280; min-width: 60px; }
+    .empty-state-row { text-align: center; color: #9ca3af; padding: 24px; font-size: .88rem; }
+
+    .pit-input { width: 130px !important; }
+    .weight-input, .length-input { width: 90px !important; }
+    .lot-select { width: 100px !important; }
+    .notes-input { width: 140px !important; }
+    .actions-cell { white-space: nowrap; }
+
+    .badge-pct {
+      display: inline-block;
+      font-size: .75rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 12px;
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+
+    .date-info {
+      font-size: .82rem;
+      color: #6b7280;
+      margin-bottom: 16px;
+    }
+    .date-info span { font-weight: 600; color: #1a1a2e; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="title-wrap">
+    <h1>Muestreo Rutinario — {{ session.pond_name }}{% if session.pond_internal_id %} ({{ session.pond_internal_id }}){% endif %}</h1>
+    <p>Sesión #{{ session.id }}</p>
+  </div>
+  <div class="header-actions">
+    {% if not session.is_closed %}
+    <form method="post" action="/views/ui/sampling/{{ session.id }}/close"
+          onsubmit="return confirm('¿Cerrar esta sesión de muestreo? Se recalculará la biomasa del estanque.')">
+      <button type="submit" class="btn-close-session">✓ Cerrar sesión</button>
+    </form>
+    {% else %}
+    <span class="session-closed-pill">✔ Sesión cerrada</span>
+    {% endif %}
+    <a class="back-link" href="/views/ui/ponds/{{ session.pond_id }}">← Volver al estanque</a>
+  </div>
+</header>
+
+<div class="container">
+
+  <p class="date-info">Fecha de muestreo: <span>{{ session.registry_date }}</span></p>
+
+  {% if session.is_closed %}
+  <div class="closed-banner">🔒 Sesión cerrada el {{ session.closed_at[:10] if session.closed_at else '' }} — biomasa del estanque actualizada.</div>
+  {% endif %}
+
+  {% if status and msg %}
+  <div class="flash {{ 'ok' if status == 'ok' else ('info' if status == 'info' else 'error') }}">{{ msg }}</div>
+  {% endif %}
+
+  <!-- Tarjetas resumen -->
+  <div class="stats">
+    <div class="card">
+      <div class="label">Peces muestreados</div>
+      <div class="value">{{ stats.count }}</div>
+      <div class="sub">de {{ stats.total_population }} en el estanque</div>
+    </div>
+    <div class="card">
+      <div class="label">Cobertura</div>
+      <div class="value">{{ stats.pct_sampled }}%</div>
+      <div class="sub">
+        <span class="badge-pct">{{ stats.count }}/{{ stats.total_population }}</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">Peso promedio</div>
+      <div class="value">{% if stats.avg_weight_g %}{{ stats.avg_weight_g }} g{% else %}—{% endif %}</div>
+      <div class="sub">en esta sesión</div>
+    </div>
+    <div class="card">
+      <div class="label">Biomasa estimada</div>
+      <div class="value">{% if stats.estimated_biomass_kg %}{{ stats.estimated_biomass_kg }} kg{% else %}—{% endif %}</div>
+      <div class="sub">esta sesión (prom × pob.)</div>
+    </div>
+    {% if stats.pond_biomass_kg %}
+    <div class="card card-highlight">
+      <div class="label">Biomasa estanque</div>
+      <div class="value value-highlight">{{ stats.pond_biomass_kg }} kg</div>
+      <div class="sub">actualizada al cierre · {{ stats.pond_avg_weight_g }} g prom.</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Tabla de registros -->
+  <div class="table-wrap">
+    <table id="sampling-table">
+      <thead>
+        <tr>
+          <th class="th-w130">PIT Tag</th>
+          <th class="th-w90">Lote</th>
+          <th class="th-w90">Peso (g)</th>
+          <th class="th-w90">Long. (mm)</th>
+          <th class="th-w140">Notas</th>
+          <th class="th-w110">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+
+        <!-- ── FILA DE INGRESO (solo si sesión abierta) ── -->
+        {% if not session.is_closed %}
+        <tr class="input-row">
+          <form method="post" action="/views/ui/sampling/{{ session.id }}/records" id="add-record-form">
+          <td>
+            <input
+              id="pit-input"
+              class="pit-input"
+              type="text"
+              name="pit_tag"
+              placeholder="PIT tag (opcional)"
+              inputmode="text"
+              spellcheck="false"
+              autocomplete="off"
+              list="pit-options"
+            />
+            <datalist id="pit-options">
+              {% for f in fish_options %}
+              <option value="{{ f.pit }}"></option>
+              {% endfor %}
+            </datalist>
+          </td>
+          <td>
+            <span id="lot-display" class="lot-display-auto">auto</span>
+          </td>
+          <td>
+            <input
+              id="weight-input"
+              class="weight-input"
+              type="number"
+              name="weight"
+              min="0.001"
+              step="0.001"
+              placeholder="g"
+            />
+          </td>
+          <td>
+            <input
+              id="length-input"
+              class="length-input"
+              type="number"
+              name="length"
+              min="0.1"
+              step="0.1"
+              placeholder="mm"
+            />
+          </td>
+          <td>
+            <input class="notes-input" type="text" name="notes" placeholder="Notas (opcional)" />
+          </td>
+          <td class="actions-cell">
+            <button type="submit" class="btn btn-primary">+ Agregar</button>
+          </td>
+          </form>
+        </tr>
+        {% endif %}
+
+        <!-- ── FILAS EXISTENTES ── -->
+        {% for r in records %}
+        <tr class="data-row" id="row-{{ r.id }}">
+
+          <!-- Vista normal -->
+          <td class="view-mode">{{ r.pit if r.pit else '<span class="pit-muted">sin PIT</span>'|safe }}</td>
+          <td class="view-mode">{{ r.lot_label }}</td>
+          <td class="view-mode">{% if r.weight is not none %}{{ '%.1f'|format(r.weight) }}{% else %}—{% endif %}</td>
+          <td class="view-mode">{% if r.length is not none %}{{ '%.1f'|format(r.length) }}{% else %}—{% endif %}</td>
+          <td class="view-mode">{{ r.notes if r.notes else '' }}</td>
+          <td class="view-mode actions-cell">
+            {% if not session.is_closed %}
+            <button type="button" class="btn btn-edit" onclick="startEdit({{ r.id }})">Editar</button>
+            {% endif %}
+          </td>
+
+          <!-- Modo edición (hidden por defecto) -->
+            <td class="edit-mode edit-mode-hidden" colspan="6">
+            <form method="post" action="/views/ui/sampling/{{ session.id }}/records/{{ r.id }}/edit"
+                class="edit-form-inline">
+              <input type="hidden" name="pit_display" value="{{ r.pit }}" />
+              <span class="edit-pill-pit">{{ r.pit if r.pit else 'sin PIT' }}</span>
+              <span class="edit-pill-lot">{{ r.lot_label }}</span>
+              <input class="weight-input" type="number" name="weight"
+                     min="0.001" step="0.001" placeholder="g"
+                     value="{{ '%.3f'|format(r.weight) if r.weight is not none else '' }}" />
+              <input class="length-input" type="number" name="length"
+                     min="0.1" step="0.1" placeholder="mm"
+                     value="{{ '%.1f'|format(r.length) if r.length is not none else '' }}" />
+              <input class="notes-input" type="text" name="notes"
+                     placeholder="Notas"
+                     value="{{ r.notes if r.notes else '' }}" />
+              <button type="submit" class="btn btn-save">Guardar</button>
+              <button type="button" class="btn btn-cancel" onclick="cancelEdit({{ r.id }})">Cancelar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+
+        {% if not records %}
+        <tr>
+          <td colspan="6" class="empty-state-row">
+            Aún no hay registros. Ingresa el primer pez arriba.
+          </td>
+        </tr>
+        {% endif %}
+
+      </tbody>
+    </table>
+  </div><!-- /.table-wrap -->
+
+  <!-- Tabla pond_lot_stats (visible si hay datos) -->
+  {% if lot_stats %}
+  <div class="lot-stats-wrap">
+    <div class="lot-stats-title">📊 Estadísticas por lote (pond_lot_stats)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Lote</th>
+          <th>N muestreado (sin PIT)</th>
+          <th>Peso prom (g)</th>
+          <th>Long. prom (mm)</th>
+          <th>Factor K</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in lot_stats %}
+        <tr>
+          <td>{{ s.lot_label }}</td>
+          <td>{{ s.n_sampled }}</td>
+          <td>{% if s.avg_weight %}{{ '%.1f'|format(s.avg_weight) }}{% else %}—{% endif %}</td>
+          <td>{% if s.avg_length %}{{ '%.1f'|format(s.avg_length) }}{% else %}—{% endif %}</td>
+          <td>{% if s.condition_k %}{{ '%.4f'|format(s.condition_k) }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+</div><!-- /.container -->
+
+<script>
+  const pitInput = document.getElementById('pit-input');
+  const lotDisplay = document.getElementById('lot-display');
+
+  // Mapa PIT → etiqueta de lote para mostrar en UI (solo informativo)
+  const pitToLot = {
+    {% for f in fish_options %}
+    "{{ f.pit }}": "{{ f.pit }}",
+    {% endfor %}
+  };
+  // Lote del estanque (peces sin PIT)
+  const pondLotLabel = "{{ lot_options[0].label if lot_options|length == 1 else ('multi' if lot_options|length > 1 else '—') }}";
+
+  if (pitInput) {
+    pitInput.addEventListener('input', function () {
+      const val = this.value.trim().toUpperCase();
+      this.value = val;
+      if (lotDisplay) {
+        lotDisplay.textContent = val ? 'por PIT' : pondLotLabel;
+      }
+    });
+    pitInput.addEventListener('change', function () {
+      this.value = this.value.trim().toUpperCase();
+    });
+  }
+
+  // Al hacer Enter en peso → salta a longitud
+  const weightInput = document.getElementById('weight-input');
+  const lengthInput = document.getElementById('length-input');
+  if (weightInput && lengthInput) {
+    weightInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); lengthInput.focus(); }
+    });
+    lengthInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('add-record-form').submit();
+      }
+    });
+  }
+
+  function startEdit(id) {
+    const row = document.getElementById('row-' + id);
+    row.querySelectorAll('.view-mode').forEach(el => el.style.display = 'none');
+    row.querySelectorAll('.edit-mode').forEach(el => el.style.display = '');
+    row.classList.add('editing');
+  }
+
+  function cancelEdit(id) {
+    const row = document.getElementById('row-' + id);
+    row.querySelectorAll('.view-mode').forEach(el => el.style.display = '');
+    row.querySelectorAll('.edit-mode').forEach(el => el.style.display = 'none');
+    row.classList.remove('editing');
+  }
+
+  // Foco automático en el campo PIT al cargar
+  window.addEventListener('load', function () {
+    if (pitInput) pitInput.focus();
+  });
+</script>
+
+</body>
+</html>

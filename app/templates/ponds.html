@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Estanques – Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #111827;
+      color: #fff;
+      padding: 16px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: 0; }
+    header span { font-size: .85rem; opacity: .6; }
+
+    /* ── Layout ── */
+    .container { max-width: none; margin: 0; padding: 12px 10px 14px; }
+
+    /* ── Filter bar ── */
+    .filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+    .filter-bar label { font-size: .85rem; font-weight: 600; color: #555; }
+    .filter-bar select, .filter-bar input {
+      padding: 8px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: .9rem;
+      background: #fff;
+      cursor: pointer;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .filter-bar select:focus, .filter-bar input:focus { border-color: #4f8ef7; }
+    .badge-total {
+      margin-left: auto;
+      background: #e8f0fe;
+      color: #1967d2;
+      font-size: .8rem;
+      font-weight: 700;
+      padding: 5px 12px;
+      border-radius: 20px;
+    }
+    .flash {
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+    .flash.ok {
+      color: #166534;
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+    }
+    .flash.error {
+      color: #991b1b;
+      background: #fff1f2;
+      border: 1px solid #fca5a5;
+    }
+    .todo-banner {
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 16px;
+      font-size: .88rem;
+      font-weight: 600;
+      color: #92400e;
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .todo-banner a {
+      text-decoration: none;
+      background: #f59e0b;
+      color: #fff;
+      border-radius: 8px;
+      font-size: .8rem;
+      font-weight: 700;
+      padding: 6px 10px;
+    }
+    .todo-banner a:hover { background: #d97706; }
+
+    /* ── Stats summary ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .stat-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 18px 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    .stat-card .label { font-size: .75rem; font-weight: 600; text-transform: uppercase; color: #888; margin-bottom: 6px; }
+    .stat-card .value { font-size: 1.6rem; font-weight: 700; color: #1a1a2e; }
+    .stat-card .unit  { font-size: .8rem; color: #aaa; }
+
+    /* ── Table ── */
+    .table-wrap {
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.09);
+      overflow-x: auto;
+      overflow-y: auto;
+      max-height: calc(100vh - 220px);
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead { background: #1a1a2e; color: #fff; position: sticky; top: 0; z-index: 3; }
+    thead th {
+      padding: 13px 16px;
+      font-size: .78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      text-align: left;
+      cursor: pointer;
+      -webkit-user-select: none;
+      user-select: none;
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      background: #1a1a2e;
+    }
+    thead th:hover { background: #2e2e4e; }
+    thead th.sort-asc::after  { content: " ▲"; opacity: .7; }
+    thead th.sort-desc::after { content: " ▼"; opacity: .7; }
+
+    tbody tr { border-bottom: 1px solid #f0f2f5; transition: background .15s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f7f9ff; }
+    tbody td { padding: 13px 16px; font-size: .88rem; vertical-align: middle; }
+
+    .pond-name { font-weight: 600; }
+    .pond-link { color: #1d4ed8; text-decoration: none; }
+    .pond-link:hover { text-decoration: underline; }
+    .pond-code { font-size: .78rem; color: #888; margin-top: 2px; }
+    .edit-link {
+      display: inline-block;
+      text-decoration: none;
+      border: 1px solid #c7d2fe;
+      color: #3730a3;
+      background: #eef2ff;
+      border-radius: 8px;
+      font-size: .78rem;
+      font-weight: 700;
+      padding: 6px 10px;
+    }
+    .edit-link:hover { background: #e0e7ff; }
+
+    /* Estado badge */
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: .75rem;
+      font-weight: 700;
+    }
+    .badge-success { background: #d1fae5; color: #065f46; }
+    .badge-inactive { background: #fee2e2; color: #991b1b; }
+    .badge-depuration { background: #fef3c7; color: #92400e; }
+    .badge-other { background: #e5e7eb; color: #374151; }
+
+    /* Lotes */
+    .lots-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .lot-tag {
+      background: #ede9fe;
+      color: #5b21b6;
+      font-size: .73rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+    .lot-tag-unregistered {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    .lot-tag-unregistered-error {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #ef4444;
+    }
+    .no-lots { color: #bbb; font-size: .8rem; }
+
+    /* Fish count */
+    .fish-count { font-weight: 700; font-size: 1rem; }
+    .fish-count.zero { color: #ccc; }
+    .fish-count.low  { color: #f59e0b; }
+    .fish-count.high { color: #059669; }
+
+    /* ── Layout con sidebar derecho ── */
+    .ponds-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 10px;
+      align-items: start;
+      transition: grid-template-columns .2s ease;
+    }
+    .ponds-layout.right-compact {
+      grid-template-columns: minmax(0, 1fr) 72px;
+    }
+
+    /* ── Action sidebar ── */
+    .action-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      position: sticky;
+      top: 16px;
+      width: 100%;
+      transition: width .2s ease;
+    }
+    .action-cards.is-compact { width: 72px; justify-self: end; }
+    .action-card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      border-top: 3px solid transparent;
+      overflow: hidden;
+    }
+    .action-card__toggle {
+      width: 100%;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      text-align: left;
+    }
+    .action-card__chevron {
+      flex-shrink: 0;
+      color: #6b7280;
+      transition: transform .18s ease;
+    }
+    .action-card__title-text { white-space: nowrap; }
+    .action-card.is-collapsed .action-card__chevron { transform: rotate(-90deg); }
+    .action-card.is-collapsed .action-card__toggle { justify-content: center; padding: 9px 8px; }
+    .action-card.is-collapsed .action-card__title { justify-content: center; }
+    .action-card.is-collapsed .action-card__title-text,
+    .action-card.is-collapsed .action-card__chevron { display: none; }
+    .action-card__body {
+      padding: 0 16px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .action-card.is-collapsed .action-card__body { display: none; }
+    .action-card--create { border-top-color: #0f766e; }
+    .action-card__title {
+      font-size: .88rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: #1a1a2e;
+    }
+    .action-card--create .action-card__title { color: #0f766e; }
+    .action-field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      margin-bottom: 8px;
+    }
+    .action-card__body form .action-field-group:last-of-type { margin-bottom: 12px; }
+    .action-field-group label {
+      font-size: .72rem;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+    .action-field-group input,
+    .action-field-group select {
+      padding: 7px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: .88rem;
+      background: #fff;
+      width: 100%;
+    }
+    .action-btn--create {
+      display: block;
+      width: 100%;
+      border: none;
+      border-radius: 8px;
+      background: #0f766e;
+      color: #fff;
+      padding: 10px 16px;
+      font-size: .88rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: center;
+      margin-top: 4px;
+    }
+    .action-btn--create:hover { background: #0b5f59; }
+
+    /* ── Grupo padre/hijo ── */
+    .pond-parent-row { background: #f8f9ff; }
+    .pond-parent-row:hover { background: #eef2ff !important; }
+    .expand-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: .9rem;
+      color: #6366f1;
+      padding: 0 4px 0 0;
+      line-height: 1;
+      vertical-align: middle;
+    }
+    .expand-btn:hover { color: #4f46e5; }
+    .parent-label { font-weight: 700; color: #3730a3; }
+    .child-indent { color: #a5b4fc; margin-right: 4px; font-size: .85rem; }
+    .pond-child-row { background: #fdfdff; }
+    .pond-child-hidden { display: none; }
+    .pond-child-row .pond-code { padding-left: 18px; }
+    .pond-child-row td { font-size: .83rem; padding: 10px 16px; }
+    .pond-child-row:hover { background: #f0f4ff !important; }
+    .group-agg { font-size: .78rem; color: #888; margin-left: 4px; }
+
+    /* Empty state */
+    .empty { text-align: center; padding: 60px 20px; color: #aaa; font-size: .95rem; }
+
+    /* Responsive */
+    @media (max-width: 1100px) {
+      .ponds-layout { grid-template-columns: 1fr; }
+      .action-cards { position: static; }
+    }
+    @media (max-width: 700px) {
+      .stats-row { grid-template-columns: 1fr 1fr; }
+      thead th:nth-child(4), thead th:nth-child(5), tbody td:nth-child(4), tbody td:nth-child(5) { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+{% include '_sidebar.html' %}
+
+<header>
+  <h1>Estanques</h1>
+</header>
+
+<div class="container">
+
+  <!-- Filter bar -->
+  <div class="filter-bar">
+    <label for="cu-select">Unidad de cultivo</label>
+    <select id="cu-select" onchange="filterChanged()">
+      <option value="">Todas</option>
+      {% for cu in cultivation_units %}
+      <option value="{{ cu.id }}" {% if selected_cu == cu.id %}selected{% endif %}>{{ cu.name }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="search-input">Buscar</label>
+    <input id="search-input" type="text" placeholder="Nombre, código…" oninput="filterTable()" />
+
+    <span class="badge-total" id="visible-count">{{ ponds|length }} estanques</span>
+  </div>
+
+  {% if msg %}
+  <div class="flash {{ 'ok' if status == 'ok' else 'error' }}">{{ msg }}</div>
+  {% endif %}
+
+  {% if pending_drug_logs_count and pending_drug_logs_count > 0 %}
+  <div class="todo-banner">
+    <span>Tarea pendiente: cargar información de fármacos en {{ pending_drug_logs_count }} peces con sufijo _R.</span>
+    <a href="/views/ui/fish/pending-drug-logs">Ver pendientes</a>
+  </div>
+  {% endif %}
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="label">N° Peces</div>
+      <div class="value" id="stat-fish">{{ '{:,}'.format(stat_fish) }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Biomasa total</div>
+      <div class="value" id="stat-biomass">{{ '{:,.0f}'.format(stat_biomass) if stat_biomass else '—' }}</div>
+      <div class="unit">kg</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Densidad</div>
+      <div class="value" id="stat-density">{{ '%.2f'|format(stat_density) if stat_density else '—' }}</div>
+      <div class="unit">kg/m³</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Índice K</div>
+      <div class="value" id="stat-k">{{ '%.3f'|format(stat_k) if stat_k else '—' }}</div>
+    </div>
+  </div>
+
+  <!-- Table + Action sidebar -->
+  <div class="ponds-layout right-compact" id="ponds-layout">
+    <div class="table-wrap">
+    <table id="ponds-table">
+      <thead>
+        <tr>
+          <th onclick="sortTable(0)">Estanque</th>
+          <th onclick="sortTable(1)">Tipo</th>
+          <th onclick="sortTable(2)">Estado</th>
+          <th onclick="sortTable(3)" class="sort-desc">Peces</th>
+          <th onclick="sortTable(4)">Biomasa (kg)</th>
+          <th onclick="sortTable(5)">Densidad (kg/m³)</th>
+          <th onclick="sortTable(6)">K prom.</th>
+          <th onclick="sortTable(7)">Peso prom. (g)</th>
+          <th>Lotes activos</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if ponds %}
+        {% for p in ponds %}
+        {# ── Fila de grupo padre ── #}
+        {% if p.is_parent_group %}
+        <tr class="pond-parent-row"
+            data-sortable
+            data-group-id="{{ p.id }}"
+            data-name="{{ p.name|lower }} {{ (p.code or '')|lower }} {% for c in p.children %}{{ c.name|lower }} {{ (c.code or '')|lower }} {% endfor %}">
+          <td>
+            <div class="pond-name">
+              <button class="expand-btn" onclick="toggleGroup(this.closest('tr').dataset.groupId)" title="Expandir/colapsar">▶</button>
+              <a class="pond-link parent-label" href="/views/ui/ponds/{{ p.id }}">{{ p.name }}</a>
+              <span class="group-agg">({{ p.children|length }} sub-estanques)</span>
+              <a class="add-child-btn" href="/views/ui/ponds/new?parent_id={{ p.id }}" title="Crear sub-estanque">+ Sub</a>
+            </div>
+            {% if p.code %}<div class="pond-code">{{ p.code }}</div>{% endif %}
+          </td>
+          <td>{{ p.pond_type_name or '—' }}</td>
+          <td><span class="badge badge-other">Agrupado</span></td>
+          <td>
+            {% if p.n_fish == 0 %}
+              <span class="fish-count zero">0</span>
+            {% elif p.n_fish < 50 %}
+              <span class="fish-count low">{{ '{:,}'.format(p.n_fish) }}</span>
+            {% else %}
+              <span class="fish-count high">{{ '{:,}'.format(p.n_fish) }}</span>
+            {% endif %}
+          </td>
+          <td>{{ '{:,.1f}'.format(p.biomass) if p.biomass else '—' }}</td>
+          <td>{{ '%.2f'|format(p.density) if p.density else '—' }}</td>
+          <td>{{ '%.3f'|format(p.avg_condition_k) if p.avg_condition_k else '—' }}</td>
+          <td>{{ '{:,.0f}'.format(p.avg_weight) if p.avg_weight else '—' }}</td>
+          <td>
+            {% if p.active_lots %}
+              <div class="lots-list">
+                {% for l in p.active_lots %}
+                  <span class="lot-tag">{{ l.internal_id or l.name }}</span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <span class="no-lots">sin lotes</span>
+            {% endif %}
+          </td>
+          <td>
+            <a class="edit-link" href="/views/ui/ponds/{{ p.id }}/edit">Editar</a>
+          </td>
+        </tr>
+
+        {# ── Filas hijo (ocultas por defecto) ── #}
+        {% for c in p.children %}
+        <tr class="pond-child-row pond-child-hidden"
+            data-group="{{ p.id }}"
+            data-name="{{ c.name|lower }} {{ (c.code or '')|lower }}">
+          <td>
+            <div class="pond-name">
+              <span class="child-indent">└</span>
+              <a class="pond-link" href="/views/ui/ponds/{{ c.id }}">{{ c.name }}</a>
+            </div>
+            {% if c.code %}<div class="pond-code">{{ c.code }}</div>{% endif %}
+          </td>
+          <td>{{ c.pond_type_name or '—' }}</td>
+          <td>
+            {% if c.depuration %}
+              <span class="badge badge-depuration">Depuración</span>
+            {% elif c.state == 'success' or c.state == 'active' %}
+              <span class="badge badge-success">Activo</span>
+            {% elif c.state %}
+              <span class="badge badge-other">{{ c.state }}</span>
+            {% else %}
+              <span class="badge badge-other">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if c.n_fish == 0 %}
+              <span class="fish-count zero">0</span>
+            {% elif c.n_fish < 50 %}
+              <span class="fish-count low">{{ '{:,}'.format(c.n_fish) }}</span>
+            {% else %}
+              <span class="fish-count high">{{ '{:,}'.format(c.n_fish) }}</span>
+            {% endif %}
+          </td>
+          <td>{{ '{:,.1f}'.format(c.biomass) if c.biomass else '—' }}</td>
+          <td>{{ '%.2f'|format(c.density) if c.density else '—' }}</td>
+          <td>{{ '%.3f'|format(c.avg_condition_k) if c.avg_condition_k else '—' }}</td>
+          <td>{{ '{:,.0f}'.format(c.avg_weight) if c.avg_weight else '—' }}</td>
+          <td>
+            {% if c.active_lots %}
+              <div class="lots-list">
+                {% for l in c.active_lots %}
+                  <span class="lot-tag {% if l.is_unregistered_lot and c.unregistered_lot_conflict %}lot-tag-unregistered-error{% elif l.is_unregistered_lot %}lot-tag-unregistered{% endif %}">{{ l.internal_id or l.name }}</span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <span class="no-lots">sin lotes</span>
+            {% endif %}
+          </td>
+          <td>
+            <a class="edit-link" href="/views/ui/ponds/{{ c.id }}/edit">Editar</a>
+          </td>
+        </tr>
+        {% endfor %}
+
+        {# ── Fila estanque normal (sin hijos) ── #}
+        {% else %}
+        <tr data-sortable
+            data-name="{{ p.name|lower }} {{ (p.code or '')|lower }} {{ (p.internal_id or '')|lower }}">
+          <td>
+            <div class="pond-name"><a class="pond-link" href="/views/ui/ponds/{{ p.id }}">{{ p.name }}</a></div>
+            {% if p.code %}<div class="pond-code">{{ p.code }}</div>{% endif %}
+          </td>
+          <td>{{ p.pond_type_name or '—' }}</td>
+          <td>
+            {% if p.depuration %}
+              <span class="badge badge-depuration">Depuración</span>
+            {% elif p.state == 'success' or p.state == 'active' %}
+              <span class="badge badge-success">Activo</span>
+            {% elif p.state %}
+              <span class="badge badge-other">{{ p.state }}</span>
+            {% else %}
+              <span class="badge badge-other">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if p.n_fish == 0 %}
+              <span class="fish-count zero">0</span>
+            {% elif p.n_fish < 50 %}
+              <span class="fish-count low">{{ '{:,}'.format(p.n_fish) }}</span>
+            {% else %}
+              <span class="fish-count high">{{ '{:,}'.format(p.n_fish) }}</span>
+            {% endif %}
+          </td>
+          <td>{{ '{:,.1f}'.format(p.biomass) if p.biomass else '—' }}</td>
+          <td>{{ '%.2f'|format(p.density) if p.density else '—' }}</td>
+          <td>{{ '%.3f'|format(p.avg_condition_k) if p.avg_condition_k else '—' }}</td>
+          <td>{{ '{:,.0f}'.format(p.avg_weight) if p.avg_weight else '—' }}</td>
+          <td>
+            {% if p.active_lots %}
+              <div class="lots-list">
+                {% for l in p.active_lots %}
+                  <span class="lot-tag {% if l.is_unregistered_lot and p.unregistered_lot_conflict %}lot-tag-unregistered-error{% elif l.is_unregistered_lot %}lot-tag-unregistered{% endif %}">{{ l.internal_id or l.name }}</span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <span class="no-lots">sin lotes</span>
+            {% endif %}
+          </td>
+          <td>
+            <a class="edit-link" href="/views/ui/ponds/{{ p.id }}/edit">Editar</a>
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+        {% else %}
+        <tr><td colspan="10" class="empty">No hay estanques para mostrar.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div><!-- /.table-wrap -->
+
+<script>
+  // ── Cambio de unidad de cultivo ──
+  function filterChanged() {
+    const cu = document.getElementById('cu-select').value;
+    const url = new URL(window.location);
+    if (cu) url.searchParams.set('cultivation_unit_id', cu);
+    else url.searchParams.delete('cultivation_unit_id');
+    window.location = url;
+  }
+
+  // ── Expandir/colapsar grupo ──
+  function toggleGroup(id) {
+    const children = document.querySelectorAll(`#ponds-table tbody tr[data-group="${id}"]`);
+    const btn = document.querySelector(`#ponds-table tbody tr[data-group-id="${id}"] .expand-btn`);
+    const anyVisible = Array.from(children).some(r => !r.classList.contains('pond-child-hidden'));
+    children.forEach(r => { r.classList.toggle('pond-child-hidden', anyVisible); });
+    if (btn) btn.textContent = anyVisible ? '▶' : '▼';
+  }
+
+  // ── Búsqueda en tabla ──
+  function filterTable() {
+    const q = document.getElementById('search-input').value.toLowerCase().trim();
+    let count = 0;
+    document.querySelectorAll('#ponds-table tbody tr[data-sortable]').forEach(r => {
+      const match = !q || r.dataset.name.includes(q);
+      r.style.display = match ? '' : 'none';
+      if (match) count++;
+      // Auto-expandir grupo si hay búsqueda activa
+      const gid = r.dataset.groupId;
+      if (gid) {
+        const children = document.querySelectorAll(`#ponds-table tbody tr[data-group="${gid}"]`);
+        if (match && q) {
+          children.forEach(c => { c.classList.remove('pond-child-hidden'); });
+          const btn = r.querySelector('.expand-btn');
+          if (btn) btn.textContent = '▼';
+        } else if (!q) {
+          children.forEach(c => { c.classList.add('pond-child-hidden'); });
+          const btn = r.querySelector('.expand-btn');
+          if (btn) btn.textContent = '▶';
+        } else {
+          children.forEach(c => { c.classList.add('pond-child-hidden'); });
+        }
+      }
+    });
+    document.getElementById('visible-count').textContent = count + ' estanques';
+  }
+
+  // ── Ordenamiento de columnas ──
+  let sortCol = 3, sortDir = -1;
+  function sortTable(col) {
+    const tbody = document.querySelector('#ponds-table tbody');
+    const topRows = Array.from(tbody.querySelectorAll('tr[data-sortable]'));
+    const ths = document.querySelectorAll('#ponds-table thead th');
+
+    if (sortCol === col) sortDir *= -1;
+    else { sortCol = col; sortDir = 1; }
+
+    ths.forEach((th, i) => {
+      th.classList.remove('sort-asc', 'sort-desc');
+      if (i === col) th.classList.add(sortDir === 1 ? 'sort-asc' : 'sort-desc');
+    });
+
+    topRows.sort((a, b) => {
+      const va = a.cells[col]?.innerText.trim().replace(/[^0-9.-]/g, '') || '';
+      const vb = b.cells[col]?.innerText.trim().replace(/[^0-9.-]/g, '') || '';
+      const na = parseFloat(va), nb = parseFloat(vb);
+      if (!isNaN(na) && !isNaN(nb)) return (na - nb) * sortDir;
+      return va.localeCompare(vb, 'es') * sortDir;
+    });
+
+    topRows.forEach(r => {
+      tbody.appendChild(r);
+      // Mantener hijos junto a su padre
+      const gid = r.dataset.groupId;
+      if (gid) {
+        document.querySelectorAll(`#ponds-table tbody tr[data-group="${gid}"]`).forEach(c => tbody.appendChild(c));
+      }
+    });
+  }
+
+  function toggleActionCard(button) {
+    const card = button && button.closest('.action-card');
+    if (!card) return;
+    const isCollapsed = card.classList.toggle('is-collapsed');
+    button.setAttribute('aria-expanded', String(!isCollapsed));
+    updateSidebarCompact();
+  }
+
+  function updateSidebarCompact() {
+    const aside = document.querySelector('.action-cards');
+    const layout = document.getElementById('ponds-layout');
+    if (!aside || !layout) return;
+    if (window.innerWidth <= 1100) {
+      aside.classList.remove('is-compact');
+      layout.classList.remove('right-compact');
+      return;
+    }
+    const hasExpanded = aside.querySelector('.action-card:not(.is-collapsed)') !== null;
+    aside.classList.toggle('is-compact', !hasExpanded);
+    layout.classList.toggle('right-compact', !hasExpanded);
+  }
+
+  window.addEventListener('DOMContentLoaded', updateSidebarCompact);
+  window.addEventListener('resize', updateSidebarCompact);
+</script>
+
+  <!-- Sidebar derecho: funciones -->
+    <aside class="action-cards is-compact">
+
+      <!-- Nuevo estanque -->
+      <div class="action-card action-card--create is-collapsed">
+        <button type="button" class="action-card__toggle" aria-expanded="false" title="Nuevo estanque" onclick="toggleActionCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            <span class="action-card__title-text">Nuevo estanque</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          <form method="post" action="/views/ui/ponds/new">
+            <div class="action-field-group">
+              <label>Nombre *</label>
+              <input type="text" name="name" required placeholder="Ej: C2N" />
+            </div>
+            <div class="action-field-group">
+              <label>ID interno</label>
+              <input type="text" name="internal_id" placeholder="Opcional" />
+            </div>
+            <div class="action-field-group">
+              <label>Código</label>
+              <input type="text" name="code" placeholder="Opcional" />
+            </div>
+            <div class="action-field-group">
+              <label>Volumen (L)</label>
+              <input type="number" name="volume" min="0" step="1" value="0" />
+            </div>
+            <div class="action-field-group">
+              <label>Unidad de cultivo</label>
+              <select name="cultivation_unit_id">
+                <option value="">— Sin unidad —</option>
+                {% for cu in cultivation_units %}
+                <option value="{{ cu.id }}">{{ cu.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="action-field-group">
+              <label>Tipo de estanque</label>
+              <select name="pond_type_id">
+                <option value="">— Sin tipo —</option>
+                {% for pt in pond_types %}
+                <option value="{{ pt.id }}">{{ pt.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="action-field-group">
+              <label>Estanque padre</label>
+              <select name="parent_pond_id">
+                <option value="0">— Ninguno —</option>
+                {% for p in all_parent_ponds %}
+                <option value="{{ p.id }}">{{ p.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <button type="submit" class="action-btn--create">Crear estanque</button>
+          </form>
+        </div>
+      </div>
+
+    </aside>
+  </div><!-- /.ponds-layout -->
+
+</div><!-- /.container -->
+</body>
+</html>

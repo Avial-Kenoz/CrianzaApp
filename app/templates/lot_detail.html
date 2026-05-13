@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lote {{ lot.name }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title-wrap h1 { font-size: 1.2rem; font-weight: 700; }
+    .title-wrap p  { font-size: .82rem; opacity: .7; margin-top: 2px; }
+    .nav-links { display: flex; gap: 8px; }
+    .nav-link {
+      color: #fff;
+      text-decoration: none;
+      font-size: .82rem;
+      border: 1px solid rgba(255,255,255,.3);
+      border-radius: 8px;
+      padding: 6px 12px;
+    }
+    .nav-link:hover { background: rgba(255,255,255,.1); }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+
+    /* Metadata card */
+    .meta-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 20px 24px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.07);
+      margin-bottom: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 24px;
+      align-items: center;
+    }
+    .meta-field { display: flex; flex-direction: column; gap: 2px; }
+    .meta-field .mf-label { font-size: .72rem; font-weight: 600; text-transform: uppercase; color: #9ca3af; }
+    .meta-field .mf-value { font-size: .95rem; font-weight: 600; color: #1a1a2e; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .75rem; font-weight: 600; }
+    .badge-species { background: #ede9fe; color: #5b21b6; }
+
+    /* Stats row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 18px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.07);
+    }
+    .stat-card .label { font-size: .72rem; font-weight: 600; text-transform: uppercase; color: #888; margin-bottom: 6px; }
+    .stat-card .value { font-size: 1.55rem; font-weight: 700; color: #1a1a2e; }
+    .stat-card .unit  { font-size: .78rem; color: #aaa; margin-top: 2px; }
+
+    /* Table */
+    .table-wrap {
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.07);
+      overflow: hidden;
+    }
+    .table-wrap h2 {
+      font-size: .88rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #6b7280;
+      padding: 14px 18px 0;
+      letter-spacing: .04em;
+    }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    thead { background: #f8f9fb; }
+    th {
+      padding: 10px 14px;
+      text-align: left;
+      font-size: .74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #6b7280;
+      border-bottom: 1px solid #e5e7eb;
+      white-space: nowrap;
+    }
+    td {
+      padding: 10px 14px;
+      font-size: .87rem;
+      border-bottom: 1px solid #f3f4f6;
+      color: #374151;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafbff; }
+
+    .pond-link { color: #4338ca; font-weight: 600; text-decoration: none; }
+    .pond-link:hover { text-decoration: underline; }
+    .depur-badge { background: #e0f2fe; color: #0369a1; font-size: .72rem; font-weight: 600; padding: 2px 7px; border-radius: 999px; margin-left: 6px; }
+    .sub-count { font-size: .75rem; color: #9ca3af; margin-top: 2px; }
+    .total-row { font-weight: 700; background: #f8f9fb; }
+    .empty { text-align: center; padding: 48px; color: #9ca3af; font-size: .9rem; }
+
+    @media (max-width: 768px) {
+      .stats-row { grid-template-columns: 1fr 1fr; }
+      .meta-card { flex-direction: column; gap: 14px; }
+    }
+  </style>
+</head>
+<body>
+
+{% include '_sidebar.html' %}
+
+<header>
+  <div class="title-wrap">
+    <h1>{{ lot.name }}</h1>
+    <p>{{ lot.species }}{% if lot.hatch_year %} · Cosecha {{ lot.hatch_year }}{% endif %}{% if lot.origin %} · {{ lot.origin }}{% endif %}</p>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Metadata -->
+  <div class="meta-card">
+    {% if lot.internal_id %}
+    <div class="meta-field">
+      <span class="mf-label">Código</span>
+      <span class="mf-value">{{ lot.internal_id }}</span>
+    </div>
+    {% endif %}
+    <div class="meta-field">
+      <span class="mf-label">Especie</span>
+      <span class="mf-value"><span class="badge badge-species">{{ lot.species }}</span></span>
+    </div>
+    {% if lot.hatch_year %}
+    <div class="meta-field">
+      <span class="mf-label">Año cosecha</span>
+      <span class="mf-value">{{ lot.hatch_year }}</span>
+    </div>
+    {% endif %}
+    {% if lot.origin %}
+    <div class="meta-field">
+      <span class="mf-label">Origen</span>
+      <span class="mf-value">{{ lot.origin }}</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="label">N° Peces</div>
+      <div class="value">{{ '{:,}'.format(stat_fish) }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Biomasa estimada</div>
+      <div class="value">{{ '{:,.0f}'.format(stat_biomass) if stat_biomass else '—' }}</div>
+      <div class="unit">kg</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Peso prom.</div>
+      <div class="value">{{ '{:,.0f}'.format(stat_avg_weight) if stat_avg_weight else '—' }}</div>
+      <div class="unit">g</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Índice K</div>
+      <div class="value">{{ '%.3f'|format(stat_k) if stat_k else '—' }}</div>
+    </div>
+  </div>
+
+  <!-- Detalle por estanque -->
+  <div class="table-wrap">
+    <h2>Distribución por estanque</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Estanque</th>
+          <th>Tipo</th>
+          <th>N° Peces</th>
+          <th>Biomasa (kg)</th>
+          <th>Peso prom. (g)</th>
+          <th>Índice K</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if pond_rows %}
+        {% for p in pond_rows %}
+        <tr>
+          <td>
+            <a class="pond-link" href="/views/ui/ponds/{{ p.pond_id }}">{{ p.pond_name }}</a>
+            {% if p.depuration %}<span class="depur-badge">Depuración</span>{% endif %}
+          </td>
+          <td>{{ p.pond_type }}</td>
+          <td>
+            {{ '{:,}'.format(p.n_fish) }}
+            {% if p.unreg > 0 %}
+            <div class="sub-count">{{ '{:,}'.format(p.tagged) }} tag · {{ '{:,}'.format(p.unreg) }} sin tag</div>
+            {% endif %}
+          </td>
+          <td>{{ '{:,.1f}'.format(p.biomass) if p.biomass else '—' }}</td>
+          <td>{{ '{:,.1f}'.format(p.avg_weight) if p.avg_weight else '—' }}</td>
+          <td>{{ '%.3f'|format(p.condition_k) if p.condition_k else '—' }}</td>
+        </tr>
+        {% endfor %}
+        <!-- Totales -->
+        <tr class="total-row">
+          <td colspan="2">Total</td>
+          <td>{{ '{:,}'.format(stat_fish) }}</td>
+          <td>{{ '{:,.1f}'.format(stat_biomass) if stat_biomass else '—' }}</td>
+          <td>{{ '{:,.1f}'.format(stat_avg_weight) if stat_avg_weight else '—' }}</td>
+          <td>{{ '%.3f'|format(stat_k) if stat_k else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">Sin estanques activos para este lote.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+  </div><!-- /.main-content -->
+</div><!-- /.app-shell -->
+
+</body>
+</html>

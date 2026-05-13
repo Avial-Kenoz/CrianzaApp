@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nuevo movimiento – Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    header a { color: #a5b4fc; text-decoration: none; font-size: .9rem; }
+    header a:hover { text-decoration: underline; }
+    .header-actions-right { margin-left: auto; }
+
+    .container { max-width: 720px; margin: 0 auto; padding: 32px 24px; }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 32px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    .card h2 { font-size: 1.15rem; font-weight: 700; margin-bottom: 24px; color: #1a1a2e; }
+
+    /* Tabs modo */
+    .mode-tabs {
+      display: flex;
+      gap: 0;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 28px;
+    }
+    .mode-tab {
+      flex: 1;
+      padding: 10px 16px;
+      font-size: .9rem;
+      font-weight: 600;
+      text-align: center;
+      cursor: pointer;
+      background: #f9fafb;
+      color: #6b7280;
+      border: none;
+      transition: background .15s, color .15s;
+    }
+    .mode-tab.active {
+      background: #1a1a2e;
+      color: #fff;
+    }
+
+    .form-section { display: none; }
+    .form-section.visible { display: block; }
+
+    .field { margin-bottom: 20px; }
+    .field label {
+      display: block;
+      font-size: .82rem;
+      font-weight: 600;
+      color: #374151;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+      margin-bottom: 6px;
+    }
+    .field label .req { color: #ef4444; margin-left: 2px; }
+
+    .field input, .field select, .field textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: .95rem;
+      background: #fff;
+      outline: none;
+      transition: border-color .2s, box-shadow .2s;
+      color: #1a1a2e;
+    }
+    .field input:focus, .field select:focus, .field textarea:focus {
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99,102,241,.12);
+    }
+
+    .field-row { display: flex; gap: 16px; }
+    .field-row .field { flex: 1; }
+
+    /* PIT tag search */
+    .pit-search-wrap { position: relative; }
+    .pit-search-wrap input { padding-right: 40px; }
+    .pit-result {
+      margin-top: 8px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: .88rem;
+      display: none;
+    }
+    .pit-result.found {
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+      color: #166534;
+      display: block;
+    }
+    .pit-result.not-found {
+      background: #fff1f2;
+      border: 1px solid #fca5a5;
+      color: #991b1b;
+      display: block;
+    }
+    .tagged-batch-toggle {
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .86rem;
+      color: #374151;
+    }
+    .tagged-batch-toggle input { width: auto; }
+    .batch-tools {
+      display: none;
+      margin-top: 10px;
+      padding: 12px;
+      border: 1px solid #dbeafe;
+      border-radius: 8px;
+      background: #f8fbff;
+    }
+    .batch-tools.visible { display: block; }
+    .batch-tools-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .btn-small {
+      border: none;
+      border-radius: 7px;
+      padding: 8px 12px;
+      font-size: .82rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-add-batch { background: #2563eb; color: #fff; }
+    .btn-clear-batch { background: #6b7280; color: #fff; }
+    .batch-list {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 6px;
+    }
+    .batch-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 8px;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      background: #eff6ff;
+      font-size: .8rem;
+      color: #1e3a8a;
+    }
+    .batch-remove {
+      border: none;
+      background: transparent;
+      color: #991b1b;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: .85rem;
+      line-height: 1;
+      padding: 0 2px;
+    }
+    .batch-empty { margin-top: 8px; font-size: .8rem; color: #6b7280; }
+    .batch-count { margin-top: 8px; font-size: .8rem; color: #1e40af; font-weight: 700; }
+    .batch-summary {
+      display: none;
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid #86efac;
+      border-radius: 8px;
+      background: #f0fdf4;
+      font-size: .84rem;
+      color: #14532d;
+    }
+    .batch-summary.visible { display: block; }
+    .batch-summary ul { margin: 8px 0 0 18px; }
+    .batch-summary-note { margin-top: 8px; font-weight: 700; }
+
+    /* Saldo info */
+    .balance-info {
+      margin-top: 8px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      font-size: .87rem;
+      color: #1e40af;
+      display: none;
+    }
+    .balance-info.visible { display: block; }
+
+    /* Alerta mezcla */
+    .mix-warning {
+      padding: 12px 16px;
+      border-radius: 8px;
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      color: #9a3412;
+      font-size: .88rem;
+      margin-bottom: 20px;
+      display: none;
+    }
+    .mix-warning.visible { display: block; }
+
+    /* Submit */
+    .actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+    .btn-submit {
+      padding: 11px 28px;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: .95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .btn-submit:hover { background: #2d2d4e; }
+    .btn-submit:disabled { background: #9ca3af; cursor: not-allowed; }
+    .btn-submit-secondary { background: #374151; }
+    .btn-submit-secondary:hover { background: #1f2937; }
+    .btn-cancel {
+      padding: 11px 20px;
+      background: #f3f4f6;
+      color: #374151;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: .95rem;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .btn-cancel:hover { background: #e5e7eb; }
+
+    /* Flash messages */
+    .flash {
+      padding: 14px 18px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: .92rem;
+      font-weight: 500;
+    }
+    .flash.error { background: #fff1f2; border: 1px solid #fca5a5; color: #991b1b; }
+    .flash.success { background: #f0fdf4; border: 1px solid #86efac; color: #166534; }
+
+    .hint { font-size: .8rem; color: #6b7280; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Nuevo movimiento de estanque</h1>
+  </div>
+  <div class="header-actions-right">
+    <a href="/views/ui/ponds">← Volver a estanques</a>
+  </div>
+</header>
+
+<div class="container">
+
+  {% if error %}
+  <div class="flash error">{{ error }}</div>
+  {% endif %}
+  {% if success %}
+  <div class="flash success">{{ success }}</div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Registrar movimiento</h2>
+
+    <!-- Tabs -->
+    <div class="mode-tabs">
+      <button type="button" class="mode-tab active" onclick="setMode('tagged', this)">Pez con PIT tag</button>
+      <button type="button" class="mode-tab" onclick="setMode('untagged', this)">Peces sin PIT tag (masivo)</button>
+    </div>
+
+    <form method="POST" action="/views/ui/movements" id="movForm">
+      <input type="hidden" name="mode" id="modeInput" value="tagged" />
+      <input type="hidden" name="tagged_batch_ids" id="taggedBatchIds" value="" />
+
+      <!-- ── CAMPOS COMUNES ── -->
+      <div class="field-row">
+        <div class="field">
+          <label for="sourcePond">Estanque origen</label>
+          <select name="source_pond_id" id="sourcePond" onchange="updateBalance()" title="Seleccione estanque origen">
+            <option value="">— Sin estanque origen (ingreso) —</option>
+            {% for pond in ponds %}
+            <option value="{{ pond.id }}" {% if pond.id == prefill_source %}selected{% endif %}>
+              {{ pond.name }}{% if pond.depuration %} [DEP]{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="destinyPond">Estanque destino</label>
+          <select name="destiny_pond_id" id="destinyPond" onchange="updateBalance()" title="Seleccione estanque destino">
+            <option value="">— Sin estanque destino (egreso) —</option>
+            {% for pond in ponds %}
+            <option value="{{ pond.id }}" {% if pond.id == prefill_destiny %}selected{% endif %}>
+              {{ pond.name }}{% if pond.depuration %} [DEP]{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+          <div class="hint">Los estanques marcados con [DEP] cambian el estado del pez a depuración.</div>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="movementReason">Razón del movimiento <span class="req">*</span></label>
+          <select name="movement_reason" id="movementReason" required title="Seleccione razón del movimiento">
+            <option value="pond_movement" selected>Traslado entre estanques</option>
+            <option value="depuration">Ingreso a depuración</option>
+            <option value="registration">Registro inicial</option>
+            <option value="first_load">Carga inicial</option>
+            <option value="mortality">Mortalidad</option>
+            <option value="devious">Desvío</option>
+            <option value="missing_number">Número faltante</option>
+            <option value="inventory_mismatch">Ajuste de inventario</option>
+            <option value="unmarked_devious">Desvío no marcado</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Fecha y hora <span class="req">*</span></label>
+          <input type="datetime-local" name="movement_time" id="movTime" required title="Seleccione fecha y hora del movimiento" />
+        </div>
+      </div>
+
+      <!-- ── SECCIÓN: CON PIT TAG ── -->
+      <div class="form-section visible" id="sectionTagged">
+        <div class="field">
+          <label>PIT tag del pez <span class="req">*</span></label>
+          <div class="pit-search-wrap">
+                 <input type="text" id="pitSearch" placeholder="Ej: 80B065E"
+                       list="pitSuggestions"
+                       inputmode="text" spellcheck="false" autocomplete="off"
+                   oninput="searchFish(this.value)" />
+          </div>
+          <datalist id="pitSuggestions">
+            {% for pit in prefill_pit_tags or [] %}
+            <option value="{{ pit }}"></option>
+            {% endfor %}
+          </datalist>
+          <div class="pit-result" id="pitResult"></div>
+          <input type="hidden" name="fish_id" id="fishIdHidden" />
+          <input type="hidden" name="lot_id" id="lotIdTagged" />
+
+          <label class="tagged-batch-toggle" for="taggedBatchToggle">
+            <input type="checkbox" id="taggedBatchToggle" />
+            Movimiento masivo con PIT tag (cargar lista y confirmar)
+          </label>
+
+          <div id="batchTools" class="batch-tools">
+            <div class="batch-tools-row">
+              <button type="button" class="btn-small btn-add-batch" onclick="addCurrentFishToBatch()">+ Agregar PIT a lista</button>
+              <button type="button" class="btn-small btn-clear-batch" onclick="clearBatchList()">Limpiar lista</button>
+            </div>
+            <div id="batchCount" class="batch-count">0 PIT tags en lista</div>
+            <div id="batchEmpty" class="batch-empty">Aún no hay PIT tags agregados.</div>
+            <div id="batchList" class="batch-list"></div>
+            <div id="batchSummary" class="batch-summary"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── SECCIÓN: SIN PIT TAG ── -->
+      <div class="form-section" id="sectionUntagged">
+        <div class="mix-warning" id="mixWarning">
+          ⚠ El estanque destino ya tiene peces sin PIT tag de otro lote. No se puede mezclar lotes sin registrar.
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Lote <span class="req">*</span></label>
+            <select name="lot_id" id="lotIdUntagged" onchange="checkMix()">
+              <option value="">— Seleccionar lote —</option>
+              {% for lot in lots %}
+              <option value="{{ lot.id }}">{{ lot.internal_id or lot.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label>Cantidad de peces <span class="req">*</span></label>
+            <input type="number" name="fish_quantity_untagged" id="fishQtyUntagged"
+                   min="1" placeholder="Ej: 50" />
+            <div class="balance-info" id="balanceInfo"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- fish_quantity hidden para modo tagged (siempre 1) -->
+      <input type="hidden" name="fish_quantity_tagged" value="1" />
+
+      <div class="actions">
+        <button type="submit" class="btn-submit" name="post_action" value="go_source" id="btnSubmitSource">Guardar y volver a origen</button>
+        <button type="submit" class="btn-submit btn-submit-secondary" name="post_action" value="go_dest" id="btnSubmitDest">Guardar e ir a destino</button>
+        <a href="/views/ui/ponds" class="btn-cancel">Cancelar</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  // Datos de saldos de estanques por lote (inyectados desde backend)
+  const pondBalances = {{ pond_balances_json | safe }};
+
+  // Setear fecha/hora actual por defecto
+  (function() {
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const local = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    document.getElementById('movTime').value = local;
+  })();
+
+  function setMode(mode, btn) {
+    document.getElementById('modeInput').value = mode;
+    document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('sectionTagged').classList.toggle('visible', mode === 'tagged');
+    document.getElementById('sectionUntagged').classList.toggle('visible', mode === 'untagged');
+    // Reset required
+    document.getElementById('pitSearch').required = (mode === 'tagged');
+    document.getElementById('fishQtyUntagged').required = (mode === 'untagged');
+    document.getElementById('lotIdUntagged').required = (mode === 'untagged');
+  }
+
+  function setPitSuggestions(pitTags) {
+    const list = document.getElementById('pitSuggestions');
+    if (!list) return;
+    const items = Array.isArray(pitTags) ? pitTags : [];
+    list.innerHTML = items.map((pit) => `<option value="${pit}"></option>`).join('');
+  }
+
+  async function loadPitSuggestionsFromSource() {
+    const source = document.getElementById('sourcePond');
+    if (!source || !source.value) {
+      setPitSuggestions([]);
+      return;
+    }
+    try {
+      const response = await fetch(`/views/ui/ponds/${encodeURIComponent(source.value)}/pit-tags`);
+      const data = await response.json();
+      setPitSuggestions(data.pit_tags || []);
+    } catch (_error) {
+      setPitSuggestions([]);
+    }
+  }
+
+  let batchConfirmed = false;
+  const batchFish = [];
+
+  function renderBatchList() {
+    const list = document.getElementById('batchList');
+    const empty = document.getElementById('batchEmpty');
+    const count = document.getElementById('batchCount');
+    const hidden = document.getElementById('taggedBatchIds');
+
+    list.innerHTML = '';
+    batchFish.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'batch-item';
+      row.innerHTML = `<span>${item.pit}</span><button type="button" class="batch-remove" onclick="removeFromBatch(${item.id})">×</button>`;
+      list.appendChild(row);
+    });
+
+    empty.style.display = batchFish.length ? 'none' : 'block';
+    count.textContent = `${batchFish.length} PIT tags en lista`;
+    hidden.value = batchFish.map(x => x.id).join(',');
+  }
+
+  function addCurrentFishToBatch() {
+    const fishId = parseInt(document.getElementById('fishIdHidden').value || '0', 10);
+    const pit = (document.getElementById('pitSearch').value || '').trim().toUpperCase();
+    if (!fishId || !pit) {
+      alert('Busca y selecciona un PIT válido antes de agregar.');
+      return;
+    }
+    if (batchFish.some(x => x.id === fishId)) {
+      alert('Ese PIT ya está en la lista.');
+      return;
+    }
+    batchFish.push({ id: fishId, pit });
+    batchConfirmed = false;
+    hideBatchSummary();
+    renderBatchList();
+    document.getElementById('pitSearch').value = '';
+    document.getElementById('fishIdHidden').value = '';
+    document.getElementById('lotIdTagged').value = '';
+    const result = document.getElementById('pitResult');
+    result.className = 'pit-result';
+    result.textContent = '';
+  }
+
+  function removeFromBatch(fishId) {
+    const idx = batchFish.findIndex(x => x.id === fishId);
+    if (idx >= 0) {
+      batchFish.splice(idx, 1);
+      batchConfirmed = false;
+      hideBatchSummary();
+      renderBatchList();
+    }
+  }
+
+  function clearBatchList() {
+    batchFish.splice(0, batchFish.length);
+    batchConfirmed = false;
+    hideBatchSummary();
+    renderBatchList();
+  }
+
+  function hideBatchSummary() {
+    const box = document.getElementById('batchSummary');
+    box.classList.remove('visible');
+    box.innerHTML = '';
+  }
+
+  function showBatchSummary() {
+    const box = document.getElementById('batchSummary');
+    const srcSel = document.getElementById('sourcePond');
+    const dstSel = document.getElementById('destinyPond');
+    const reasonSel = document.getElementById('movementReason');
+    const srcTxt = srcSel.options[srcSel.selectedIndex]?.text || 'N/A';
+    const dstTxt = dstSel.options[dstSel.selectedIndex]?.text || 'egreso';
+    const reasonTxt = reasonSel.options[reasonSel.selectedIndex]?.text || reasonSel.value;
+    const preview = batchFish.slice(0, 10).map(x => `<li>${x.pit}</li>`).join('');
+    const extra = batchFish.length > 10 ? `<li>... +${batchFish.length - 10} más</li>` : '';
+    box.innerHTML = `
+      <strong>Resumen de operación masiva con PIT tag</strong><br>
+      Origen: ${srcTxt}<br>
+      Destino: ${dstTxt}<br>
+      Razón: ${reasonTxt}<br>
+      Total PIT tags: ${batchFish.length}
+      <ul>${preview}${extra}</ul>
+      <div class="batch-summary-note">Revisa el resumen y presiona nuevamente uno de los botones de guardado para confirmar.</div>
+    `;
+    box.classList.add('visible');
+  }
+
+  // Búsqueda de pez por PIT tag
+  let searchTimer = null;
+  function searchFish(val) {
+    clearTimeout(searchTimer);
+    const result = document.getElementById('pitResult');
+    const fishHidden = document.getElementById('fishIdHidden');
+    const lotHidden = document.getElementById('lotIdTagged');
+    fishHidden.value = '';
+    lotHidden.value = '';
+    const normalized = val.toUpperCase();
+    document.getElementById('pitSearch').value = normalized;
+    if (normalized.length < 3) { result.className = 'pit-result'; return; }
+    searchTimer = setTimeout(async () => {
+      try {
+        const r = await fetch(`/views/ui/fish-search?q=${encodeURIComponent(normalized.trim())}`);
+        const data = await r.json();
+        if (data.found) {
+          result.className = 'pit-result found';
+          result.innerHTML = `✓ ${data.internal_id} — Lote: ${data.lot} — Estado: ${data.state} — Estanque actual: ${data.current_pond || 'N/D'}`;
+          fishHidden.value = data.id;
+          lotHidden.value = data.lot_id;
+        } else {
+          result.className = 'pit-result not-found';
+          result.textContent = `✗ No se encontró pez con PIT tag "${normalized}"`;
+        }
+      } catch(e) {
+        result.className = 'pit-result not-found';
+        result.textContent = 'Error al buscar el pez';
+      }
+    }, 400);
+  }
+
+  async function resolveFishByPit(pit) {
+    const normalized = (pit || '').trim().toUpperCase();
+    if (!normalized) return null;
+    const r = await fetch(`/views/ui/fish-search?q=${encodeURIComponent(normalized)}`);
+    const data = await r.json();
+    if (!data.found) {
+      return null;
+    }
+    document.getElementById('pitSearch').value = (data.internal_id || normalized).toUpperCase();
+    document.getElementById('fishIdHidden').value = data.id;
+    document.getElementById('lotIdTagged').value = data.lot_id || '';
+    const result = document.getElementById('pitResult');
+    result.className = 'pit-result found';
+    result.innerHTML = `✓ ${data.internal_id} — Lote: ${data.lot} — Estado: ${data.state} — Estanque actual: ${data.current_pond || 'N/D'}`;
+    return data;
+  }
+
+  async function tryAddCurrentPitToBatch() {
+    const batchEnabled = document.getElementById('taggedBatchToggle').checked;
+    if (!batchEnabled) return;
+
+    const pitInput = document.getElementById('pitSearch');
+    const pit = (pitInput.value || '').trim().toUpperCase();
+    if (!pit) return;
+
+    let fishId = parseInt(document.getElementById('fishIdHidden').value || '0', 10);
+    if (!fishId) {
+      const resolved = await resolveFishByPit(pit);
+      if (!resolved) {
+        const result = document.getElementById('pitResult');
+        result.className = 'pit-result not-found';
+        result.textContent = `✗ No se encontró pez con PIT tag "${pit}"`;
+        return;
+      }
+      fishId = parseInt(document.getElementById('fishIdHidden').value || '0', 10);
+    }
+
+    addCurrentFishToBatch();
+  }
+
+  function getDestinyPondId() {
+    const sel = document.getElementById('destinyPond');
+    return sel.value ? parseInt(sel.value) : null;
+  }
+
+  function getSelectedLotId() {
+    const sel = document.getElementById('lotIdUntagged');
+    return sel.value ? parseInt(sel.value) : null;
+  }
+
+  function updateBalance() {
+    checkMix();
+    const destPondId = getDestinyPondId();
+    const balInfo = document.getElementById('balanceInfo');
+    if (!destPondId || !pondBalances[destPondId]) {
+      balInfo.classList.remove('visible');
+      return;
+    }
+    const lots = pondBalances[destPondId];
+    const lines = Object.entries(lots).map(([lotId, qty]) => `Lote ${lotId}: ${qty} peces`).join(' | ');
+    balInfo.textContent = `Saldo actual en destino → ${lines}`;
+    balInfo.classList.add('visible');
+  }
+
+  function checkMix() {
+    const destPondId = getDestinyPondId();
+    const selectedLot = getSelectedLotId();
+    const warning = document.getElementById('mixWarning');
+    if (!destPondId || !selectedLot) { warning.classList.remove('visible'); return; }
+    const lots = pondBalances[destPondId] || {};
+    const activeUntaggedLots = Object.keys(lots).map(Number);
+    if (activeUntaggedLots.length > 0 && !activeUntaggedLots.includes(selectedLot)) {
+      warning.classList.add('visible');
+    } else {
+      warning.classList.remove('visible');
+    }
+  }
+
+  // Validación antes de submit
+  document.getElementById('movForm').addEventListener('submit', function(e) {
+    const mode = document.getElementById('modeInput').value;
+    const batchEnabled = document.getElementById('taggedBatchToggle').checked;
+    if (mode === 'tagged') {
+      if (batchEnabled) {
+        if (!document.getElementById('sourcePond').value) {
+          e.preventDefault();
+          alert('En modo masivo con PIT debe indicar estanque origen.');
+          return;
+        }
+        if (!batchFish.length) {
+          e.preventDefault();
+          alert('Agrega al menos un PIT tag a la lista.');
+          return;
+        }
+        if (!batchConfirmed) {
+          e.preventDefault();
+          showBatchSummary();
+          batchConfirmed = true;
+          return;
+        }
+        return;
+      }
+      const fishId = document.getElementById('fishIdHidden').value;
+      if (!fishId) {
+        e.preventDefault();
+        alert('Debes seleccionar un pez válido con PIT tag antes de continuar.');
+      }
+    }
+  });
+
+  document.getElementById('taggedBatchToggle').addEventListener('change', function() {
+    const batchTools = document.getElementById('batchTools');
+    const enabled = this.checked;
+    batchTools.classList.toggle('visible', enabled);
+    document.getElementById('fishIdHidden').value = '';
+    if (!enabled) {
+      clearBatchList();
+    }
+  });
+
+  ['sourcePond', 'destinyPond', 'movementReason', 'movTime'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('change', () => {
+        batchConfirmed = false;
+        hideBatchSummary();
+      });
+    }
+  });
+
+  const pitInput = document.getElementById('pitSearch');
+  if (pitInput) {
+    pitInput.addEventListener('keydown', async (event) => {
+      if (event.key !== 'Enter') return;
+      const batchEnabled = document.getElementById('taggedBatchToggle').checked;
+      if (!batchEnabled) return;
+      event.preventDefault();
+      await tryAddCurrentPitToBatch();
+    });
+
+    pitInput.addEventListener('change', async () => {
+      const batchEnabled = document.getElementById('taggedBatchToggle').checked;
+      if (!batchEnabled) return;
+      // En datalist, seleccionar con mouse dispara change: agregamos directo.
+      await tryAddCurrentPitToBatch();
+    });
+  }
+
+  (function initMovementFormMode() {
+    const prefillMode = "{{ prefill_mode or 'tagged' }}";
+    const prefillBatch = {{ 'true' if prefill_tagged_batch else 'false' }};
+    const taggedBtn = document.querySelector('.mode-tab');
+    const untaggedBtn = document.querySelectorAll('.mode-tab')[1];
+    if (prefillMode === 'untagged') {
+      setMode('untagged', untaggedBtn);
+    } else {
+      setMode('tagged', taggedBtn);
+    }
+    if (prefillBatch) {
+      const toggle = document.getElementById('taggedBatchToggle');
+      toggle.checked = true;
+      toggle.dispatchEvent(new Event('change'));
+    }
+    const sourceSel = document.getElementById('sourcePond');
+    if (sourceSel) {
+      sourceSel.addEventListener('change', loadPitSuggestionsFromSource);
+    }
+    loadPitSuggestionsFromSource();
+    renderBatchList();
+  })();
+</script>
+
+</body>
+</html>

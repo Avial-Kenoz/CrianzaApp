@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Detalle Laguna</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title-wrap h1 { font-size: 1.2rem; font-weight: 700; }
+    .title-wrap p { font-size: .82rem; opacity: .7; margin-top: 2px; }
+    .back-link {
+      color: #fff;
+      text-decoration: none;
+      font-size: .85rem;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 8px;
+      padding: 6px 10px;
+    }
+    .new-movement-btn {
+      background: #6366f1;
+      color: #fff;
+      margin-left: 8px;
+    }
+    .container { max-width: none; margin: 0; padding: 12px 10px 14px; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+    }
+    .card .label {
+      font-size: .75rem;
+      color: #6b7280;
+      text-transform: uppercase;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .card .value { font-size: 1.35rem; font-weight: 700; }
+    .card .subline {
+      margin-top: 4px;
+      color: #6b7280;
+      font-size: .8rem;
+      line-height: 1.25;
+    }
+    .female-destination-select {
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: .88rem;
+      background: #fff;
+    }
+    .female-destination-hint {
+      margin-top: 6px;
+      color: #6b7280;
+      font-size: .78rem;
+      line-height: 1.3;
+    }
+    .warn {
+      color: #92400e;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      margin-bottom: 16px;
+    }
+    .flash {
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+    .flash.ok {
+      color: #166534;
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+    }
+    .flash.error {
+      color: #991b1b;
+      background: #fff1f2;
+      border: 1px solid #fca5a5;
+    }
+    .flash.warn {
+      color: #92400e;
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+    }
+    .confirm-reuse-btn {
+      margin-top: 8px;
+      margin-right: 6px;
+      padding: 4px 12px;
+      background: #d97706;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .confirm-reuse-btn:hover { background: #b45309; }
+    .cancel-reuse-btn {
+      margin-top: 8px;
+      padding: 4px 12px;
+      background: #e5e7eb;
+      color: #374151;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .cancel-reuse-btn:hover { background: #d1d5db; }
+    .table-wrap {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      overflow: auto;
+      max-height: 65vh;
+    }
+    .detail-content {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 10px;
+      align-items: start;
+      transition: grid-template-columns .2s ease;
+    }
+    .detail-content.right-compact {
+      grid-template-columns: minmax(0, 1fr) 72px;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead { background: #1f2937; color: #fff; }
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #1f2937;
+    }
+    .th-pit-filter {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 120px;
+    }
+    .pit-filter-input {
+      width: 100%;
+      border: 1px solid #4b5563;
+      border-radius: 6px;
+      padding: 5px 7px;
+      font-size: .78rem;
+      background: #111827;
+      color: #fff;
+      outline: none;
+    }
+    .pit-filter-input::placeholder { color: #9ca3af; }
+    .pit-filter-input:focus {
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 2px rgba(147,197,253,.2);
+    }
+    th, td { padding: 10px 10px; text-align: left; font-size: .88rem; }
+    .table-wrap th:nth-child(1),
+    .table-wrap td:nth-child(1) {
+      width: 130px;
+      min-width: 120px;
+      max-width: 140px;
+    }
+    .table-wrap th:nth-child(2),
+    .table-wrap td:nth-child(2) {
+      width: 130px;
+      min-width: 110px;
+    }
+    .table-wrap th:nth-child(3),
+    .table-wrap td:nth-child(3) {
+      width: 100px;
+      min-width: 90px;
+    }
+    .table-wrap th:nth-child(4),
+    .table-wrap td:nth-child(4),
+    .table-wrap th:nth-child(5),
+    .table-wrap td:nth-child(5),
+    .table-wrap th:nth-child(6),
+    .table-wrap td:nth-child(6) {
+      width: 125px;
+      min-width: 110px;
+    }
+    .table-wrap th:nth-child(7),
+    .table-wrap td:nth-child(7) {
+      width: 155px;
+      min-width: 140px;
+    }
+    tbody tr { border-bottom: 1px solid #eef2f7; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f8fafc; }
+    .nd { color: #9ca3af; }
+    .pit-link { color: #1d4ed8; text-decoration: none; font-weight: 700; }
+    .pit-link:hover { text-decoration: underline; }
+    .female { color: #9d174d; font-weight: 700; }
+    .male { color: #1d4ed8; font-weight: 700; }
+    .cell-input {
+      width: 100%;
+      min-width: 80px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: .86rem;
+      background: #fff;
+    }
+    /* Remove native spinner arrows from numeric inputs for cleaner data entry */
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    input[type=number] {
+      -moz-appearance: textfield;
+      appearance: textfield;
+    }
+    .table-wrap td:nth-child(1) .cell-input { min-width: 95px; }
+    .table-wrap td:nth-child(7) .cell-input { min-width: 130px; }
+    .save-btn {
+      border: none;
+      border-radius: 8px;
+      background: #0f766e;
+      color: #fff;
+      padding: 7px 12px;
+      font-size: .83rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .save-btn:hover { background: #0b5f59; }
+    .faena-btn {
+      border: none;
+      border-radius: 8px;
+      background: #dc2626;
+      color: #fff;
+      padding: 7px 12px;
+      font-size: .83rem;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+    .faena-btn:hover { background: #b91c1c; }
+    .mortality-btn {
+      border: none;
+      border-radius: 8px;
+      background: #7f1d1d;
+      color: #fff;
+      padding: 7px 12px;
+      font-size: .83rem;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+    .mortality-btn:hover { background: #5f1414; }
+    .register-btn {
+      border: none;
+      border-radius: 8px;
+      background: #1d4ed8;
+      color: #fff;
+      padding: 7px 12px;
+      font-size: .83rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .register-btn:hover { background: #1e40af; }
+    .actions-cell { white-space: nowrap; }
+    .register-row { background: #eff6ff; }
+    .register-row td { border-bottom: 1px solid #dbeafe; }
+    .days-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #eef2ff;
+      color: #3730a3;
+      font-size: .8rem;
+      font-weight: 700;
+    }
+
+    /* ── 3 tarjetas de acción ── */
+    .action-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 0;
+      position: sticky;
+      top: 16px;
+      transition: width .2s ease;
+      width: 100%;
+    }
+    .action-cards.is-compact {
+      width: 72px;
+      justify-self: end;
+    }
+    .action-card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      border-top: 3px solid transparent;
+      overflow: hidden;
+    }
+    .action-card__toggle {
+      width: 100%;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      text-align: left;
+    }
+    .action-card__chevron {
+      flex-shrink: 0;
+      color: #6b7280;
+      transition: transform .18s ease;
+    }
+    .action-card__title-text { white-space: nowrap; }
+    .action-card.is-collapsed .action-card__chevron {
+      transform: rotate(-90deg);
+    }
+    .action-card.is-collapsed .action-card__toggle {
+      justify-content: center;
+      padding: 9px 8px;
+    }
+    .action-card.is-collapsed .action-card__title {
+      justify-content: center;
+    }
+    .action-card.is-collapsed .action-card__title-text,
+    .action-card.is-collapsed .action-card__chevron {
+      display: none;
+    }
+    .action-card__body {
+      padding: 0 16px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .action-card.is-collapsed .action-card__body {
+      display: none;
+    }
+    .action-card--movement  { border-top-color: #6366f1; }
+    .action-card--mortality { border-top-color: #b91c1c; }
+    .action-card--sampling  { border-top-color: #0e7490; }
+    .action-card--tagloss   { border-top-color: #d97706; }
+    .action-card--taggedmove { border-top-color: #2563eb; }
+    .action-card__title {
+      font-size: .88rem;
+      font-weight: 700;
+      color: #1a1a2e;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .action-card--movement  .action-card__title { color: #4338ca; }
+    .action-card--mortality .action-card__title { color: #7f1d1d; }
+    .action-card--sampling  .action-card__title { color: #0e7490; }
+    .action-card--tagloss   .action-card__title { color: #92400e; }
+    .action-card--taggedmove .action-card__title { color: #1d4ed8; }
+    .action-card__fields {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: flex-end;
+    }
+    .action-field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .action-field-group label {
+      font-size: .72rem;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+    .action-field-group select,
+    .action-field-group input[type=number] {
+      padding: 7px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: .88rem;
+      background: #fff;
+    }
+    .action-field-group select { min-width: 130px; }
+    .action-field-group input[type=number] { max-width: 100px; }
+    .saldo-hint {
+      font-size: .72rem;
+      color: #9ca3af;
+    }
+    .action-btn {
+      display: inline-block;
+      text-decoration: none;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 16px;
+      font-size: .88rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .action-btn--movement  { background: #6366f1; color: #fff; }
+    .action-btn--movement:hover  { background: #4f46e5; }
+    .action-btn--mortality { background: #b91c1c; color: #fff; }
+    .action-btn--mortality:hover { background: #991b1b; }
+    .action-btn--sampling  { background: #0e7490; color: #fff; }
+    .action-btn--sampling:hover  { background: #0a5c73; }
+    .action-btn--tagloss   { background: #d97706; color: #fff; display: inline-block; text-decoration: none; }
+    .action-btn--tagloss:hover   { background: #b45309; }
+    .action-btn--taggedmove { background: #2563eb; color: #fff; display: inline-block; text-decoration: none; }
+    .action-btn--taggedmove:hover { background: #1d4ed8; }
+    .action-card__empty { font-size: .82rem; color: #9ca3af; }
+    .action-card__empty--mb { margin-bottom: 10px; }
+    .tagloss-pending-wrap { margin-bottom: 10px; }
+    .tagloss-pending-title { font-size: .8rem; color: #92400e; font-weight: 600; margin-bottom: 6px; }
+    .tagloss-pending-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: .82rem;
+      color: #374151;
+      border: 1px solid #fde68a;
+      border-radius: 7px;
+      padding: 6px 10px;
+      margin-bottom: 5px;
+      background: #fffbeb;
+    }
+    .tagloss-retag-link {
+      background: #6366f1;
+      color: #fff;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: .78rem;
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
+      margin-left: 10px;
+    }
+    .tagloss-reconcile-link {
+      display: block;
+      margin-top: 8px;
+      text-align: center;
+      font-size: .8rem;
+      font-weight: 600;
+      color: #92400e;
+      text-decoration: underline;
+    }
+    .action-card__link {
+      font-size: .8rem;
+      color: #4b5563;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .action-card__link:hover {
+      text-decoration: underline;
+      color: #374151;
+    }
+    @media (max-width: 1100px) {
+      .detail-content { grid-template-columns: 1fr; }
+      .action-cards { position: static; }
+    }
+
+    /* ── Mortalidad sin marca (legacy, kept for safety) ── */
+    .mortality-panel {
+      margin-top: 24px;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      padding: 20px 24px;
+      border-left: 4px solid #b91c1c;
+    }
+    .mortality-panel h3 {
+      font-size: .95rem;
+      font-weight: 700;
+      color: #7f1d1d;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .mortality-panel .fields {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+    .mortality-panel .field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .mortality-panel label {
+      font-size: .78rem;
+      font-weight: 600;
+      color: #374151;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+    .mortality-panel select,
+    .mortality-panel input[type=number] {
+      padding: 9px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: .9rem;
+      background: #fff;
+      min-width: 160px;
+    }
+    .mortality-panel input[type=number] { max-width: 120px; }
+    .mortality-panel .saldo-hint {
+      font-size: .75rem;
+      color: #9ca3af;
+      margin-top: 2px;
+    }
+    .mortality-submit {
+      background: #b91c1c;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: .9rem;
+      font-weight: 700;
+      cursor: pointer;
+      align-self: flex-end;
+    }
+    .mortality-submit:hover { background: #991b1b; }
+
+    @media (max-width: 700px) {
+      th:nth-child(3), td:nth-child(3) { display: none; }
+    }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+  <header>
+    <div class="title-wrap">
+      <h1>Laguna {{ pond.name }}</h1>
+      <p>ID interno: {{ pond.internal_id or 'N/D' }} · Codigo: {{ pond.code or 'N/D' }}</p>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="stats">
+      <div class="card">
+        <div class="label">Peces (con / sin PIT)</div>
+        <div class="value">{{ tagged_count }} / {{ unregistered_count }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Hembras estado 4 (Caviar)</div>
+        <div class="value">{{ female_state_4_count }}</div>
+        <div class="subline">Biomasa estado 4: {{ '%.1f'|format(female_state_4_biomass_kg) }} kg</div>
+        <div class="subline">Caviar estimado (12,5%): {{ '%.1f'|format(caviar_estimated_kg) }} kg</div>
+      </div>
+      <div class="card">
+        <div class="label">Destino hembras marcadas</div>
+        <select id="femaleDestPondSelect" class="female-destination-select" aria-label="Destino de hembras marcadas">
+          <option value="">Mantener en este estanque</option>
+          {% for p in all_ponds %}
+          <option value="{{ p.id }}">{{ p.name }}</option>
+          {% endfor %}
+        </select>
+        <div class="female-destination-hint">Se aplicará automáticamente al registrar un pez con sexo Hembra.</div>
+      </div>
+    </div>
+
+    {% if msg %}
+    <div class="flash {{ 'ok' if status == 'ok' else ('warn' if status == 'warn' else 'error') }}" id="flash-msg">{{ msg }}
+      {% if status == 'warn' %}
+      <br/><button type="button" class="confirm-reuse-btn" onclick="confirmReuseAndSubmit()">Confirmar reutilización</button>
+      <button type="button" class="cancel-reuse-btn" onclick="document.getElementById('flash-msg').style.display='none'">Cancelar</button>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="detail-content">
+      <div class="table-wrap">
+        <datalist id="ponds-list">
+          {% for p in all_ponds %}
+          <option value="{{ p.id }} - {{ p.name }}"></option>
+          {% endfor %}
+        </datalist>
+
+        <table>
+          <thead>
+            <tr>
+              <th>
+                <div class="th-pit-filter">
+                  <span>PIT tag</span>
+                  <input
+                    id="pit-filter"
+                    class="pit-filter-input"
+                    type="text"
+                    inputmode="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    placeholder="Filtrar PIT..."
+                    aria-label="Filtrar por PIT tag"
+                    oninput="filterPitRows(this.value)"
+                  />
+                </div>
+              </th>
+              <th>Lote</th>
+              <th>Sexo</th>
+              <th>Peso</th>
+              <th>ø Caviar</th>
+              <th>Estado desarrollo</th>
+              <th>Trasladar a</th>
+              {% if show_depuration_column %}
+              <th>Dias en depuracion</th>
+              {% endif %}
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if can_register_from_untagged %}
+            <tr class="register-row">
+              <td>
+                <form id="register-fish-form" method="post" action="/views/ui/ponds/{{ pond.id }}/register-tagged"></form>
+                <input type="hidden" id="femaleDestPondHidden" name="female_destination_pond_id" form="register-fish-form" value="" />
+                <input type="hidden" id="confirmReuseFlag" name="confirm_reuse" form="register-fish-form" value="" />
+                <input
+                  aria-label="Nuevo PIT tag"
+                  class="cell-input"
+                  type="text"
+                  inputmode="text"
+                  spellcheck="false"
+                  autocomplete="off"
+                  name="internal_id"
+                  form="register-fish-form"
+                  placeholder="Nuevo PIT tag"
+                  required
+                />
+              </td>
+              <td>
+                {% if unregistered_lot_options|length == 1 %}
+                  {{ unregistered_lot_options[0].label }} (saldo: {{ unregistered_lot_options[0].qty }})
+                  <input type="hidden" name="lot_id" value="{{ unregistered_lot_options[0].id }}" form="register-fish-form" />
+                {% else %}
+                  <select aria-label="Lote sin PIT" class="cell-input" name="lot_id" form="register-fish-form" required>
+                    <option value="">Seleccionar lote</option>
+                    {% for option in unregistered_lot_options %}
+                    <option value="{{ option.id }}">{{ option.label }} (saldo: {{ option.qty }})</option>
+                    {% endfor %}
+                  </select>
+                {% endif %}
+              </td>
+              <td>
+                <select aria-label="Sexo nuevo" class="cell-input" name="sex" form="register-fish-form">
+                  <option value="" selected>N/D</option>
+                  <option value="f">Hembra</option>
+                  <option value="m">Macho</option>
+                </select>
+              </td>
+              <td>
+                <input
+                  aria-label="Peso nuevo"
+                  class="cell-input"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  name="weight"
+                  form="register-fish-form"
+                  placeholder="g"
+                />
+              </td>
+              <td>
+                <input
+                  aria-label="Diametro nuevo"
+                  class="cell-input"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  name="diameter"
+                  form="register-fish-form"
+                  placeholder="mm"
+                />
+              </td>
+              <td><span class="nd">N/A</span></td>
+              <td><span class="nd">N/A</span></td>
+              {% if show_depuration_column %}
+              <td><span class="nd">N/A</span></td>
+              {% endif %}
+              <td class="actions-cell">
+                <button
+                  type="submit"
+                  class="register-btn"
+                  form="register-fish-form"
+                  onclick="return handleRegisterSubmit(event)"
+                >Registrar PIT</button>
+              </td>
+            </tr>
+            {% endif %}
+
+            {% if fish_rows %}
+            {% for row in fish_rows %}
+            <tr class="fish-row" data-pit="{{ (row.internal_id or '')|lower }}">
+              <td>
+                <form id="save-fish-{{ row.fish_id }}" method="post" action="/views/ui/ponds/{{ pond.id }}/fish/{{ row.fish_id }}/save"></form>
+                <a class="pit-link" href="/views/ui/fish/{{ row.fish_id }}">{{ row.internal_id }}</a>
+              </td>
+              <td>{{ row.lot }}</td>
+              <td>
+                <select id="sex-{{ row.fish_id }}" aria-label="Sexo" class="cell-input {% if row.sex == 'Hembra' %}female{% elif row.sex == 'Macho' %}male{% endif %}" name="sex" form="save-fish-{{ row.fish_id }}" onchange="updateDevelopmentStateOptions({{ row.fish_id }})">
+                  <option value="" {% if row.sex_value == '' %}selected{% endif %}>N/D</option>
+                  <option value="f" {% if row.sex_value == 'f' %}selected{% endif %}>Hembra</option>
+                  <option value="m" {% if row.sex_value == 'm' %}selected{% endif %}>Macho</option>
+                </select>
+              </td>
+              <td>
+                <input
+                  aria-label="Ultimo peso"
+                  class="cell-input"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  name="weight"
+                  form="save-fish-{{ row.fish_id }}"
+                  value="{{ '%.1f'|format(row.last_weight) if row.last_weight is not none else '' }}"
+                  placeholder="g"
+                />
+              </td>
+              <td>
+                <input
+                  aria-label="Diametro caviar"
+                  class="cell-input"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  name="diameter"
+                  form="save-fish-{{ row.fish_id }}"
+                  value="{{ '%.1f'|format(row.last_caviar_diameter) if row.last_caviar_diameter is not none else '' }}"
+                  placeholder="mm"
+                />
+              </td>
+              <td>
+                <select
+                  id="dev-{{ row.fish_id }}"
+                  aria-label="Estado desarrollo"
+                  class="cell-input"
+                  name="development_state"
+                  form="save-fish-{{ row.fish_id }}"
+                  data-current="{{ row.development_state }}"
+                ></select>
+              </td>
+              <td>
+                <input
+                  aria-label="Trasladar a"
+                  class="cell-input"
+                  type="text"
+                  name="move_to"
+                  form="save-fish-{{ row.fish_id }}"
+                  list="ponds-list"
+                  placeholder="Ej: 17 - Batea 1"
+                />
+              </td>
+              {% if show_depuration_column %}
+              <td>
+                {% if row.depuration_days is not none %}
+                <span class="days-badge">{{ row.depuration_days }} dias</span>
+                {% else %}
+                <span class="nd">N/D</span>
+                {% endif %}
+              </td>
+              {% endif %}
+              <td class="actions-cell">
+                <button type="submit" name="action" value="save" class="save-btn" form="save-fish-{{ row.fish_id }}">Guardar</button>
+                {% if pond.depuration %}
+                <button
+                  type="submit"
+                  name="action"
+                  value="faena"
+                  class="faena-btn"
+                  form="save-fish-{{ row.fish_id }}"
+                  onclick="return confirm('¿Confirmar retiro a faena de {{ row.internal_id }}? Esta acción no se puede deshacer.')"
+                >Faena</button>
+                {% endif %}
+                <button
+                  type="submit"
+                  name="action"
+                  value="mortality"
+                  class="mortality-btn"
+                  form="save-fish-{{ row.fish_id }}"
+                  onclick="return confirm('¿Confirmar envío a mortalidad de {{ row.internal_id }}? Esta acción no se puede deshacer.')"
+                >Mortalidad</button>
+              </td>
+            </tr>
+            {% endfor %}
+            {% else %}
+            <tr>
+              <td colspan="{{ 9 if show_depuration_column else 8 }}" class="nd">No hay peces con PIT tag actualmente en esta laguna.</td>
+            </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Sidebar derecho: funciones rápidas -->
+      <aside class="action-cards">
+
+      <!-- 1) Traslado sin Pit-Tag -->
+      <div class="action-card action-card--movement is-collapsed">
+        <button type="button" class="action-card__toggle" aria-expanded="false" aria-label="Expandir o colapsar Traslado sin Pit-Tag" title="Traslado sin Pit-Tag" onclick="toggleActionCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            <span class="action-card__title-text">Traslado sin Pit-Tag</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          {% if unregistered_lot_options and all_ponds %}
+          <form method="post" action="/views/ui/ponds/{{ pond.id }}/transfer-untagged" onsubmit="return confirmUntaggedTransfer()">
+            <div class="action-card__fields">
+              <div class="action-field-group">
+                <label for="move-lot">Lote</label>
+                {% if unregistered_lot_options|length == 1 %}
+                  <select id="move-lot" name="lot_id">
+                    <option value="{{ unregistered_lot_options[0].id }}">{{ unregistered_lot_options[0].label }}</option>
+                  </select>
+                  <span class="saldo-hint">Saldo: {{ unregistered_lot_options[0].qty }}</span>
+                {% else %}
+                  <select id="move-lot" name="lot_id" onchange="updateMoveSaldo(this)">
+                    <option value="">Lote…</option>
+                    {% for opt in unregistered_lot_options %}
+                    <option value="{{ opt.id }}" data-qty="{{ opt.qty }}">{{ opt.label }} ({{ opt.qty }})</option>
+                    {% endfor %}
+                  </select>
+                  <span id="move-saldo-hint" class="saldo-hint"></span>
+                {% endif %}
+              </div>
+              <div class="action-field-group">
+                <label for="move-qty">Cantidad</label>
+                <input id="move-qty" name="quantity" type="number" min="1" step="1" placeholder="Ej: 20" required />
+              </div>
+              <div class="action-field-group">
+                <label for="move-destiny">Destino</label>
+                <select id="move-destiny" name="destiny_pond_id" required>
+                  <option value="">Estanque…</option>
+                  {% for p in all_ponds %}
+                  <option value="{{ p.id }}">{{ p.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <button type="submit" class="action-btn action-btn--movement">Trasladar</button>
+            </div>
+          </form>
+          {% elif not all_ponds %}
+          <p class="action-card__empty">No hay estanques destino disponibles.</p>
+          {% else %}
+          <p class="action-card__empty">Sin peces sin marca para trasladar.</p>
+          {% endif %}
+          <a class="action-card__link" href="/views/ui/movements/new?source_pond_id={{ pond.id }}">Ir a movimientos avanzados</a>
+        </div>
+      </div>
+
+      <!-- 2) Traslado con Pit-tag -->
+      <div class="action-card action-card--taggedmove is-collapsed">
+        <button type="button" class="action-card__toggle" aria-expanded="false" aria-label="Expandir o colapsar Traslado con Pit-tag" title="Traslado con Pit-tag" onclick="toggleActionCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            <span class="action-card__title-text">Traslado con Pit-tag</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          <p class="action-card__empty">Carga PIT tags uno a uno, revisa resumen y confirma operación masiva.</p>
+          <a href="/views/ui/movements/new?source_pond_id={{ pond.id }}&mode=tagged&tagged_batch=1" class="action-btn action-btn--taggedmove">Abrir formulario masivo</a>
+        </div>
+      </div>
+
+      <!-- 3) Pérdida Pit-tag -->
+      <div class="action-card action-card--tagloss is-collapsed">
+        <button type="button" class="action-card__toggle" aria-expanded="false" aria-label="Expandir o colapsar Pérdida Pit-tag" title="Pérdida Pit-tag" onclick="toggleActionCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            <span class="action-card__title-text">Pérdida Pit-tag</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          {% if pending_detachment_events %}
+          <div class="tagloss-pending-wrap">
+            <p class="tagloss-pending-title">
+              {{ pending_detachment_events|length }} pez(ces) sin tag pendiente(s) de re-tag:
+            </p>
+            {% for ev in pending_detachment_events %}
+            <div class="tagloss-pending-row">
+              <span>
+                #{{ ev.id }}
+                {% if ev.event_date %} — {{ ev.event_date.strftime('%d/%m/%Y') }}{% endif %}
+                {% if ev.notes %} · {{ ev.notes[:40] }}{% if ev.notes|length > 40 %}…{% endif %}{% endif %}
+              </span>
+              <a href="/views/ui/ponds/{{ pond.id }}/retag/{{ ev.id }}"
+                 class="tagloss-retag-link">
+                Re-tag
+              </a>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="action-card__empty action-card__empty--mb">Sin peces pendientes de re-tag.</p>
+          {% endif %}
+
+          <a href="/views/ui/ponds/{{ pond.id }}/tag-detachment/new" class="action-btn action-btn--tagloss">+ Registrar pez sin tag</a>
+          {% if pending_detachment_events %}
+          <a href="/views/ui/ponds/{{ pond.id }}/tag-reconciliation"
+             class="tagloss-reconcile-link">
+            Reconciliar al vaciar estanque →
+          </a>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- 4) Muestreo -->
+      <div class="action-card action-card--sampling is-collapsed">
+        <button type="button" class="action-card__toggle" aria-expanded="false" aria-label="Expandir o colapsar Muestreo" title="Muestreo" onclick="toggleActionCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-4-4-3 3"/></svg>
+            <span class="action-card__title-text">Muestreo</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          <form method="post" action="/views/ui/ponds/{{ pond.id }}/sampling/new">
+            <input type="hidden" name="registry_date" id="sampling-date-input" value="" />
+            <button type="submit" class="action-btn action-btn--sampling">📏 Iniciar muestreo</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- 5) Mortalidad -->
+      <div class="action-card action-card--mortality is-collapsed">
+        <button type="button" class="action-card__toggle" aria-expanded="false" aria-label="Expandir o colapsar Mortalidad" title="Mortalidad" onclick="toggleActionCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span class="action-card__title-text">Mortalidad</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          {% if unregistered_lot_options %}
+          <form method="post" action="/views/ui/ponds/{{ pond.id }}/mortality-untagged" onsubmit="return confirmMortality()">
+            <div class="action-card__fields">
+              <div class="action-field-group">
+                <label for="mort-lot">Lote</label>
+                {% if unregistered_lot_options|length == 1 %}
+                  <select id="mort-lot" name="lot_id">
+                    <option value="{{ unregistered_lot_options[0].id }}">{{ unregistered_lot_options[0].label }}</option>
+                  </select>
+                  <span class="saldo-hint">Saldo: {{ unregistered_lot_options[0].qty }}</span>
+                {% else %}
+                  <select id="mort-lot" name="lot_id" onchange="updateSaldo(this)">
+                    <option value="">Lote…</option>
+                    {% for opt in unregistered_lot_options %}
+                    <option value="{{ opt.id }}" data-qty="{{ opt.qty }}">{{ opt.label }} ({{ opt.qty }})</option>
+                    {% endfor %}
+                  </select>
+                  <span id="mort-saldo-hint" class="saldo-hint"></span>
+                {% endif %}
+              </div>
+              <div class="action-field-group">
+                <label for="mort-qty">Cantidad</label>
+                <input id="mort-qty" name="quantity" type="number" min="1" step="1" placeholder="Ej: 5" required />
+              </div>
+              <button type="submit" class="action-btn action-btn--mortality">Registrar</button>
+            </div>
+          </form>
+          {% else %}
+          <p class="action-card__empty">Sin peces sin marca en este estanque.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      </aside>
+    </div><!-- /.detail-content -->
+
+  </div>
+
+  <script>
+    (function() {
+      const select = document.getElementById('femaleDestPondSelect');
+      const hidden = document.getElementById('femaleDestPondHidden');
+      if (!select || !hidden) {
+        return;
+      }
+
+      const storageKey = 'femaleDestinationPond:' + String({{ pond.id }});
+      const saved = localStorage.getItem(storageKey);
+      if (saved && Array.from(select.options).some(opt => opt.value === saved)) {
+        select.value = saved;
+      }
+
+      hidden.value = select.value || '';
+
+      select.addEventListener('change', function() {
+        const value = select.value || '';
+        hidden.value = value;
+        if (value) {
+          localStorage.setItem(storageKey, value);
+        } else {
+          localStorage.removeItem(storageKey);
+        }
+      });
+    })();
+
+    function updateSaldo(select) {
+      const hint = document.getElementById('mort-saldo-hint');
+      if (!hint) return;
+      const opt = select.options[select.selectedIndex];
+      const qty = opt ? opt.getAttribute('data-qty') : null;
+      hint.textContent = qty ? `Saldo: ${qty} peces` : '';
+    }
+
+    function toggleActionCard(button) {
+      const card = button && button.closest('.action-card');
+      if (!card) return;
+      const isCollapsed = card.classList.toggle('is-collapsed');
+      button.setAttribute('aria-expanded', String(!isCollapsed));
+      updateActionSidebarCompactMode();
+    }
+
+    function updateActionSidebarCompactMode() {
+      const aside = document.querySelector('.action-cards');
+      const layout = document.querySelector('.detail-content');
+      if (!aside || !layout) return;
+      if (window.innerWidth <= 1100) {
+        aside.classList.remove('is-compact');
+        layout.classList.remove('right-compact');
+        return;
+      }
+
+      const hasExpanded = aside.querySelector('.action-card:not(.is-collapsed)') !== null;
+      aside.classList.toggle('is-compact', !hasExpanded);
+      layout.classList.toggle('right-compact', !hasExpanded);
+    }
+
+    (function initActionSidebarCompactMode() {
+      updateActionSidebarCompactMode();
+      window.addEventListener('resize', updateActionSidebarCompactMode);
+    })();
+
+    function updateMoveSaldo(select) {
+      const hint = document.getElementById('move-saldo-hint');
+      if (!hint) return;
+      const opt = select.options[select.selectedIndex];
+      const qty = opt ? opt.getAttribute('data-qty') : null;
+      hint.textContent = qty ? `Saldo: ${qty} peces` : '';
+    }
+
+    function confirmUntaggedTransfer() {
+      const lotSel = document.getElementById('move-lot');
+      const qty = document.getElementById('move-qty');
+      const dstSel = document.getElementById('move-destiny');
+      if (!lotSel || !qty || !dstSel) return true;
+
+      const lotText = lotSel.options[lotSel.selectedIndex]?.text || 'lote seleccionado';
+      const dstText = dstSel.options[dstSel.selectedIndex]?.text || 'estanque destino';
+      const n = qty.value;
+      return confirm(`¿Confirmar traslado de ${n} peces sin marca (${lotText}) hacia ${dstText}?`);
+    }
+
+    function confirmMortality() {
+      const lotSel = document.getElementById('mort-lot');
+      const qty = document.getElementById('mort-qty');
+      if (!lotSel || !qty) return true;
+      const lotText = lotSel.options[lotSel.selectedIndex]?.text || 'lote seleccionado';
+      const n = qty.value;
+      return confirm(`¿Confirmar mortalidad de ${n} peces sin marca del ${lotText}?\nEsta acción no se puede deshacer.`);
+    }
+
+    function filterPitRows(rawValue) {
+      const query = (rawValue || '').trim().toLowerCase();
+      const rows = document.querySelectorAll('tr.fish-row');
+      rows.forEach((row) => {
+        const pit = row.getAttribute('data-pit') || '';
+        row.style.display = pit.includes(query) ? '' : 'none';
+      });
+    }
+
+    function updateDevelopmentStateOptions(fishId) {
+      const sexSelect = document.getElementById(`sex-${fishId}`);
+      const devSelect = document.getElementById(`dev-${fishId}`);
+      if (!sexSelect || !devSelect) return;
+
+      const femaleOptions = [
+        ['0', '0 - Sin ovas'],
+        ['1', '1 - Ovas blancas'],
+        ['2', '2 - Ovas amarillas'],
+        ['3', '3 - Ovas gris'],
+        ['4', '4 - Caviar'],
+        ['R', 'R - Revertida'],
+      ];
+      const maleOptions = [
+        ['0', '0 - Sin observacion'],
+        ['L', 'L - Lechoso'],
+      ];
+
+      const currentRaw = (devSelect.dataset.current || '').trim().toUpperCase();
+      const selectedRaw = (devSelect.value || currentRaw || '').trim().toUpperCase();
+      const sexValue = sexSelect.value;
+
+      const opts = [];
+      opts.push(['', 'N/D']);
+      if (sexValue === 'f') {
+        opts.push(...femaleOptions);
+      } else if (sexValue === 'm') {
+        opts.push(...maleOptions);
+      }
+
+      const validValues = new Set(opts.map(o => o[0]));
+      if (selectedRaw && !validValues.has(selectedRaw)) {
+        opts.push([selectedRaw, `Actual (legacy): ${selectedRaw}`]);
+      }
+
+      devSelect.innerHTML = '';
+      opts.forEach(([value, label]) => {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = label;
+        devSelect.appendChild(opt);
+      });
+
+      devSelect.value = selectedRaw && opts.some(([v]) => v === selectedRaw) ? selectedRaw : '';
+    }
+
+    (function initDevelopmentStateSelects() {
+      document.querySelectorAll('select[id^="dev-"]').forEach((sel) => {
+        const fishId = sel.id.replace('dev-', '');
+        updateDevelopmentStateOptions(fishId);
+      });
+    })();
+
+    (function normalizeDiameterDecimalInputs() {
+      const diameterInputs = document.querySelectorAll('input[name="diameter"]');
+      if (!diameterInputs.length) return;
+
+      function normalizeValue(input) {
+        if (!input) return;
+        const raw = input.value || '';
+        const normalized = raw.replace(/,/g, '.');
+        if (normalized !== raw) {
+          input.value = normalized;
+        }
+      }
+
+      diameterInputs.forEach((input) => {
+        input.addEventListener('keydown', (event) => {
+          if (event.key !== ',') return;
+          event.preventDefault();
+          if (typeof input.setRangeText === 'function') {
+            const start = input.selectionStart ?? input.value.length;
+            const end = input.selectionEnd ?? input.value.length;
+            input.setRangeText('.', start, end, 'end');
+          } else {
+            input.value = `${input.value || ''}.`;
+          }
+        });
+
+        input.addEventListener('input', () => normalizeValue(input));
+        input.addEventListener('change', () => normalizeValue(input));
+      });
+    })();
+
+    // Setear fecha de hoy al botón de muestreo
+    (function() {
+      const inp = document.getElementById('sampling-date-input');
+      if (inp) {
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        inp.value = `${yyyy}-${mm}-${dd}`;
+      }
+    })();
+  </script>
+
+  <script>
+  // ── PIT tag reuse logic ──────────────────────────────────────────────────
+  // Called by the Registrar PIT submit button
+  function handleRegisterSubmit(event) {
+    const tagInput = document.querySelector('input[name="internal_id"][form="register-fish-form"]');
+    if (!tagInput) return true;
+    const tag = tagInput.value.trim().toUpperCase();
+    if (!tag) return true;
+    // Prevent default form submit; we'll check first
+    event.preventDefault();
+    fetch(`/views/ui/fish/check-pit-tag?tag=${encodeURIComponent(tag)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === 'ok') {
+          // Free — just ask the normal confirm and submit
+          if (confirm('¿Confirmar registro de PIT tag en esta laguna?')) {
+            document.getElementById('confirmReuseFlag').value = '';
+            document.getElementById('register-fish-form').submit();
+          }
+        } else if (data.status === 'blocked') {
+          showRegisterWarning(data.message, false);
+        } else if (data.status === 'reuse') {
+          // Store the message for the confirm banner
+          window._reuseMsg = data.message;
+          showRegisterWarning(data.message, true);
+        }
+      })
+      .catch(() => {
+        // On network error, fall through to normal submit
+        if (confirm('¿Confirmar registro de PIT tag en esta laguna?')) {
+          document.getElementById('register-fish-form').submit();
+        }
+      });
+    return false;
+  }
+
+  function showRegisterWarning(message, isReuse) {
+    let banner = document.getElementById('register-warn-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'register-warn-banner';
+      // Insert before the table
+      const tableWrap = document.querySelector('.table-wrap');
+      tableWrap.parentNode.insertBefore(banner, tableWrap);
+    }
+    banner.className = isReuse ? 'flash warn' : 'flash error';
+    banner.innerHTML = message;
+    if (isReuse) {
+      banner.innerHTML += '<br/><button type="button" class="confirm-reuse-btn" onclick="confirmReuseAndSubmit()">Confirmar reutilización</button>'
+                        + '<button type="button" class="cancel-reuse-btn" onclick="document.getElementById(\'register-warn-banner\').style.display=\'none\'">Cancelar</button>';
+    }
+    banner.style.display = '';
+    banner.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  }
+
+  function confirmReuseAndSubmit() {
+    if (confirm('¿Confirmar reutilización del PIT tag de un pez fallecido?')) {
+      document.getElementById('confirmReuseFlag').value = '1';
+      document.getElementById('register-fish-form').submit();
+    }
+  }
+  </script>
+</div><!-- /.main-content -->
+</div><!-- /.app-shell -->
+</body>
+</html>

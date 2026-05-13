@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% if is_new %}Nuevo Estanque{% else %}Editar Estanque{% endif %}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title-wrap h1 { font-size: 1.2rem; font-weight: 700; }
+    .title-wrap p { font-size: .82rem; opacity: .75; margin-top: 2px; }
+    .back-link {
+      color: #fff;
+      text-decoration: none;
+      font-size: .85rem;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 8px;
+      padding: 6px 10px;
+    }
+
+    .container { max-width: 720px; margin: 0 auto; padding: 26px 20px; }
+    .form-card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      padding: 18px;
+    }
+    .flash {
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      margin-bottom: 14px;
+      font-weight: 600;
+    }
+    .flash.ok {
+      color: #166534;
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+    }
+    .flash.error {
+      color: #991b1b;
+      background: #fff1f2;
+      border: 1px solid #fca5a5;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .field { margin-bottom: 14px; }
+    .field label {
+      display: block;
+      font-size: .83rem;
+      font-weight: 700;
+      color: #4b5563;
+      margin-bottom: 6px;
+    }
+    .field input,
+    .field select {
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 9px 10px;
+      font-size: .9rem;
+      background: #fff;
+    }
+    .field input[readonly] {
+      background: #f9fafb;
+      color: #6b7280;
+    }
+    .hint {
+      font-size: .8rem;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .save-btn {
+      border: none;
+      border-radius: 8px;
+      background: #0f766e;
+      color: #fff;
+      padding: 10px 14px;
+      font-size: .9rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .save-btn:hover { background: #0b5f59; }
+    .cancel-btn {
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      background: #fff;
+      color: #374151;
+      padding: 10px 14px;
+      font-size: .9rem;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    @media (max-width: 720px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title-wrap">
+      <h1>{% if is_new %}Nuevo Estanque{% else %}Editar Estanque{% endif %}</h1>
+      {% if is_new %}
+      <p>Crear nuevo estanque{% if parent_name %} · sub-estanque de {{ parent_name }}{% endif %}</p>
+      {% else %}
+      <p>{{ pond.name }} · ID interno: {{ pond.internal_id or 'N/D' }}</p>
+      {% endif %}
+    </div>
+    <a class="back-link" href="/views/ui/ponds">← Estanques</a>
+  </header>
+
+  <div class="container">
+    <div class="form-card">
+      {% if msg %}
+      <div class="flash {{ 'ok' if status == 'ok' else 'error' }}">{{ msg }}</div>
+      {% endif %}
+
+      <form method="post" action="{% if is_new %}/views/ui/ponds/new{% else %}/views/ui/ponds/{{ pond.id }}/edit{% endif %}">
+        <div class="grid">
+          <div class="field">
+            <label>Nombre</label>
+            <input type="text" name="name" value="{% if not is_new %}{{ pond.name or '' }}{% endif %}" title="Nombre del estanque" required />
+          </div>
+          <div class="field">
+            <label>ID interno</label>
+            <input type="text" name="internal_id" value="{% if not is_new %}{{ pond.internal_id or '' }}{% endif %}" title="ID interno" />
+          </div>
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <label>Código</label>
+            <input type="text" name="code" value="{% if not is_new %}{{ pond.code or '' }}{% endif %}" title="Código del estanque" />
+          </div>
+          <div class="field">
+            <label>Volumen (L)</label>
+            <input type="number" name="volume" min="0" step="1" value="{% if not is_new %}{{ pond.volume or 0 }}{% else %}0{% endif %}" title="Volumen en litros" />
+          </div>
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <label>Unidad de cultivo</label>
+            <select name="cultivation_unit_id" title="Unidad de cultivo">
+              <option value="">— Sin unidad —</option>
+              {% for cu in cultivation_units %}
+              <option value="{{ cu.id }}" {% if not is_new and pond.cultivation_unit_id == cu.id %}selected{% elif is_new and pre_cultivation_unit_id == cu.id %}selected{% endif %}>{{ cu.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label>Tipo de estanque</label>
+            <select name="pond_type_id" title="Tipo de estanque">
+              <option value="">— Sin tipo —</option>
+              {% for pt in pond_types %}
+              <option value="{{ pt.id }}" {% if not is_new and pond.pond_type_id == pt.id %}selected{% endif %}>{{ pt.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <label>Modo depuración</label>
+            <select name="depuration" id="depurationSelect" title="Modo depuración" onchange="syncState()">
+              <option value="false" {% if is_new or not pond.depuration %}selected{% endif %}>No</option>
+              <option value="true" {% if not is_new and pond.depuration %}selected{% endif %}>Sí</option>
+            </select>
+            <div class="hint">Si activa depuración, el estado se ajusta automáticamente a depuration.</div>
+          </div>
+
+          <div class="field">
+            <label>Estado</label>
+            <select name="state" id="stateSelect" title="Estado del estanque">
+              <option value="success" {% if is_new or pond.state == 'success' %}selected{% endif %}>success</option>
+              <option value="active" {% if not is_new and pond.state == 'active' %}selected{% endif %}>active</option>
+              <option value="inactive" {% if not is_new and pond.state == 'inactive' %}selected{% endif %}>inactive</option>
+              <option value="depuration" {% if not is_new and pond.state == 'depuration' %}selected{% endif %}>depuration</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Estanque padre (agrupación)</label>
+          <select name="parent_pond_id" title="Estanque padre">
+            <option value="0">— Sin padre (estanque independiente) —</option>
+            {% for p in all_ponds %}
+            <option value="{{ p.id }}"
+              {% if not is_new and pond.parent_pond_id == p.id %}selected
+              {% elif is_new and pre_parent_id == p.id %}selected
+              {% endif %}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+          <div class="hint">Si asignas un padre, este estanque aparecerá agrupado bajo él en la vista de estanques.</div>
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="save-btn">{% if is_new %}Crear estanque{% else %}Guardar cambios{% endif %}</button>
+          <a class="cancel-btn" href="/views/ui/ponds">Cancelar</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    function syncState() {
+      const depSelect = document.getElementById('depurationSelect');
+      const stateSelect = document.getElementById('stateSelect');
+      if (depSelect.value === 'true') {
+        stateSelect.value = 'depuration';
+      }
+    }
+    syncState();
+  </script>
+</body>
+</html>

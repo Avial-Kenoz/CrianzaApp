@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reconciliación de tags — {{ pond.name }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title-wrap h1 { font-size: 1.2rem; font-weight: 700; }
+    .title-wrap p  { font-size: .82rem; opacity: .7; margin-top: 2px; }
+    .back-link {
+      color: #fff;
+      text-decoration: none;
+      font-size: .85rem;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 8px;
+      padding: 6px 10px;
+    }
+    .container { max-width: 720px; margin: 32px auto; padding: 0 24px; }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .summary-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.07);
+      text-align: center;
+    }
+    .summary-card .s-label { font-size: .72rem; color: #6b7280; text-transform: uppercase; font-weight: 600; margin-bottom: 4px; }
+    .summary-card .s-value { font-size: 1.5rem; font-weight: 700; color: #1a1a2e; }
+    .summary-card.warn .s-value { color: #d97706; }
+
+    .card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 1px 8px rgba(0,0,0,.09);
+      margin-bottom: 20px;
+    }
+    .card h2 { font-size: 1.05rem; font-weight: 700; margin-bottom: 6px; }
+    .card .subtitle { font-size: .85rem; color: #6b7280; margin-bottom: 20px; line-height: 1.5; }
+
+    .alert-box {
+      background: #fef3c7;
+      border: 1px solid #f59e0b;
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: .85rem;
+      color: #92400e;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .event-row {
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      background: #fafafa;
+    }
+    .event-row .ev-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+    .event-row .ev-id { font-size: .8rem; font-weight: 700; color: #6b7280; }
+    .event-row .ev-date { font-size: .8rem; color: #9ca3af; }
+    .event-row .ev-notes { font-size: .82rem; color: #374151; margin-bottom: 10px; font-style: italic; }
+
+    .resolution-options { display: flex; gap: 10px; flex-wrap: wrap; }
+    .resolution-option { flex: 1; min-width: 140px; }
+    .resolution-option input[type="radio"] { display: none; }
+    .resolution-option label {
+      display: block;
+      padding: 9px 12px;
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      font-size: .82rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      color: #374151;
+      transition: border-color .15s, background .15s;
+    }
+    .resolution-option input[type="radio"]:checked + label {
+      border-color: #6366f1;
+      background: #eef2ff;
+      color: #4338ca;
+    }
+    .resolution-note { font-weight: 400; color: #6b7280; }
+    .resolution-option.danger input[type="radio"]:checked + label {
+      border-color: #dc2626;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+    .resolution-option.warn input[type="radio"]:checked + label {
+      border-color: #d97706;
+      background: #fffbeb;
+      color: #92400e;
+    }
+
+    .btn-row { display: flex; gap: 10px; margin-top: 24px; }
+    .btn {
+      padding: 11px 24px;
+      border-radius: 8px;
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+    }
+    .btn-primary { background: #6366f1; color: #fff; }
+    .btn-cancel  { background: #f3f4f6; color: #374151; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-cancel:hover  { background: #e5e7eb; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="title-wrap">
+    <h1>Reconciliación de tags perdidos</h1>
+    <p>{{ pond.name }}</p>
+  </div>
+  <a class="back-link" href="/views/ui/ponds/{{ pond.id }}">← Volver</a>
+</header>
+
+<div class="container">
+
+  <!-- Resumen del estado del estanque -->
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="s-label">Peces con tag</div>
+      <div class="s-value">{{ tagged_total }}</div>
+    </div>
+    <div class="summary-card">
+      <div class="s-label">Peces sin registrar</div>
+      <div class="s-value">{{ unregistered_total }}</div>
+    </div>
+    <div class="summary-card warn">
+      <div class="s-label">Tags pendientes</div>
+      <div class="s-value">{{ events|length }}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Declarar destino de cada pez sin tag</h2>
+    <p class="subtitle">
+      Para cada evento de pérdida de tag pendiente, indique cómo fue resuelto al vaciar el estanque.
+      Esta acción cierra los eventos definitivamente y no puede deshacerse.
+    </p>
+
+    <div class="alert-box">
+      <strong>Acción de superusuario.</strong> Al confirmar, todos los eventos seleccionados
+      quedan marcados como <em>cerrados</em>. Los contadores del estanque no cambian aquí —
+      asegúrese de haber vaciado ya los peces sin registrar antes de reconciliar.
+    </div>
+
+    <form method="post" action="/views/ui/ponds/{{ pond.id }}/tag-reconciliation">
+
+      {% for ev in events %}
+      <div class="event-row">
+        <div class="ev-header">
+          <span class="ev-id">Evento #{{ ev.id }}</span>
+          <span class="ev-date">{{ ev.event_date.strftime('%d/%m/%Y') if ev.event_date else '—' }}</span>
+        </div>
+        {% if ev.notes %}
+        <p class="ev-notes">{{ ev.notes }}</p>
+        {% endif %}
+
+        <div class="resolution-options">
+          <div class="resolution-option">
+            <input type="radio" id="res_{{ ev.id }}_left" name="resolution_{{ ev.id }}"
+                   value="left_unregistered" checked />
+            <label for="res_{{ ev.id }}_left">Salió sin registrar<br><small class="resolution-note">Con el pool de peces sin tag</small></label>
+          </div>
+          <div class="resolution-option danger">
+            <input type="radio" id="res_{{ ev.id }}_mort" name="resolution_{{ ev.id }}"
+                   value="mortality" />
+            <label for="res_{{ ev.id }}_mort">Mortalidad<br><small class="resolution-note">Murió sin re-taggearse</small></label>
+          </div>
+          <div class="resolution-option warn">
+            <input type="radio" id="res_{{ ev.id }}_other" name="resolution_{{ ev.id }}"
+                   value="other" />
+            <label for="res_{{ ev.id }}_other">Otro<br><small class="resolution-note">Ver notas del evento</small></label>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary">Confirmar reconciliación ({{ events|length }} eventos)</button>
+        <a href="/views/ui/ponds/{{ pond.id }}" class="btn btn-cancel">Cancelar</a>
+      </div>
+    </form>
+  </div>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,863 @@
+FASTAPP ETAPA 1 - ESPECIFICACION EJECUTABLE
+Fecha: 2026-04-28
+
+1) Objetivo
+Construir una nueva aplicacion enfocada en trazabilidad diaria de peces con alto rendimiento.
+Modulo legacy principal: Crianza.
+
+2) Alcance funcional Etapa 1 (IN)
+- Peces (busqueda y ficha de trazabilidad)
+- Movimientos de estanques
+- Muestreo de hembras
+- Mortalidad (marcada y no marcada)
+- Depuracion
+
+3) Alcance funcional Etapa 1 (OUT)
+- Fabrica completa
+- Agua (Etapa 2)
+- Alimentacion (Etapa 3)
+- Dashboard general
+- Notificaciones
+- API publica
+
+4) Entidades minimas requeridas
+Core trazabilidad:
+- fish
+- lots
+- ponds
+- ponds_movements
+- fish_female_samplings
+- mortality_reports
+- marked_mortality_registries
+- unmarked_mortality_registries
+- depuration_periodic_samplings
+- transports
+
+Catalogos y seguridad:
+- species
+- cultivation_units
+- pond_types
+- users
+- roles
+- users_roles
+
+5) Reglas de negocio clave (extraidas de comportamiento actual)
+- Un movimiento debe tener fish_quantity y movement_time.
+- movement_reason permitido:
+  mortality, depuration, inventory_mismatch, registration, devious,
+  first_load, pond_movement, unmarked_devious, missing_number.
+- Si el pez entra a estanque de depuracion, estado del pez cambia a depuration.
+- Si sale de depuracion a estanque normal, estado vuelve a alive.
+
+6) Modelo de datos objetivo (v1)
+Nota: mantener legacy_id BIGINT en todas las tablas migradas para trazabilidad con sistema antiguo.
+
+Tabla: species
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- name VARCHAR(120) NOT NULL
+- internal_id VARCHAR(120)
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: cultivation_units
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- name VARCHAR(120) NOT NULL
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: pond_types
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- name VARCHAR(120) NOT NULL
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: lots
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- species_id BIGINT NOT NULL FK species(id)
+- name VARCHAR(120) NOT NULL
+- internal_id VARCHAR(120)
+- origin VARCHAR(120)
+- hatch_year INT
+- creation_time TIMESTAMP
+- creation_date TIMESTAMP
+- national BOOLEAN DEFAULT FALSE
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: ponds
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- name VARCHAR(120) NOT NULL
+- internal_id VARCHAR(120)
+- code VARCHAR(120)
+- cultivation_unit_id BIGINT FK cultivation_units(id)
+- pond_type_id BIGINT FK pond_types(id)
+- lot_id BIGINT FK lots(id)
+- volume INT DEFAULT 0
+- depuration BOOLEAN DEFAULT FALSE
+- state VARCHAR(50) DEFAULT 'success'
+- biomass NUMERIC(14,3)
+- avg_weight NUMERIC(14,3)
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: users
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- email VARCHAR(190) NOT NULL UNIQUE
+- name VARCHAR(120)
+- lastname VARCHAR(120)
+- rut VARCHAR(30)
+- active BOOLEAN DEFAULT TRUE
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: roles
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- name VARCHAR(120) NOT NULL
+- resource_type VARCHAR(120)
+- resource_id BIGINT
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: users_roles
+- user_id BIGINT FK users(id)
+- role_id BIGINT FK roles(id)
+- PRIMARY KEY (user_id, role_id)
+
+Tabla: fish
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- internal_id VARCHAR(120) NOT NULL
+- lot_id BIGINT NOT NULL FK lots(id)
+- sex VARCHAR(20)
+- state VARCHAR(30) DEFAULT 'alive'
+- registration_time TIMESTAMP
+- devious_time TIMESTAMP
+- date_of_death TIMESTAMP
+- depuration_start_time TIMESTAMP
+- mortality_id VARCHAR(120)
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: ponds_movements
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- source_pond_id BIGINT FK ponds(id)
+- destiny_pond_id BIGINT FK ponds(id)
+- fish_id BIGINT FK fish(id)
+- lot_id BIGINT FK lots(id)
+- fish_quantity INT NOT NULL
+- movement_reason VARCHAR(50) NOT NULL
+- movement_time TIMESTAMP NOT NULL
+- folio INT
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: fish_female_samplings
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- user_id BIGINT FK users(id)
+- fish_id BIGINT NOT NULL FK fish(id)
+- length NUMERIC(10,3)
+- weight NUMERIC(10,3)
+- oocyte_size NUMERIC(10,3)
+- color VARCHAR(80)
+- gonad_size NUMERIC(10,3)
+- flavor VARCHAR(80)
+- development_state VARCHAR(80)
+- harvest_date TIMESTAMP
+- registry_time TIMESTAMP
+- diameter NUMERIC(10,3)
+- agglomeration INT
+- turgor INT
+- fat INT
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: mortality_reports
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- comment TEXT
+- registry_time TIMESTAMP
+- breeding_user_id BIGINT FK users(id)
+- supervisor_user_id BIGINT FK users(id)
+- general_user_id BIGINT FK users(id)
+- supervisor_validation BOOLEAN DEFAULT FALSE
+- general_validation BOOLEAN DEFAULT FALSE
+- supervisor_validation_time TIMESTAMP
+- general_validation_time TIMESTAMP
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: marked_mortality_registries
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- mortality_report_id BIGINT NOT NULL FK mortality_reports(id)
+- ponds_movement_id BIGINT FK ponds_movements(id)
+- comment TEXT
+- registry_time TIMESTAMP
+- supervisor_validation BOOLEAN DEFAULT FALSE
+- general_validation BOOLEAN DEFAULT FALSE
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: unmarked_mortality_registries
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- mortality_report_id BIGINT NOT NULL FK mortality_reports(id)
+- ponds_movement_id BIGINT FK ponds_movements(id)
+- comment TEXT
+- registry_time TIMESTAMP
+- supervisor_validation BOOLEAN DEFAULT FALSE
+- general_validation BOOLEAN DEFAULT FALSE
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: depuration_periodic_samplings
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- fish_id BIGINT FK fish(id)
+- pond_id BIGINT FK ponds(id)
+- development_state VARCHAR(80)
+- width NUMERIC(10,3)
+- heigh NUMERIC(10,3)
+- weight NUMERIC(10,3)
+- harvest_date DATE
+- color VARCHAR(80)
+- gonad_dimension NUMERIC(10,3)
+- oocyte_size NUMERIC(10,3)
+- flavor VARCHAR(80)
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla: transports
+- id BIGSERIAL PK
+- legacy_id BIGINT UNIQUE
+- sheet_number INT
+- delivery_date TIMESTAMP
+- chofer VARCHAR(120)
+- phone_number BIGINT
+- license_plate VARCHAR(40)
+- observations TEXT
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+
+Tabla derivada recomendada: fish_traceability_events
+- id BIGSERIAL PK
+- fish_id BIGINT NOT NULL FK fish(id)
+- event_type VARCHAR(40) NOT NULL
+- event_time TIMESTAMP NOT NULL
+- source_table VARCHAR(80) NOT NULL
+- source_id BIGINT NOT NULL
+- payload JSONB NOT NULL
+
+7) Indices de rendimiento obligatorios
+- fish(internal_id)
+- fish(state)
+- fish(lot_id)
+- ponds_movements(fish_id, movement_time DESC)
+- ponds_movements(lot_id, movement_time DESC)
+- ponds_movements(source_pond_id, movement_time DESC)
+- ponds_movements(destiny_pond_id, movement_time DESC)
+- fish_female_samplings(fish_id, registry_time DESC)
+- mortality_reports(registry_time DESC)
+- marked_mortality_registries(mortality_report_id)
+- unmarked_mortality_registries(mortality_report_id)
+- depuration_periodic_samplings(fish_id, created_at DESC)
+- depuration_periodic_samplings(pond_id, created_at DESC)
+
+8) APIs minimas Etapa 1
+Peces:
+- GET /api/v1/fish?query={internal_id|rut|lot}
+- GET /api/v1/fish/{id}
+- GET /api/v1/fish/{id}/traceability
+
+Movimientos:
+- GET /api/v1/movements?from=&to=&lot_id=&pond_id=&reason=
+- POST /api/v1/movements
+
+Muestreo hembras:
+- GET /api/v1/female-samplings?fish_id=&from=&to=
+- POST /api/v1/female-samplings
+
+Mortalidad:
+- GET /api/v1/mortality-reports?from=&to=&validated=
+- POST /api/v1/mortality-reports
+- POST /api/v1/mortality-reports/{id}/marked
+- POST /api/v1/mortality-reports/{id}/unmarked
+
+Depuracion:
+- GET /api/v1/depuration-samplings?fish_id=&pond_id=&from=&to=
+- POST /api/v1/depuration-samplings
+
+9) SLOs y criterios de aceptacion Etapa 1
+- Busqueda de pez por internal_id: p95 < 500ms
+- Ficha de pez: p95 < 1.5s
+- Lista de movimientos/mortalidad/depuracion: p95 < 2s
+- Tasa de error API (5xx): < 0.5%
+- Integridad referencial en carga inicial: 100%
+
+10) Estrategia de despliegue
+- FastApp vive en paralelo al sistema actual.
+- Fase de sombra: lectura de FastApp validada por usuarios clave.
+- Luego habilitar escritura progresiva por modulo (movimientos, mortalidad, etc.).
+
+11) Riesgos y mitigacion
+- Riesgo: data legacy inconsistente.
+  Mitigacion: tablas staging + reglas de calidad + reporte diario de errores.
+- Riesgo: consultas lentas por joins historicos.
+  Mitigacion: tabla fish_traceability_events + indices compuestos.
+- Riesgo: cambios de operacion durante rollout.
+  Mitigacion: feature flags por modulo y rollback por endpoint.
+
+12) Reglas actuales de fish y decision para FastApp
+
+12.1 Mantener (consolidar)
+- Regla: internal_id de fish debe ser unico para peces vivos operativos.
+  Decision FastApp: MANTENER.
+  Implementacion: unicidad por internal_id en registros activos (state en alive/depuration/missing_number).
+
+- Regla: estados funcionales de fish usados por operacion.
+  Estados observados: alive, depuration, dead, in_process, processed, missing_number.
+  Decision FastApp: MANTENER.
+  Implementacion: state como enum controlado (sin valores libres).
+
+- Regla: trazabilidad por eventos de movimiento (ponds_movements).
+  Decision FastApp: MANTENER.
+  Implementacion: todo cambio relevante de fish debe generar evento en fish_traceability_events.
+
+- Regla: al mover un pez a estanque de depuracion se cambia state a depuration y se registra inicio.
+  Decision FastApp: MANTENER.
+  Implementacion: set state=depuration y depuration_start_time=movement_time en transaccion unica.
+
+- Regla: mortalidad marcada genera salida del estanque y estado dead.
+  Decision FastApp: MANTENER.
+  Implementacion: crear ponds_movement(reason=mortality), registry de mortalidad y cambio de estado en una sola transaccion.
+
+- Regla: muestreo de hembras ligado a fish y usuario.
+  Decision FastApp: MANTENER.
+  Implementacion: fish_female_samplings con reglas de dominio para development_state, agglomeration, turgor, fat.
+
+12.2 Modificar (mejorar y corregir)
+- Regla actual: se usa columna typo dupuration_start_time en varios puntos.
+  Decision FastApp: MODIFICAR.
+  Cambio: estandarizar a depuration_start_time y mantener mapeo ETL desde campo legacy.
+
+- Regla actual: transiciones de estado se hacen con update_column/update directos en multiples puntos.
+  Decision FastApp: MODIFICAR.
+  Cambio: centralizar transiciones en un servicio de dominio FishStateTransitionService con validaciones.
+
+- Regla actual: validacion de internal_id completamente global impide reutilizacion historica.
+  Decision FastApp: MODIFICAR.
+  Cambio: permitir reciclar codigo historico solo para peces cerrados si negocio lo requiere,
+  preservando unicidad operativa en activos.
+
+- Regla actual: logica de biomasa en controladores (fish_controller, ponds_movements_controller, mortality_reports_controller).
+  Decision FastApp: MODIFICAR.
+  Cambio: mover a servicio unico de balance de biomasa para evitar divergencias.
+
+- Regla actual: mortalidad no marcada crea movimientos por cantidad sin fish_id.
+  Decision FastApp: MODIFICAR.
+  Cambio: mantener la funcion por necesidad operativa, pero tipificar como evento agregado
+  y exigir lot_id/pond_id/usuario/fecha/comentario obligatorios.
+
+- Regla actual: devious y unmarked_devious mezclan semantica de salida/egreso/mortalidad.
+  Decision FastApp: MODIFICAR.
+  Cambio: normalizar catalogo de razones y documentar equivalencias legacy.
+
+12.3 Eliminar (no llevar a FastApp)
+- Regla actual: mapeo manual de nombres de estanque en Fish.pond_by_name.
+  Decision FastApp: ELIMINAR.
+  Motivo: hardcode fragil, duplicado y con errores tipograficos.
+
+- Regla actual: metodos de carga/fix historicos en modelos (find_missing_fish, fix_missing_fish, load_basic, fix_registries ad-hoc).
+  Decision FastApp: ELIMINAR.
+  Motivo: reemplazar por ETL versionado y jobs auditables.
+
+- Regla actual: uso de callbacks destructivos dispersos para borrar cascadas manualmente.
+  Decision FastApp: ELIMINAR.
+  Motivo: reemplazar por FK con reglas ON DELETE y soft-delete cuando aplique.
+
+12.4 Inconsistencias detectadas (deben resolverse en FastApp)
+- ExitRequest llama fish.mark_as_dead, pero el metodo no existe en Fish.
+- En save_imported_fishes hay asignacion fish.sex='F' (asignacion) en vez de comparacion.
+- Hay dependencias de estado y biomasa repartidas en varios controladores, con riesgo de desalineacion.
+- Existen reglas de depuracion y mortalidad en callbacks y en controladores al mismo tiempo.
+
+12.5 Contrato de transiciones de estado propuesto
+- alive -> depuration
+  Trigger: movimiento reason=depuration a estanque depuracion.
+
+- depuration -> alive
+  Trigger: movimiento desde estanque depuracion a estanque no depuracion.
+
+- alive|depuration -> dead
+  Trigger: registro de mortalidad marcada o egreso de depuracion validado.
+
+- alive|depuration -> missing_number
+  Trigger: ajuste de inventario individual validado.
+
+- dead -> in_process -> processed
+  Trigger: flujo de planta (fuera de Etapa 1, pero estado reservado).
+
+Todas las transiciones deben:
+- ser transaccionales,
+- registrar actor (user_id), timestamp y motivo,
+- generar evento en fish_traceability_events.
+
+13) Reglas actuales de movimientos de estanque y decision para FastApp
+
+13.1 Mantener (consolidar)
+- Regla: todo movimiento debe tener fish_quantity y movement_time.
+  Decision FastApp: MANTENER.
+
+- Regla: un movimiento puede ser individual (fish_id) o agregado (sin fish_id).
+  Decision FastApp: MANTENER.
+
+- Regla: source_pond_id y destiny_pond_id pueden ser nulos segun tipo de evento.
+  Casos validos actuales:
+  - entrada (source null),
+  - salida (destiny null),
+  - traslado entre estanques (ambos presentes).
+  Decision FastApp: MANTENER.
+
+- Regla: catalogo de movement_reason controla semantica operativa.
+  Valores observados:
+  mortality, depuration, inventory_mismatch, registration, devious,
+  first_load, pond_movement, unmarked_devious, missing_number.
+  Decision FastApp: MANTENER.
+
+- Regla: mortalidad marcada no debe duplicarse por fish.
+  Decision FastApp: MANTENER.
+  Implementacion: constraint/validacion para evitar mas de un movimiento mortality por fish.
+
+- Regla: el movimiento impacta trazabilidad y stock del estanque.
+  Decision FastApp: MANTENER.
+  Implementacion: cada movimiento debe crear evento de trazabilidad.
+
+13.2 Modificar (mejorar y corregir)
+- Regla actual: check_fish_quantity_consistency crea inventory_mismatch automaticamente en before_save.
+  Decision FastApp: MODIFICAR.
+  Cambio: no autocrear movimientos ocultos; generar error de dominio o sugerencia explicita al usuario.
+
+- Regla actual: estado de fish cambia en after_save de PondsMovement (acoplamiento fuerte).
+  Decision FastApp: MODIFICAR.
+  Cambio: mover transiciones a servicio de dominio transaccional (MovementPostingService).
+
+- Regla actual: actualizacion de biomasa repartida en varios controladores.
+  Decision FastApp: MODIFICAR.
+  Cambio: centralizar calculo en un solo servicio (BiomassLedgerService) con reglas unicas.
+
+- Regla actual: lot_id se deriva con source.unidentified_lots.last en varios flujos.
+  Decision FastApp: MODIFICAR.
+  Cambio: lot_id obligatorio y validado por pertenencia al contexto del movimiento.
+
+- Regla actual: mezcla de reglas de UI y dominio (check_ponds_mix, correcciones de muestreo en controller).
+  Decision FastApp: MODIFICAR.
+  Cambio: separar reglas de validacion de mezcla de lotes y reglas de ajuste en capa de dominio.
+
+- Regla actual: validacion source != destiny esta comentada.
+  Decision FastApp: MODIFICAR.
+  Cambio: prohibir source=destiny para traslados normales; permitir solo eventos especiales definidos.
+
+- Regla actual: create hace doble save sobre el mismo objeto en rama marked_fish.
+  Decision FastApp: MODIFICAR.
+  Cambio: una sola persistencia por entidad y manejo transaccional por lote de peces.
+
+13.3 Eliminar (no llevar a FastApp)
+- Regla actual: metodos de carga/fix historicos dentro de modelo
+  (load_basic, inconsistencies_2022_08_26, check_ponds_movements).
+  Decision FastApp: ELIMINAR.
+  Motivo: reemplazar por ETL versionado y jobs auditables.
+
+- Regla actual: logica de compensacion implicita de inventario durante guardado.
+  Decision FastApp: ELIMINAR.
+  Motivo: los ajustes deben ser explicitos, trazables y aprobables.
+
+- Regla actual: mensajes/flash de depuracion y variables no usadas en controller.
+  Decision FastApp: ELIMINAR.
+  Motivo: ruido tecnico y riesgo de comportamiento inesperado.
+
+13.4 Inconsistencias detectadas (deben resolverse en FastApp)
+- Acoplamiento circular: movimientos actualizan fish, fish crea movimientos.
+- Efectos colaterales en callbacks (before_save/after_save) no transparentes para usuario.
+- Reglas de biomasa duplicadas entre fish_controller, ponds_movements_controller y mortality_reports_controller.
+- Falta de idempotencia para cargas masivas y reintentos.
+
+13.5 Contrato de movimiento propuesto (FastApp)
+- Tipos de movimiento (normalizados):
+  initial_load, registration, transfer, depuration_in, depuration_out,
+  mortality_marked, mortality_unmarked, inventory_adjustment, missing_number, devious.
+
+- Campos obligatorios:
+  movement_type, movement_time, fish_quantity, lot_id, performed_by_user_id.
+
+- Reglas estructurales:
+  - transfer/depuration_in/depuration_out: source y destiny obligatorios y distintos.
+  - initial_load/registration: source puede ser null.
+  - mortality/devious/missing_number: destiny null.
+  - si fish_id no es null, fish_quantity debe ser 1.
+
+- Reglas de consistencia:
+  - no permitir saldos negativos de peces por estanque/lote sin generar evento de ajuste explicito.
+  - no permitir movement_type fuera del catalogo.
+  - no permitir lot_id nulo.
+
+- Efectos obligatorios de posteo:
+  1) actualizar ledger de stock por estanque/lote,
+  2) actualizar estado de fish cuando aplique,
+  3) registrar evento en fish_traceability_events,
+  4) registrar auditoria (actor, origen, payload, timestamp).
+
+14) Reglas actuales de muestreos periodicos y decision para FastApp
+
+Nota de alcance:
+- En el plan funcional, muestreos periodicos no son operacion diaria.
+- Se recomienda mantenerlos fuera de Etapa 1 operativa y planificarlos para una etapa mensual especifica.
+
+14.1 Mantener (consolidar)
+- Regla: existe entidad cabecera (periodic_samplings) y detalle (fish_periodic_samplings).
+  Decision FastApp: MANTENER.
+
+- Regla: solo un muestreo activo por estanque.
+  Decision FastApp: MANTENER.
+
+- Regla: tipos de plan de muestreo: main y correction.
+  Decision FastApp: MANTENER.
+
+- Regla: tipos de registro por pez: routine_sampling, registration_sampling, ponds_movement.
+  Decision FastApp: MANTENER.
+
+- Regla: al guardar muestras se recalculan biomasa, peso promedio y largo promedio del plan.
+  Decision FastApp: MANTENER.
+
+- Regla: el tamano minimo sugerido del muestreo depende del fish_quantity del estanque.
+  Decision FastApp: MANTENER.
+
+14.2 Modificar (mejorar y corregir)
+- Regla actual: validacion de "solo un activo" se hace en capa app y puede fallar por concurrencia.
+  Decision FastApp: MODIFICAR.
+  Cambio: agregar indice unico parcial por pond_id donde active=true.
+
+- Regla actual: el guardado de muestreos borra todo y vuelve a insertar (destroy_all + recreate).
+  Decision FastApp: MODIFICAR.
+  Cambio: upsert por fila + versionado de set de muestreo para evitar perdida accidental.
+
+- Regla actual: conversion de unidades kg-m se hace en controlador.
+  Decision FastApp: MODIFICAR.
+  Cambio: estandarizar unidades en servicio de dominio y guardar siempre gramos/cm.
+
+- Regla actual: control de indice de condicion K usa comparacion potencialmente invertida
+  (a < indice_k_max OR a > indice_k_min).
+  Decision FastApp: MODIFICAR.
+  Cambio: definir claramente rango [k_min, k_max] y validar con regla consistente.
+
+- Regla actual: recalc de biomasa ocurre en callbacks de FishPeriodicSampling y tambien en controlador.
+  Decision FastApp: MODIFICAR.
+  Cambio: centralizar en SamplingAggregationService para evitar doble calculo divergente.
+
+- Regla actual: mezcla de fish_id real y fish_id textual en flujos de carga/manual.
+  Decision FastApp: MODIFICAR.
+  Cambio: fish_id siempre FK numerica; si no identificado, usar fish_id null con lot_id obligatorio.
+
+- Regla actual: preloaded_fish y minimum_sampling no tienen regla de negocio formal explicita.
+  Decision FastApp: MODIFICAR.
+  Cambio: documentar jerarquia de prioridad y restricciones operativas.
+
+14.3 Eliminar (no llevar a FastApp)
+- Regla actual: metodos historicos de carga masiva hardcodeados en modelos
+  (load_samples, load_samplings_nov_2021, initial_load).
+  Decision FastApp: ELIMINAR.
+  Motivo: reemplazar por ETL/jobs versionados.
+
+- Regla actual: logica de negocio en controladores con puts/debug y ramas inconsistentes.
+  Decision FastApp: ELIMINAR.
+  Motivo: mover a servicios de dominio testeables.
+
+- Regla actual: uso de columnas ambiguas en formularios (width/length mezcladas).
+  Decision FastApp: ELIMINAR.
+  Motivo: normalizar naming unico (length_cm, weight_g).
+
+14.4 Inconsistencias detectadas (deben resolverse en FastApp)
+- Flujo de creacion manual en FishPeriodicSamplingsController tiene asignaciones inconsistentes
+  de fish_id y busqueda de pond/fish.
+- En create_samplings hay riesgo de division por cero al calcular indice K (length=0).
+- Falta validacion de rango para weight/length y valores atipicos extremos.
+- Existen dos rutas de calculo de biomasa (callback y controlador), con posible desalineacion.
+
+14.5 Contrato de muestreo periodico propuesto (FastApp)
+- Entidad sampling_plan:
+  id, pond_id, lot_id, plan_type(main|correction), active, start_date, end_date,
+  created_by, sample_size_target, notes.
+
+- Entidad sampling_record:
+  id, sampling_plan_id, fish_id nullable, lot_id, pond_id, weight_g, length_cm,
+  sex_snapshot, sampled_at, sampled_by, record_type.
+
+- Reglas estructurales:
+  - Un solo plan activo por estanque (constraint DB).
+  - sampling_record requiere weight_g > 0 y length_cm > 0.
+  - si fish_id es null, lot_id obligatorio.
+
+- Reglas de calculo:
+  - biomasa_plan = sum(weight_g de registros del plan).
+  - avg_weight_plan = avg(weight_g).
+  - avg_length_plan = avg(length_cm).
+  - indice_k = weight_g / (length_cm^3) con validacion de limites configurables.
+
+- Reglas de auditoria:
+  - cada insercion/actualizacion de sampling_record registra actor y timestamp.
+  - cambios de estado active/inactive del plan deben quedar auditados.
+
+================================================================================
+SECCION 15: REGLAS DE NEGOCIO — MUESTREO DE HEMBRAS (fish_female_samplings)
+================================================================================
+
+Uso operativo: DIARIO (durante temporada de cosecha de ovas).
+Descripcion: registro de estado biologico de peces hembra para seguimiento de madurez de
+caviar. Alimenta decisiones de cosecha (fecha estimada de harvest).
+
+15.1 Mantener (llevar a FastApp sin cambios)
+- Regla: registro vinculado a un pez especifico (fish_id) + usuario que registra (user_id).
+  Decision FastApp: MANTENER.
+
+- Regla: development_state limitado a valores discretos del enum del laboratorio
+  (0, 1, 2, 3, 4, reverse, immature, null).
+  Decision FastApp: MANTENER — son los valores clinicamente definidos.
+
+- Regla: agglomeration, turgor, fat solo aceptan valores 1, 2, 3 o null.
+  Decision FastApp: MANTENER — escala fija de calidad organoleeptica.
+
+- Regla: campos optativos como oocyte_size, color, gonad_size, flavor, diameter
+  pueden registrarse o dejarse en null.
+  Decision FastApp: MANTENER — no todos los muestreos requieren todos los campos.
+
+- Regla: cada registro lleva registry_time (timestamp de creacion) y harvest_date
+  (fecha estimada de cosecha).
+  Decision FastApp: MANTENER.
+
+15.2 Modificar (mejorar y corregir)
+- Regla actual: development_state acepta string vacío ('') ademas de nil.
+  Decision FastApp: MODIFICAR.
+  Cambio: permitir solo nil/null; rechazar string vacío en validacion.
+
+- Regla actual: no existe validacion de que el pez sea hembra antes de registrar.
+  Decision FastApp: MODIFICAR.
+  Cambio: agregar CHECK en servicio: fish.sex == 'female' (o equivalente) antes de guardar.
+
+- Regla actual: harvest_date no tiene validacion de rango (podria ser pasado muy lejano
+  o futuro irreal).
+  Decision FastApp: MODIFICAR.
+  Cambio: harvest_date debe ser >= sampled_at y <= sampled_at + 1 ano.
+
+- Regla actual: no se verifica que el pez este vivo al momento de registrar el muestreo.
+  Decision FastApp: MODIFICAR.
+  Cambio: rechazar registro si fish.state != 'alive'.
+
+- Regla actual: campos numericos (length, weight, oocyte_size, diameter) no tienen
+  validacion de rango ni de tipo numerico positivo.
+  Decision FastApp: MODIFICAR.
+  Cambio: length > 0, weight > 0, oocyte_size >= 0, diameter >= 0 si presentes.
+
+- Regla actual: no hay restriccion sobre multiples registros del mismo pez en el mismo dia.
+  Decision FastApp: MODIFICAR.
+  Cambio: advertir si ya existe un registro del mismo fish_id en la misma fecha; permitir
+  override con nota de razon.
+
+15.3 Eliminar (no llevar a FastApp)
+- Regla actual: index action carga devious_fish (peces con state:'dead' de ultima semana)
+  mezclado en la misma vista de muestreo de hembras.
+  Decision FastApp: ELIMINAR.
+  Motivo: logica no relacionada con muestreo de hembras; mover a modulo de mortalidad.
+
+- Regla actual: no existe endpoint de update ni de edicion de registros existentes.
+  Decision FastApp: ELIMINAR como omision / corregir como mejora.
+  Motivo: FastApp debe permitir correcciones auditadas (update con registro de quien y cuando).
+
+15.4 Inconsistencias detectadas (deben resolverse en FastApp)
+- No se valida que fish.sex sea hembra; cualquier pez puede recibir un muestreo de hembra.
+- Strings vacios ('') aceptados en development_state mezclan semiotica con nil.
+- No existe endpoint update: si hay error en registro, no se puede corregir sin acceso directo
+  a base de datos.
+- La vista index mezcla datos de mortandad (devious_fish) con muestreo biologico, acoplando
+  dos dominios distintos.
+- Sin validacion de rango en campos numericos, valores erroneos (ej. weight = 0) pasan.
+
+15.5 Contrato de muestreo de hembras propuesto (FastApp)
+- Entidad female_sampling:
+  id, fish_id (FK, NOT NULL), sampled_by (user_id FK), sampled_at (timestamp),
+  development_state (enum: immature|0|1|2|3|4|reverse, nullable),
+  agglomeration (integer 1-3, nullable), turgor (integer 1-3, nullable),
+  fat (integer 1-3, nullable),
+  length_cm (decimal > 0, nullable), weight_g (decimal > 0, nullable),
+  oocyte_size_mm (decimal >= 0, nullable), diameter_mm (decimal >= 0, nullable),
+  gonad_size (text, nullable), color (text, nullable), flavor (text, nullable),
+  harvest_date_estimate (date, nullable), notes (text, nullable),
+  created_at, updated_at.
+
+- Reglas estructurales:
+  - fish_id debe apuntar a un pez con sex='female' y state='alive'.
+  - development_state usa enum tipado (no string libre).
+  - harvest_date_estimate en [sampled_at, sampled_at + 365 dias] si presente.
+  - agglomeration, turgor, fat en {1, 2, 3} o null.
+
+- Reglas de auditoria:
+  - Actualizaciones permitidas; se registra updated_by y updated_at.
+  - Historial de cambios en tabla female_sampling_audit_log.
+
+
+================================================================================
+SECCION 16: REGLAS DE NEGOCIO — MORTALIDAD (mortality_reports)
+================================================================================
+
+Uso operativo: DIARIO.
+Descripcion: registro de bajas de peces, en dos modalidades: peces marcados (identificados
+por fish_id) y peces no marcados (conteos por estanque/lote). Flujo de doble validacion:
+supervisor de piscicultura + supervisor de planta.
+
+16.1 Mantener (llevar a FastApp sin cambios)
+- Regla: un reporte de mortalidad agrupa multiples registros (marcados y no marcados)
+  bajo un mismo evento con timestamp unico.
+  Decision FastApp: MANTENER.
+
+- Regla: mortalidad marcada cambia el estado del pez a 'dead' y genera un PondsMovement
+  con movement_reason='mortality'.
+  Decision FastApp: MANTENER — es la traza de inventario fundamental.
+
+- Regla: mortalidad no marcada genera un PondsMovement de salida con fish_quantity
+  usando el lote no identificado del estanque.
+  Decision FastApp: MANTENER.
+
+- Regla: supervisor_validation=true bloquea toda edicion posterior del reporte.
+  Decision FastApp: MANTENER — es el cierre de auditoria operativa.
+
+- Regla: despues de supervisor_validation se pueden adjuntar assets (fotos/PDFs)
+  como evidencia.
+  Decision FastApp: MANTENER.
+
+- Regla: timestamps de validacion (supervisor_validation_time, general_validation_time)
+  se registran automaticamente la primera vez que la validacion se activa.
+  Decision FastApp: MANTENER.
+
+- Regla: solo formatos image/jpeg, image/png, application/pdf aceptados en assets.
+  Decision FastApp: MANTENER.
+
+- Regla: al registrar mortalidad marcada se descuenta peso del pez de la biomasa del
+  estanque (usando ultimo FishPeriodicSampling del pez).
+  Decision FastApp: MANTENER — actualizar biomasa del estanque es critico.
+
+- Regla: al registrar mortalidad no marcada se descuenta fish_quantity * avg_weight
+  del estanque de la biomasa.
+  Decision FastApp: MANTENER.
+
+16.2 Modificar (mejorar y corregir)
+- Regla actual: destroy redirige a edit en lugar de eliminar; comentario dice "solo el
+  administrador puede eliminar" pero no existe bloqueo real de permisos para la accion.
+  Decision FastApp: MODIFICAR.
+  Cambio: destroy solo permitido a rol admin via CanCan/Pundit; si supervisor_validation=true,
+  bloquear destroy completamente (soft-delete o rechazo).
+
+- Regla actual: en create se llama @mortality_report.save dos veces (doble guardado).
+  Decision FastApp: MODIFICAR.
+  Cambio: save una sola vez; envolver creacion y generate_mortality_records en transaccion.
+
+- Regla actual: generate_mortality_records no esta envuelto en transaccion; si falla a
+  mitad del loop, queda estado parcial en base de datos.
+  Decision FastApp: MODIFICAR.
+  Cambio: envolver todo el loop en ActiveRecord::Base.transaction con rollback total.
+
+- Regla actual: al calcular descuento de biomasa para mortalidad marcada se usa el ultimo
+  FishPeriodicSampling del pez, que puede ser nil (FishPeriodicSampling.where(...).last.weight
+  lanza NoMethodError si es nil).
+  Decision FastApp: MODIFICAR.
+  Cambio: si no hay muestreo previo, usar avg_weight del estanque como fallback; nunca
+  ejecutar operacion sobre nil.
+
+- Regla actual: update destruye todos los registros existentes y los recrea
+  (destroy_all + generate_mortality_records) sin transaccion.
+  Decision FastApp: MODIFICAR.
+  Cambio: dentro de transaccion atomica; si la validacion de supervisor ya paso, bloquear
+  update completamente (no solo redirigir con notice).
+
+- Regla actual: plant_supervisor_validation fija general_validation_time en el controlador
+  en lugar de delegarlo al callback after_save del modelo.
+  Decision FastApp: MODIFICAR.
+  Cambio: unificar en el callback update_records_time para evitar doble asignacion.
+
+- Regla actual: lista de reportes filtra solo ultimos 7 dias por defecto, sin paginacion
+  ni filtro configurable.
+  Decision FastApp: MODIFICAR.
+  Cambio: paginacion + filtro de rango de fechas en API de listado.
+
+16.3 Eliminar (no llevar a FastApp)
+- Regla actual: endpoint destroy con redirect circular (redirige a edit del reporte
+  recien destruido — objeto ya no existe).
+  Decision FastApp: ELIMINAR logica erronea.
+  Motivo: bug existente; reemplazar por soft-delete o borrado real con redirect correcto.
+
+- Regla actual: puts / debug statements y comentarios de codigo comentado en controlador.
+  Decision FastApp: ELIMINAR.
+  Motivo: limpiar; logica de negocio a servicios testeables.
+
+- Regla actual: logica de generate_mortality_records incrustada en controlador.
+  Decision FastApp: ELIMINAR del controlador.
+  Motivo: mover a MortalityService.register(report, marked_fish:, unmarked_fish:).
+
+16.4 Inconsistencias detectadas (deben resolverse en FastApp)
+- Doble llamada a save en create: primer save sin validar retorno, luego segundo save que
+  sobreescribe o duplica el registro.
+- generate_mortality_records sin transaccion: fallo parcial deja inventario en estado
+  inconsistente (algunos peces marcados como muertos, otros no).
+- Calculo de biomasa para mortalidad marcada puede lanzar NoMethodError (nil.weight)
+  si el pez nunca tuvo FishPeriodicSampling.
+- destroy redirige a edit de un objeto destruido (ruta invalida post-destroy).
+- plant_supervisor_validation hardcodea general_validation_time aunque el callback
+  after_save ya lo maneja condicionalmente (posible race condition o doble escritura).
+- No existe validacion de que el pez pertenezca al estanque declarado en el reporte.
+
+16.5 Contrato de mortalidad propuesto (FastApp)
+- Entidad mortality_report:
+  id, registry_time (timestamp, NOT NULL), breeding_user_id (FK, NOT NULL),
+  supervisor_validation (boolean default false), supervisor_user_id (FK nullable),
+  supervisor_validation_time (timestamp nullable),
+  general_validation (boolean default false), general_user_id (FK nullable),
+  general_validation_time (timestamp nullable),
+  comment (text nullable), created_at, updated_at.
+
+- Entidad mortality_record (unifica marcados y no marcados):
+  id, mortality_report_id (FK, NOT NULL),
+  record_type (enum: marked|unmarked, NOT NULL),
+  fish_id (FK nullable — solo para marcados),
+  pond_id (FK, NOT NULL), lot_id (FK, NOT NULL),
+  quantity (integer > 0, NOT NULL),
+  weight_snapshot_g (decimal nullable — peso usado para descuento de biomasa),
+  comment (text nullable),
+  ponds_movement_id (FK, nullable — creado en mismo transaction),
+  created_at.
+
+- Tabla mortality_assets:
+  id, mortality_report_id (FK), blob_key, content_type, uploaded_by, uploaded_at.
+
+- Reglas estructurales:
+  - mortality_record.fish_id obligatorio si record_type='marked'.
+  - mortality_record.quantity = 1 si record_type='marked'.
+  - Si supervisor_validation=true, el reporte es inmutable (HTTP 422 en cualquier PATCH/DELETE).
+  - assets solo adjuntables despues de supervisor_validation=true.
+
+- Reglas de inventario:
+  - Creacion de mortality_record dispara (en transaccion):
+    1. Si marked: fish.state = 'dead'.
+    2. Crear PondsMovement(reason='mortality', fish_quantity=quantity, fish_id para marcados).
+    3. Actualizar pond.biomass -= weight_snapshot_g * quantity.
+  - Si rollback de transaccion, ningun cambio persiste.
+
+- Reglas de auditoria:
+  - supervisor_validation_time y general_validation_time solo se escriben una vez
+    (NOT NULL check o logica idempotente).
+  - Historial de cambios al reporte en mortality_report_audit_log.

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Re-tag — {{ pond.name }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title-wrap h1 { font-size: 1.2rem; font-weight: 700; }
+    .title-wrap p  { font-size: .82rem; opacity: .7; margin-top: 2px; }
+    .back-link {
+      color: #fff;
+      text-decoration: none;
+      font-size: .85rem;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 8px;
+      padding: 6px 10px;
+    }
+    .container { max-width: 600px; margin: 32px auto; padding: 0 24px; }
+    .card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 28px 28px 24px;
+      box-shadow: 0 1px 8px rgba(0,0,0,.09);
+    }
+    .card h2 { font-size: 1.1rem; font-weight: 700; margin-bottom: 6px; }
+    .card .subtitle {
+      font-size: .85rem;
+      color: #6b7280;
+      margin-bottom: 22px;
+      line-height: 1.5;
+    }
+    .event-box {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: .85rem;
+      color: #374151;
+      margin-bottom: 22px;
+      line-height: 1.6;
+    }
+    .event-box strong { color: #1a1a2e; }
+    .form-group { margin-bottom: 18px; }
+    label { display: block; font-size: .82rem; font-weight: 600; color: #374151; margin-bottom: 5px; }
+    input[type="text"], input[type="number"], select {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: .9rem;
+      color: #1a1a2e;
+      background: #fff;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99,102,241,.15);
+    }
+    .hint { font-size: .78rem; color: #9ca3af; margin-top: 4px; }
+    .btn-row { display: flex; gap: 10px; margin-top: 24px; }
+    .btn {
+      padding: 10px 22px;
+      border-radius: 8px;
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+    }
+    .btn-primary { background: #6366f1; color: #fff; }
+    .btn-cancel  { background: #f3f4f6; color: #374151; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-cancel:hover  { background: #e5e7eb; }
+    .warn-box {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #fcd34d;
+      background: #fffbeb;
+      color: #92400e;
+      font-size: .84rem;
+      display: none;
+    }
+    .warn-actions { margin-top: 8px; display: flex; gap: 8px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="title-wrap">
+    <h1>Asignar nuevo pit-tag</h1>
+    <p>{{ pond.name }}</p>
+  </div>
+  <a class="back-link" href="/views/ui/ponds/{{ pond.id }}">← Volver</a>
+</header>
+
+<div class="container">
+  <div class="card">
+    <h2>Re-tag de pez sin marca</h2>
+    <p class="subtitle">
+      Asigne un nuevo pit-tag a un pez sin identificador en este estanque.
+      El pez consumirá un slot del pool <em>sin registrar</em> y quedará como pez registrado activo.
+    </p>
+
+    <div class="event-box">
+      <strong>Evento de pérdida #{{ event.id }}</strong><br>
+      Fecha: {{ event.event_date.strftime('%d/%m/%Y') if event.event_date else '—' }}<br>
+      {% if event.notes %}Notas: {{ event.notes }}{% endif %}
+    </div>
+
+    <form id="retag-form" method="post" action="/views/ui/ponds/{{ pond.id }}/retag/{{ event.id }}" onsubmit="return handleRetagSubmit(event)">
+      <input type="hidden" id="retag-confirm-reuse" name="confirm_reuse" value="" />
+
+      <div class="form-group">
+        <label for="internal_id">Nuevo PIT tag *</label>
+         <input type="text" id="internal_id" name="internal_id"
+               placeholder="Ej: A1B2C3D4" required
+           autocomplete="off" spellcheck="false"
+           oninput="this.value=this.value.toUpperCase()" />
+        <p class="hint">Identificador del nuevo tag implantado.</p>
+      </div>
+
+            <div id="retag-warn" class="warn-box"></div>
+
+      <div class="form-group">
+        <label for="lot_id">Lote *</label>
+        <select id="lot_id" name="lot_id" required>
+          <option value="">Seleccionar lote…</option>
+          {% for opt in lot_options %}
+          <option value="{{ opt.id }}" {% if single_lot and single_lot.id == opt.id %}selected{% endif %}>
+            {{ opt.label }} ({{ opt.qty }} disponibles)
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="sex">Sexo</label>
+        <select id="sex" name="sex">
+          <option value="">Sin especificar</option>
+          <option value="f">Hembra</option>
+          <option value="m">Macho</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="weight">Peso actual (g) — opcional</label>
+        <input type="number" id="weight" name="weight"
+               step="0.1" min="0" placeholder="Ej: 3500" />
+      </div>
+
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary">Confirmar re-tag</button>
+        <a href="/views/ui/ponds/{{ pond.id }}" class="btn btn-cancel">Cancelar</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function handleRetagSubmit(event) {
+  const tagInput = document.getElementById('internal_id');
+  const tag = (tagInput?.value || '').trim().toUpperCase();
+  if (!tag) return true;
+  if (document.getElementById('retag-confirm-reuse').value === '1') {
+    return confirm('¿Confirmar reutilización del PIT tag de un pez fallecido?');
+  }
+
+  event.preventDefault();
+  fetch(`/views/ui/fish/check-pit-tag?tag=${encodeURIComponent(tag)}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.status === 'ok') {
+        if (confirm('¿Confirmar re-tag en este estanque?')) {
+          document.getElementById('retag-form').submit();
+        }
+        return;
+      }
+
+      const warn = document.getElementById('retag-warn');
+      if (data.status === 'blocked') {
+        warn.textContent = data.message || 'Tag bloqueado.';
+        warn.style.display = 'block';
+        return;
+      }
+
+      if (data.status === 'reuse') {
+        warn.innerHTML = `${data.message || 'Tag reutilizable.'}`
+          + '<div class="warn-actions">'
+          + '<button type="button" class="btn btn-primary" onclick="confirmRetagReuse()">Confirmar reutilización</button>'
+          + '<button type="button" class="btn btn-cancel" onclick="document.getElementById(\'retag-warn\').style.display=\'none\'">Cancelar</button>'
+          + '</div>';
+        warn.style.display = 'block';
+      }
+    })
+    .catch(() => {
+      if (confirm('¿Confirmar re-tag en este estanque?')) {
+        document.getElementById('retag-form').submit();
+      }
+    });
+
+  return false;
+}
+
+function confirmRetagReuse() {
+  document.getElementById('retag-confirm-reuse').value = '1';
+  if (confirm('¿Confirmar reutilización del PIT tag de un pez fallecido?')) {
+    document.getElementById('retag-form').submit();
+  }
+}
+</script>
+
+</body>
+</html>
