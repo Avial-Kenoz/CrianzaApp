@@ -54,6 +54,45 @@
     .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .75rem; font-weight: 600; }
     .badge-species { background: #ede9fe; color: #5b21b6; }
 
+    /* Edit form */
+    .meta-edit-form { display: none; flex-direction: column; gap: 16px; width: 100%; }
+    .meta-edit-form.visible { display: flex; }
+    .edit-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+    .ef-field { display: flex; flex-direction: column; gap: 4px; }
+    .ef-label { font-size: .72rem; font-weight: 700; text-transform: uppercase; color: #9ca3af; }
+    .ef-input, .ef-select {
+      border: 1.5px solid #d1d5db;
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: .92rem;
+      color: #1a1a2e;
+      background: #f9fafb;
+      outline: none;
+      transition: border-color .15s;
+    }
+    .ef-input:focus, .ef-select:focus { border-color: #4f8ef7; background: #fff; }
+    .edit-actions { display: flex; gap: 8px; align-items: center; }
+    .btn-save {
+      background: #4f8ef7; color: #fff; border: none; border-radius: 8px;
+      padding: 8px 20px; font-size: .86rem; font-weight: 700; cursor: pointer;
+    }
+    .btn-save:hover { background: #3b7de8; }
+    .btn-cancel {
+      background: transparent; color: #6b7280; border: 1px solid #d1d5db;
+      border-radius: 8px; padding: 8px 16px; font-size: .86rem; font-weight: 600; cursor: pointer;
+    }
+    .btn-cancel:hover { background: #f3f4f6; }
+    .btn-edit {
+      margin-left: auto; background: transparent; color: #4f8ef7;
+      border: 1.5px solid #4f8ef7; border-radius: 8px;
+      padding: 6px 14px; font-size: .82rem; font-weight: 700; cursor: pointer;
+    }
+    .btn-edit:hover { background: #eff6ff; }
+    .meta-view { display: flex; flex-wrap: wrap; gap: 24px; align-items: center; width: 100%; }
+
+    .alert-ok { background:#f0fdf4; border:1px solid #86efac; color:#166534; border-radius:8px; padding:8px 14px; font-size:.85rem; margin-bottom:14px; }
+    .alert-err { background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; border-radius:8px; padding:8px 14px; font-size:.85rem; margin-bottom:14px; }
+
     /* Stats row */
     .stats-row {
       display: grid;
@@ -127,36 +166,93 @@
 <header>
   <div class="title-wrap">
     <h1>{{ lot.name }}</h1>
-    <p>{{ lot.species }}{% if lot.hatch_year %} · Cosecha {{ lot.hatch_year }}{% endif %}{% if lot.origin %} · {{ lot.origin }}{% endif %}</p>
+    <p>{{ lot.species }}{% if lot.hatch_year %} · Nac. {{ lot.hatch_year }}{% endif %}{% if lot.origin %} · {{ lot.origin }}{% endif %}</p>
   </div>
 </header>
 
 <div class="container">
 
-  <!-- Metadata -->
+  {% if msg %}
+  <div class="alert-{{ status_msg }}">{{ msg }}</div>
+  {% endif %}
+
+  <!-- Metadata / Edit card -->
   <div class="meta-card">
-    {% if lot.internal_id %}
-    <div class="meta-field">
-      <span class="mf-label">Código</span>
-      <span class="mf-value">{{ lot.internal_id }}</span>
+
+    <!-- Vista lectura -->
+    <div class="meta-view" id="meta-view">
+      {% if lot.internal_id %}
+      <div class="meta-field">
+        <span class="mf-label">Código</span>
+        <span class="mf-value">{{ lot.internal_id }}</span>
+      </div>
+      {% endif %}
+      <div class="meta-field">
+        <span class="mf-label">Especie</span>
+        <span class="mf-value"><span class="badge badge-species">{{ lot.species }}</span></span>
+      </div>
+      {% if lot.hatch_year %}
+      <div class="meta-field">
+        <span class="mf-label">Año nacimiento</span>
+        <span class="mf-value">{{ lot.hatch_year }}</span>
+      </div>
+      {% endif %}
+      {% if lot.origin %}
+      <div class="meta-field">
+        <span class="mf-label">Origen</span>
+        <span class="mf-value">{{ lot.origin }}</span>
+      </div>
+      {% endif %}
+      {% if lot.national %}
+      <div class="meta-field">
+        <span class="mf-label">Nacional</span>
+        <span class="mf-value">Sí</span>
+      </div>
+      {% endif %}
+      <button class="btn-edit" onclick="toggleEdit(true)" type="button">✏ Editar</button>
     </div>
-    {% endif %}
-    <div class="meta-field">
-      <span class="mf-label">Especie</span>
-      <span class="mf-value"><span class="badge badge-species">{{ lot.species }}</span></span>
-    </div>
-    {% if lot.hatch_year %}
-    <div class="meta-field">
-      <span class="mf-label">Año cosecha</span>
-      <span class="mf-value">{{ lot.hatch_year }}</span>
-    </div>
-    {% endif %}
-    {% if lot.origin %}
-    <div class="meta-field">
-      <span class="mf-label">Origen</span>
-      <span class="mf-value">{{ lot.origin }}</span>
-    </div>
-    {% endif %}
+
+    <!-- Formulario edición -->
+    <form class="meta-edit-form" id="meta-edit-form" method="post" action="/views/ui/lots/{{ lot.id }}/edit">
+      <div class="edit-grid">
+        <div class="ef-field" style="grid-column: span 2;">
+          <label class="ef-label">Nombre</label>
+          <input class="ef-input" type="text" name="name" value="{{ lot.name }}" required />
+        </div>
+        <div class="ef-field">
+          <label class="ef-label">Código interno</label>
+          <input class="ef-input" type="text" name="internal_id" value="{{ lot.internal_id or '' }}" />
+        </div>
+        <div class="ef-field">
+          <label class="ef-label">Especie</label>
+          <select class="ef-select" name="species_id">
+            {% for sp in species_list %}
+            <option value="{{ sp.id }}" {% if sp.id == lot.species_id %}selected{% endif %}>{{ sp.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="ef-field">
+          <label class="ef-label">Año nacimiento</label>
+          <input class="ef-input" type="number" name="hatch_year" value="{{ lot.hatch_year or '' }}" min="2000" max="2100" />
+        </div>
+        <div class="ef-field">
+          <label class="ef-label">Origen</label>
+          <input class="ef-input" type="text" name="origin" value="{{ lot.origin or '' }}" />
+        </div>
+        <div class="ef-field" style="justify-content: flex-end;">
+          <label class="ef-label">Nacional</label>
+          <select class="ef-select" name="national">
+            <option value="0" {% if not lot.national %}selected{% endif %}>No</option>
+            <option value="1" {% if lot.national %}selected{% endif %}>Sí</option>
+          </select>
+        </div>
+      </div>
+      <div class="edit-actions">
+        <button class="btn-save" type="submit">Guardar</button>
+        <button class="btn-cancel" type="button" onclick="toggleEdit(false)">Cancelar</button>
+      </div>
+    </form>
+
   </div>
 
   <!-- Stats -->
@@ -233,6 +329,14 @@
 
   </div><!-- /.main-content -->
 </div><!-- /.app-shell -->
+
+<script>
+  function toggleEdit(show) {
+    document.getElementById('meta-view').style.display = show ? 'none' : '';
+    var f = document.getElementById('meta-edit-form');
+    f.classList.toggle('visible', show);
+  }
+</script>
 
 </body>
 </html>

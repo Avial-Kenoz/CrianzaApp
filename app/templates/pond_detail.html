@@ -143,7 +143,6 @@
       grid-template-columns: minmax(0, 1fr) 340px;
       gap: 10px;
       align-items: start;
-      transition: grid-template-columns .2s ease;
     }
     .detail-content.right-compact {
       grid-template-columns: minmax(0, 1fr) 72px;
@@ -304,7 +303,6 @@
       margin-bottom: 0;
       position: sticky;
       top: 16px;
-      transition: width .2s ease;
       width: 100%;
     }
     .action-cards.is-compact {
@@ -335,12 +333,8 @@
     .action-card__chevron {
       flex-shrink: 0;
       color: #6b7280;
-      transition: transform .18s ease;
     }
     .action-card__title-text { white-space: nowrap; }
-    .action-card.is-collapsed .action-card__chevron {
-      transform: rotate(-90deg);
-    }
     .action-card.is-collapsed .action-card__toggle {
       justify-content: center;
       padding: 9px 8px;
@@ -595,7 +589,7 @@
     </div>
     {% endif %}
 
-    <div class="detail-content">
+    <div class="detail-content right-compact">
       <div class="table-wrap">
         <datalist id="ponds-list">
           {% for p in all_ponds %}
@@ -638,7 +632,11 @@
             {% if can_register_from_untagged %}
             <tr class="register-row">
               <td>
-                <form id="register-fish-form" method="post" action="/views/ui/ponds/{{ pond.id }}/register-tagged"></form>
+                <form
+                  id="register-fish-form"
+                  method="post"
+                  action="{% if pending_detachment_events %}/views/ui/ponds/{{ pond.id }}/retag/{{ pending_detachment_events[0].id }}{% else %}/views/ui/ponds/{{ pond.id }}/register-tagged{% endif %}"
+                ></form>
                 <input type="hidden" id="femaleDestPondHidden" name="female_destination_pond_id" form="register-fish-form" value="" />
                 <input type="hidden" id="confirmReuseFlag" name="confirm_reuse" form="register-fish-form" value="" />
                 <input
@@ -668,7 +666,7 @@
                 {% endif %}
               </td>
               <td>
-                <select aria-label="Sexo nuevo" class="cell-input" name="sex" form="register-fish-form">
+                <select id="register-sex" aria-label="Sexo nuevo" class="cell-input" name="sex" form="register-fish-form" onchange="updateRegisterDevelopmentStateOptions()">
                   <option value="" selected>N/D</option>
                   <option value="f">Hembra</option>
                   <option value="m">Macho</option>
@@ -698,7 +696,17 @@
                   placeholder="mm"
                 />
               </td>
-              <td><span class="nd">N/A</span></td>
+              <td>
+                <select
+                  id="register-dev"
+                  aria-label="Estado desarrollo nuevo"
+                  class="cell-input"
+                  name="development_state"
+                  form="register-fish-form"
+                >
+                  <option value="" selected>N/D</option>
+                </select>
+              </td>
               <td><span class="nd">N/A</span></td>
               {% if show_depuration_column %}
               <td><span class="nd">N/A</span></td>
@@ -709,7 +717,7 @@
                   class="register-btn"
                   form="register-fish-form"
                   onclick="return handleRegisterSubmit(event)"
-                >Registrar PIT</button>
+                >{% if pending_detachment_events %}Re-tag PIT{% else %}Registrar PIT{% endif %}</button>
               </td>
             </tr>
             {% endif %}
@@ -763,7 +771,23 @@
                   name="development_state"
                   form="save-fish-{{ row.fish_id }}"
                   data-current="{{ row.development_state }}"
-                ></select>
+                >
+                  {% set dev = (row.development_state or '')|upper %}
+                  <option value="" {% if dev == '' %}selected{% endif %}>N/D</option>
+                  {% if row.sex_value == 'f' %}
+                  <option value="0" {% if dev == '0' %}selected{% endif %}>0 - Sin ovas</option>
+                  <option value="1" {% if dev == '1' %}selected{% endif %}>1 - Ovas blancas</option>
+                  <option value="2" {% if dev == '2' %}selected{% endif %}>2 - Ovas amarillas</option>
+                  <option value="3" {% if dev == '3' %}selected{% endif %}>3 - Ovas gris</option>
+                  <option value="4" {% if dev == '4' %}selected{% endif %}>4 - Caviar</option>
+                  <option value="R" {% if dev == 'R' %}selected{% endif %}>R - Revertida</option>
+                  {% elif row.sex_value == 'm' %}
+                  <option value="0" {% if dev == '0' %}selected{% endif %}>0 - Sin observacion</option>
+                  <option value="L" {% if dev == 'L' %}selected{% endif %}>L - Lechoso</option>
+                  {% elif dev %}
+                  <option value="{{ dev }}" selected>Actual (legacy): {{ dev }}</option>
+                  {% endif %}
+                </select>
               </td>
               <td>
                 <input
@@ -818,7 +842,7 @@
       </div>
 
       <!-- Sidebar derecho: funciones rápidas -->
-      <aside class="action-cards">
+      <aside class="action-cards is-compact">
 
       <!-- 1) Traslado sin Pit-Tag -->
       <div class="action-card action-card--movement is-collapsed">
@@ -923,7 +947,35 @@
           <p class="action-card__empty action-card__empty--mb">Sin peces pendientes de re-tag.</p>
           {% endif %}
 
-          <a href="/views/ui/ponds/{{ pond.id }}/tag-detachment/new" class="action-btn action-btn--tagloss">+ Registrar pez sin tag</a>
+          {% if tag_detachment_lot_options %}
+          <form method="post" action="/views/ui/ponds/{{ pond.id }}/tag-detachment" onsubmit="return confirmTagDetachmentAction(event)">
+            <div class="action-card__fields">
+              <div class="action-field-group">
+                <label for="tagloss-date">Fecha</label>
+                <input id="tagloss-date" name="event_date" type="date" required />
+              </div>
+              <div class="action-field-group">
+                <label for="tagloss-lot">Lote</label>
+                <select id="tagloss-lot" name="lot_id" required>
+                  <option value="">Lote…</option>
+                  {% for opt in tag_detachment_lot_options %}
+                  <option value="{{ opt.id }}">
+                    {{ opt.label }}{% if opt.qty is defined %} (saldo: {{ opt.qty }}){% endif %}{% if opt.fallback %} · lote presente{% endif %}
+                  </option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="action-field-group">
+                <label for="tagloss-qty">Cantidad</label>
+                <input id="tagloss-qty" name="tagloss_quantity" type="number" min="1" step="1" placeholder="Ej: 15" required />
+              </div>
+              <button type="submit" name="action" value="register" class="action-btn action-btn--tagloss">+ Registrar peces sin tag</button>
+              <button type="submit" name="action" value="mortality" class="action-btn action-btn--mortality">Declarar mortalidad sin tag</button>
+            </div>
+          </form>
+          {% else %}
+          <p class="action-card__empty action-card__empty--mb">No hay lotes disponibles para registrar pérdida de tag.</p>
+          {% endif %}
           {% if pending_detachment_events %}
           <a href="/views/ui/ponds/{{ pond.id }}/tag-reconciliation"
              class="tagloss-reconcile-link">
@@ -1090,6 +1142,22 @@
       return confirm(`¿Confirmar mortalidad de ${n} peces sin marca del ${lotText}?\nEsta acción no se puede deshacer.`);
     }
 
+    function confirmTagDetachmentAction(event) {
+      const submitter = event && event.submitter ? event.submitter : null;
+      const action = submitter ? submitter.value : 'register';
+      const lotSel = document.getElementById('tagloss-lot');
+      const qtyInput = document.getElementById('tagloss-qty');
+      const lotText = lotSel && lotSel.options[lotSel.selectedIndex]
+        ? lotSel.options[lotSel.selectedIndex].text
+        : 'lote seleccionado';
+      const qty = Math.max(1, Number((qtyInput && qtyInput.value) || 1));
+
+      if (action === 'mortality') {
+        return confirm(`¿Confirmar mortalidad de ${qty} pez(ces) sin tag (${lotText})?\nSe registrarán y cerrarán ${qty} evento(s).`);
+      }
+      return confirm(`¿Confirmar pérdida de PIT tag para ${qty} pez(ces) en ${lotText}?\nSe agregarán ${qty} evento(s) pendientes de re-tag.`);
+    }
+
     function filterPitRows(rawValue) {
       const query = (rawValue || '').trim().toLowerCase();
       const rows = document.querySelectorAll('tr.fish-row');
@@ -1145,11 +1213,49 @@
       devSelect.value = selectedRaw && opts.some(([v]) => v === selectedRaw) ? selectedRaw : '';
     }
 
-    (function initDevelopmentStateSelects() {
-      document.querySelectorAll('select[id^="dev-"]').forEach((sel) => {
-        const fishId = sel.id.replace('dev-', '');
-        updateDevelopmentStateOptions(fishId);
+    function updateRegisterDevelopmentStateOptions() {
+      const sexSelect = document.getElementById('register-sex');
+      const devSelect = document.getElementById('register-dev');
+      if (!sexSelect || !devSelect) return;
+
+      const femaleOptions = [
+        ['0', '0 - Sin ovas'],
+        ['1', '1 - Ovas blancas'],
+        ['2', '2 - Ovas amarillas'],
+        ['3', '3 - Ovas gris'],
+        ['4', '4 - Caviar'],
+        ['R', 'R - Revertida'],
+      ];
+      const maleOptions = [
+        ['0', '0 - Sin observacion'],
+        ['L', 'L - Lechoso'],
+      ];
+
+      const selectedRaw = (devSelect.value || '').trim().toUpperCase();
+      const sexValue = sexSelect.value;
+
+      const opts = [];
+      opts.push(['', 'N/D']);
+      if (sexValue === 'f') {
+        opts.push(...femaleOptions);
+      } else if (sexValue === 'm') {
+        opts.push(...maleOptions);
+      }
+
+      const validValues = new Set(opts.map(o => o[0]));
+      devSelect.innerHTML = '';
+      opts.forEach(([value, label]) => {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = label;
+        devSelect.appendChild(opt);
       });
+
+      devSelect.value = selectedRaw && validValues.has(selectedRaw) ? selectedRaw : '';
+    }
+
+    (function initRegisterDevelopmentState() {
+      updateRegisterDevelopmentStateOptions();
     })();
 
     (function normalizeDiameterDecimalInputs() {
@@ -1194,12 +1300,24 @@
         inp.value = `${yyyy}-${mm}-${dd}`;
       }
     })();
+
+    // Setear fecha de hoy al formulario inline de pérdida de tag
+    (function() {
+      const inp = document.getElementById('tagloss-date');
+      if (!inp || inp.value) return;
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      inp.value = `${yyyy}-${mm}-${dd}`;
+    })();
   </script>
 
   <script>
   // ── PIT tag reuse logic ──────────────────────────────────────────────────
   // Called by the Registrar PIT submit button
   function handleRegisterSubmit(event) {
+    const hasPendingRetag = {{ 'true' if pending_detachment_events else 'false' }};
     const tagInput = document.querySelector('input[name="internal_id"][form="register-fish-form"]');
     if (!tagInput) return true;
     const tag = tagInput.value.trim().toUpperCase();
@@ -1211,7 +1329,9 @@
       .then(data => {
         if (data.status === 'ok') {
           // Free — just ask the normal confirm and submit
-          if (confirm('¿Confirmar registro de PIT tag en esta laguna?')) {
+          if (confirm(hasPendingRetag
+            ? 'Hay un tag perdido pendiente. ¿Confirmar re-tag con este PIT en esta laguna?'
+            : '¿Confirmar registro de PIT tag en esta laguna?')) {
             document.getElementById('confirmReuseFlag').value = '';
             document.getElementById('register-fish-form').submit();
           }

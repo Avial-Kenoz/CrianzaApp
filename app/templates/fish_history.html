@@ -198,6 +198,112 @@
       box-shadow: 0 1px 8px rgba(0,0,0,.08);
       overflow: hidden;
     }
+    .fish-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 12px;
+      align-items: start;
+    }
+    .fish-layout.right-compact {
+      grid-template-columns: minmax(0, 1fr) 88px;
+    }
+    .fish-main { min-width: 0; }
+    .action-cards {
+      position: sticky;
+      top: 74px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 100%;
+      transition: width .2s ease;
+    }
+    .action-cards.is-compact {
+      width: 72px;
+      justify-self: end;
+    }
+    .action-card {
+      border: 1px solid #e5e7eb;
+      border-top: 3px solid #d1d5db;
+      border-radius: 12px;
+      background: #fff;
+      overflow: hidden;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+    }
+    .action-card--sampling { border-top-color: #0e7490; }
+    .action-card--movement { border-top-color: #6366f1; }
+    .action-card--mortality { border-top-color: #b91c1c; }
+    .action-card__toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: none;
+      background: #fff;
+      padding: 11px 12px;
+      cursor: pointer;
+      font-weight: 700;
+      color: #111827;
+      font-size: .84rem;
+    }
+    .action-card__title {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .action-card__title-text { white-space: nowrap; }
+    .action-card__chevron { transition: transform .2s ease; }
+    .action-card.is-collapsed .action-card__chevron { transform: rotate(-90deg); }
+    .action-card.is-collapsed .action-card__toggle {
+      justify-content: center;
+      padding: 9px 8px;
+    }
+    .action-card.is-collapsed .action-card__title {
+      justify-content: center;
+    }
+    .action-card.is-collapsed .action-card__title-text,
+    .action-card.is-collapsed .action-card__chevron {
+      display: none;
+    }
+    .action-card__body { padding: 10px 12px 12px; border-top: 1px solid #eef2f7; }
+    .action-card.is-collapsed .action-card__body { display: none; }
+    .action-field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .action-field-group label {
+      font-size: .76rem;
+      color: #6b7280;
+      font-weight: 700;
+      letter-spacing: .2px;
+      text-transform: uppercase;
+    }
+    .action-field-group input,
+    .action-field-group select {
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 7px 8px;
+      font-size: .84rem;
+      background: #fff;
+      font-family: inherit;
+    }
+    .action-btn {
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-weight: 700;
+      font-size: .82rem;
+      padding: 8px 10px;
+      cursor: pointer;
+      width: 100%;
+    }
+    .action-btn--sampling { background: #0e7490; }
+    .action-btn--movement { background: #4338ca; }
+    .action-btn--mortality { background: #b91c1c; }
+    .action-card__empty { font-size: .82rem; color: #6b7280; }
     .row {
       display: grid;
       grid-template-columns: 190px 150px 1fr;
@@ -221,6 +327,10 @@
     @media (max-width: 760px) {
       .row { grid-template-columns: 1fr; gap: 6px; }
       .type { margin-top: -2px; }
+    }
+    @media (max-width: 980px) {
+      .fish-layout { grid-template-columns: 1fr; }
+      .action-cards { position: static; }
     }
   </style>
 </head>
@@ -291,6 +401,9 @@
         <div class="value">{{ fish.state or 'N/D' }}</div>
       </div>
     </div>
+
+    <div class="fish-layout">
+      <section class="fish-main">
 
     <div class="drug-section">
       <div class="sampling-title">Uso de fármacos</div>
@@ -381,6 +494,110 @@
       {% else %}
       <div class="empty">No hay eventos para este pez.</div>
       {% endif %}
+    </div>
+      </section>
+
+      <aside class="action-cards">
+        <div class="action-card action-card--sampling is-collapsed">
+          <button type="button" class="action-card__toggle" aria-expanded="false" onclick="toggleActionCard(this)">
+            <span class="action-card__title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+              <span class="action-card__title-text">1. Nuevo muestreo</span>
+            </span>
+            <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="action-card__body">
+            {% if can_use_pond_actions and current_pond_id %}
+            <form method="post" action="/views/ui/ponds/{{ current_pond_id }}/fish/{{ fish.id }}/save">
+              <input type="hidden" name="action" value="save" />
+              <div class="action-field-group">
+                <label for="sampling-sex">Sexo</label>
+                <select id="sampling-sex" name="sex">
+                  <option value="">Sin cambio</option>
+                  <option value="f" {% if (fish.sex or '')|lower in ['f','female','hembra'] %}selected{% endif %}>Hembra</option>
+                  <option value="m" {% if (fish.sex or '')|lower in ['m','male','macho'] %}selected{% endif %}>Macho</option>
+                </select>
+              </div>
+              <div class="action-field-group">
+                <label for="sampling-weight">Peso (g)</label>
+                <input id="sampling-weight" name="weight" type="number" min="0" step="0.001" />
+              </div>
+              <div class="action-field-group">
+                <label for="sampling-diameter">Diámetro caviar (mm)</label>
+                <input id="sampling-diameter" name="diameter" type="number" min="0" step="0.001" />
+              </div>
+              <div class="action-field-group">
+                <label for="sampling-dev">Estado desarrollo</label>
+                <select id="sampling-dev" name="development_state">
+                  <option value="">Sin cambio</option>
+                  <option value="0">0</option>
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="R">R</option>
+                  <option value="L">L</option>
+                </select>
+              </div>
+              <button type="submit" class="action-btn action-btn--sampling">Guardar muestreo</button>
+            </form>
+            {% else %}
+            <p class="action-card__empty">Esta acción requiere pez activo en un estanque actual.</p>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="action-card action-card--movement is-collapsed">
+          <button type="button" class="action-card__toggle" aria-expanded="false" onclick="toggleActionCard(this)">
+            <span class="action-card__title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 5 7 7-7 7"/></svg>
+              <span class="action-card__title-text">2. Trasladar a Estanque</span>
+            </span>
+            <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="action-card__body">
+            {% if can_use_pond_actions and current_pond_id and move_pond_options %}
+            <form method="post" action="/views/ui/ponds/{{ current_pond_id }}/fish/{{ fish.id }}/save">
+              <input type="hidden" name="action" value="save" />
+              <div class="action-field-group">
+                <label for="move-to-pond">Estanque destino</label>
+                <select id="move-to-pond" name="move_to" required>
+                  <option value="" selected disabled>Seleccionar destino</option>
+                  {% for p in move_pond_options %}
+                  <option value="{{ p.id }}">{{ p.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <button type="submit" class="action-btn action-btn--movement">Trasladar</button>
+            </form>
+            {% elif can_use_pond_actions and not move_pond_options %}
+            <p class="action-card__empty">No hay estanques disponibles para traslado.</p>
+            {% else %}
+            <p class="action-card__empty">Esta acción requiere pez activo en un estanque actual.</p>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="action-card action-card--mortality is-collapsed">
+          <button type="button" class="action-card__toggle" aria-expanded="false" onclick="toggleActionCard(this)">
+            <span class="action-card__title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+              <span class="action-card__title-text">3. Declarar mortalidad</span>
+            </span>
+            <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="action-card__body">
+            {% if can_use_pond_actions and current_pond_id %}
+            <form method="post" action="/views/ui/ponds/{{ current_pond_id }}/fish/{{ fish.id }}/save" onsubmit="return confirm('¿Confirmar mortalidad del pez {{ fish.internal_id or fish.id }}?')">
+              <input type="hidden" name="action" value="mortality" />
+              <button type="submit" class="action-btn action-btn--mortality">Declarar mortalidad</button>
+            </form>
+            {% else %}
+            <p class="action-card__empty">Esta acción requiere pez activo en un estanque actual.</p>
+            {% endif %}
+          </div>
+        </div>
+      </aside>
     </div>
   </div>
 
@@ -501,6 +718,34 @@
         errEl.textContent = data.error || 'Error al guardar';
       }
     }
+
+    function toggleActionCard(button) {
+      const card = button && button.closest('.action-card');
+      if (!card) return;
+      const collapsed = card.classList.toggle('is-collapsed');
+      button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      updateActionSidebarCompactMode();
+    }
+
+    function updateActionSidebarCompactMode() {
+      const aside = document.querySelector('.action-cards');
+      const layout = document.querySelector('.fish-layout');
+      if (!aside || !layout) return;
+      if (window.innerWidth <= 980) {
+        aside.classList.remove('is-compact');
+        layout.classList.remove('right-compact');
+        return;
+      }
+
+      const hasExpanded = aside.querySelector('.action-card:not(.is-collapsed)') !== null;
+      aside.classList.toggle('is-compact', !hasExpanded);
+      layout.classList.toggle('right-compact', !hasExpanded);
+    }
+
+    (function initActionSidebarCompactMode() {
+      updateActionSidebarCompactMode();
+      window.addEventListener('resize', updateActionSidebarCompactMode);
+    })();
   </script>
 
 </div><!-- /.main-content -->

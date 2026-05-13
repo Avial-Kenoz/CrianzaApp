@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alimentacion — Confirmacion</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    header { background: #111827; color: #fff; padding: 16px 22px; display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 1.1rem; font-weight: 700; }
+    .prog-badge { font-size: .8rem; background: #0f766e; color: #fff; padding: 3px 10px; border-radius: 12px; font-weight: 600; }
+    .container { padding: 12px 10px 24px; }
+    .banner-unplanned { background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; border-radius: 10px; padding: 10px 14px; font-size: .87rem; font-weight: 600; margin-bottom: 14px; }
+    .program-summary { background: #eef6ff; border: 1px solid #bfdbfe; color: #1e3a8a; border-radius: 10px; padding: 10px 14px; font-size: .86rem; font-weight: 600; margin-bottom: 14px; }
+    .flash { border-radius: 10px; padding: 10px 12px; font-size: .88rem; margin-bottom: 14px; font-weight: 600; }
+    .flash.ok { color: #166534; background: #f0fdf4; border: 1px solid #86efac; }
+    .flash.error { color: #991b1b; background: #fff1f2; border: 1px solid #fca5a5; }
+    .filter-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    .filter-bar label { font-size: .85rem; font-weight: 600; color: #555; }
+    .filter-bar input { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: .9rem; background: #fff; outline: none; min-width: 200px; }
+    .filter-bar input:focus { border-color: #4f8ef7; }
+    .badge-total { margin-left: auto; background: #e8f0fe; color: #1967d2; font-size: .8rem; font-weight: 700; padding: 5px 12px; border-radius: 20px; }
+    .feed-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 10px; align-items: start; }
+    .feed-layout.right-compact { grid-template-columns: minmax(0, 1fr) 72px; }
+    .table-wrap { background: #fff; border-radius: 14px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: auto; max-height: calc(100vh - 210px); min-width: 0; }
+    table { width: 100%; border-collapse: collapse; }
+    thead { background: #1a1a2e; color: #fff; }
+    thead th { padding: 13px 16px; font-size: .78rem; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; text-align: left; white-space: nowrap; position: sticky; background: #1a1a2e; color: #fff; }
+    thead tr:nth-child(1) th { top: 0; z-index: 6; }
+    thead tr:nth-child(2) th { top: var(--thead-row1-h, 44px); z-index: 5; background: #eef6ff; color: #1e3a8a; }
+    th.col-sticky { position: sticky; left: 0; z-index: 7; background: #1a1a2e; }
+    thead tr:nth-child(2) th.col-sticky { background: #eef6ff; z-index: 6; }
+    tbody tr { border-bottom: 1px solid #f0f2f5; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f7f9ff; }
+    tbody td { padding: 13px 16px; font-size: .88rem; vertical-align: middle; }
+    td.col-sticky { position: sticky; left: 0; z-index: 2; background: #fff; }
+    tr.row-complete td.col-sticky { background: #f0fdf4; }
+    tr.row-partial td.col-sticky { background: #fefce8; }
+    tr.row-complete { background: #f0fdf4; }
+    tr.row-partial { background: #fefce8; }
+    .pond-name { font-weight: 700; color: #1f2937; }
+    .pond-meta { font-size: .75rem; color: #6b7280; margin-top: 1px; }
+    .feed-cell { display: flex; align-items: center; gap: 3px; }
+    .x-input { width: 28px; min-width: 28px; padding: 2px 3px; border: 1px solid #d1d5db; border-radius: 6px; font-size: .76rem; text-align: center; background: #fff; }
+    .x-input:focus { outline: none; border-color: #4f8ef7; box-shadow: 0 0 0 2px rgba(79, 142, 247, .15); }
+    .x-input.stock-warn { border-color: #f97316; background: #fff7ed; }
+    .x-input.plan-suggested { font-weight: 700; color: #111827; }
+    .de-yz { font-size: .65rem; color: #6b7280; white-space: nowrap; line-height: 1; }
+    .de-yz.plan-nonzero { font-weight: 700; color: #334155; }
+    .row-actions { white-space: nowrap; }
+    .btn { border: none; border-radius: 7px; font-size: .78rem; font-weight: 700; padding: 6px 10px; cursor: pointer; }
+    .btn-confirm { background: #0f766e; color: #fff; }
+    .btn-confirm:hover { background: #0b5f59; }
+    .btn-confirm:disabled { background: #9ca3af; cursor: not-allowed; }
+    .confirm-all-wrap { padding: 10px 14px; border-top: 1px solid #f0f2f5; display: flex; justify-content: flex-end; }
+    .btn-confirm-all { background: #1d4ed8; color: #fff; border: none; border-radius: 9px; padding: 10px 20px; font-size: .9rem; font-weight: 700; cursor: pointer; }
+    .btn-confirm-all:hover { background: #1e40af; }
+    .toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 18px; border-radius: 10px; font-size: .87rem; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.18); z-index: 9999; display: none; }
+    .toast.ok { background: #f0fdf4; color: #166534; border: 1px solid #86efac; }
+    .toast.error { background: #fff1f2; color: #991b1b; border: 1px solid #fca5a5; }
+    .empty-state { text-align: center; padding: 60px 20px; color: #9ca3af; font-size: .95rem; }
+    .empty-state h2 { font-size: 1.1rem; margin-bottom: 8px; color: #6b7280; }
+    .action-cards { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 16px; width: 340px; }
+    .action-cards.is-compact { width: 72px; margin-left: auto; }
+    .action-card { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); border-top: 3px solid transparent; overflow: hidden; }
+    .action-card__toggle { width: 100%; border: none; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; text-align: left; }
+    .action-card__chevron { color: #6b7280; transition: transform .18s; flex-shrink: 0; }
+    .action-card.is-collapsed .action-card__chevron { transform: rotate(-90deg); }
+    .action-card.is-collapsed .action-card__body { display: none; }
+    .action-card.is-collapsed .action-card__toggle { justify-content: center; padding: 9px 8px; }
+    .action-card.is-collapsed .action-card__title-text { display: none; }
+    .action-card__body { padding: 0 16px 14px; display: flex; flex-direction: column; gap: 10px; }
+    .action-card__title { font-size: .88rem; font-weight: 700; display: flex; align-items: center; gap: 7px; }
+    .action-card--primary { border-top-color: #0f766e; }
+    .action-card--primary .action-card__title { color: #0f766e; }
+    .action-card--aux { border-top-color: #1e40af; }
+    .action-card--aux .action-card__title { color: #1e40af; }
+    .action-card--history { border-top-color: #7c3aed; }
+    .action-card--history .action-card__title { color: #7c3aed; }
+    .action-card--print { border-top-color: #0369a1; }
+    .action-card--print .action-card__title { color: #0369a1; }
+    .action-btn { display: block; width: 100%; border: none; border-radius: 8px; color: #fff; padding: 10px 16px; font-size: .88rem; font-weight: 700; cursor: pointer; text-align: center; text-decoration: none; margin-top: 4px; }
+    .action-btn--primary { background: #0f766e; }
+    .action-btn--primary:hover { background: #0b5f59; }
+    .action-btn--aux { background: #1e40af; }
+    .action-btn--aux:hover { background: #1e3a8a; }
+    .action-btn--history { background: #7c3aed; }
+    .action-btn--history:hover { background: #6d28d9; }
+    .action-btn--print { background: #0369a1; }
+    .action-btn--print:hover { background: #075985; }
+    .prog-info { font-size: .82rem; color: #6b7280; line-height: 1.5; }
+    @media (max-width: 1100px) { .feed-layout { grid-template-columns: 1fr; } .action-cards { position: static; width: auto; } }
+  </style>
+</head>
+<body>
+
+{% include '_sidebar.html' %}
+
+<header>
+  <h1>Alimentacion — Confirmacion</h1>
+  {% if has_open_program %}<span class="prog-badge">{{ open_program.program_code }}</span>{% endif %}
+</header>
+
+<div class="container">
+  {% if msg %}<div class="flash {{ 'ok' if status_msg == 'ok' else 'error' }}">{{ msg }}</div>{% endif %}
+  {% if has_unplanned %}<div class="banner-unplanned">⚠ Este programa contiene confirmaciones fuera de programa (sacos no planificados). El banner desaparecerá al crear un nuevo programa.</div>{% endif %}
+  {% if has_open_program %}<div class="program-summary">Programa <strong>{{ open_program.program_code }}</strong>: {{ planned_bags_total }} sacos planificados en {{ planned_cells_nonzero }} celdas con valor &gt; 0.</div>{% endif %}
+
+  <div class="filter-bar">
+    <label for="search-input">Buscar estanque</label>
+    <input id="search-input" type="text" placeholder="Unidad o nombre..." oninput="filterTable()" />
+    <span class="badge-total" id="visible-count">{{ pond_rows|length }} estanques</span>
+  </div>
+
+  <div class="feed-layout right-compact" id="feed-layout">
+    <div class="table-wrap" id="table-wrap">
+      {% if has_open_program and pond_rows %}
+      <table id="feed-table">
+        <thead>
+          <tr>
+            <th class="col-sticky">Estanque</th>
+            {% for ft in feed_types %}<th>{{ ft.name }}</th>{% endfor %}
+            <th>Ejec.</th>
+            <th>Acciones</th>
+          </tr>
+          <tr>
+            <th class="col-sticky">Disponibles →</th>
+            {% for ft in feed_types %}<th class="stock-disp-cell" data-ft-id="{{ ft.id }}">{{ stock_by_feed[ft.id]["available_bags"] }} sacos</th>{% endfor %}
+            <th>—</th><th>—</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in pond_rows %}
+          <tr class="pond-row row-{{ row.row_status }}" data-pond-id="{{ row.pond_id }}" data-name="{{ (row.cultivation_unit_name ~ ' ' ~ row.pond_name)|lower }}">
+            <td class="col-sticky">
+              <div class="pond-name">{{ row.pond_name }}</div>
+              <div class="pond-meta">{{ row.cultivation_unit_name }}</div>
+            </td>
+            {% for cell in row.feed_cells %}
+            <td>
+              {% set remaining = (cell.z_bags - cell.y_bags) if (cell.z_bags - cell.y_bags) > 0 else 0 %}
+              <div class="feed-cell">
+                <input class="x-input{% if cell.z_bags > 0 %} plan-suggested{% endif %}" type="text" inputmode="numeric" value="{{ remaining }}" data-ft-id="{{ cell.feed_type_id }}" data-available="{{ cell.available_bags }}" oninput="validateCell(this); this.value = this.value.replace(/[^0-9]/g, '')" />
+                <span class="de-yz{% if cell.z_bags > 0 %} plan-nonzero{% endif %}" data-ft-id="{{ cell.feed_type_id }}">de {{ cell.y_bags }} de {{ cell.z_bags }}</span>
+              </div>
+            </td>
+            {% endfor %}
+            <td class="total-executed">{{ row.total_y }}</td>
+            <td class="row-actions">
+              <button class="btn btn-confirm" onclick="confirmRow({{ row.pond_id }}, this)">Confirmar</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="confirm-all-wrap">
+        <button class="btn-confirm-all" onclick="confirmAll()">Confirmar todo</button>
+      </div>
+      {% elif not has_open_program %}
+      <div class="empty-state">
+        <h2>No hay programas de alimentación cargados</h2>
+        <p>Usa el panel lateral para crear un nuevo programa.</p>
+      </div>
+      {% else %}
+      <div class="empty-state"><h2>No hay estanques con lotes activos</h2></div>
+      {% endif %}
+    </div>
+
+    <aside class="action-cards is-compact" id="action-cards">
+      <div class="action-card action-card--primary is-collapsed">
+        <button type="button" class="action-card__toggle" onclick="toggleCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            <span class="action-card__title-text">Crear Programa</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          {% if has_open_program %}<p class="prog-info">Vigente: <strong>{{ open_program.program_code }}</strong>.<br>Crear uno nuevo cerrará el actual.</p>{% else %}<p class="prog-info">No hay programa vigente.</p>{% endif %}
+          <a class="action-btn action-btn--primary" href="/views/ui/feed/new-program">Crear nuevo programa</a>
+        </div>
+      </div>
+
+      <div class="action-card action-card--history is-collapsed">
+        <button type="button" class="action-card__toggle" onclick="toggleCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span class="action-card__title-text">Historial</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          <a class="action-btn action-btn--history" href="/views/ui/feed/history">Ver historial</a>
+        </div>
+      </div>
+
+      <div class="action-card action-card--aux is-collapsed">
+        <button type="button" class="action-card__toggle" onclick="toggleCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            <span class="action-card__title-text">Inventario</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          <a class="action-btn action-btn--aux" href="/views/ui/inventory">Ver inventario</a>
+          <a class="action-btn action-btn--aux" href="/views/ui/inventory/load-new">Registrar carga</a>
+        </div>
+      </div>
+
+      {% if has_open_program %}
+      <div class="action-card action-card--print is-collapsed">
+        <button type="button" class="action-card__toggle" onclick="toggleCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            <span class="action-card__title-text">Imprimir Programa</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          <p class="prog-info">Genera una hoja PDF con el programa <strong>{{ open_program.program_code }}</strong> para los operarios.</p>
+          <a class="action-btn action-btn--print" href="/views/ui/feed/print" target="_blank">Ver e imprimir</a>
+          <a class="action-btn action-btn--print" href="/views/ui/feed/print?autoprint=1" target="_blank" style="margin-top:4px;opacity:.85;">Imprimir directo</a>
+        </div>
+      </div>
+      {% endif %}
+    </aside>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const PROGRAM_ID = {{ open_program.id if has_open_program else 'null' }};
+
+  function setStickyRowOffset() {
+    const row1 = document.querySelector('thead tr:nth-child(1)');
+    if (!row1) return;
+    document.documentElement.style.setProperty('--thead-row1-h', row1.getBoundingClientRect().height + 'px');
+  }
+
+  function toggleCard(btn) {
+    const card = btn.closest('.action-card');
+    card.classList.toggle('is-collapsed');
+    updateSidebar();
+  }
+
+  function updateSidebar() {
+    const aside = document.getElementById('action-cards');
+    const layout = document.getElementById('feed-layout');
+    if (!aside || !layout) return;
+    if (window.innerWidth <= 1100) { aside.classList.remove('is-compact'); layout.classList.remove('right-compact'); return; }
+    const expanded = !!aside.querySelector('.action-card:not(.is-collapsed)');
+    aside.classList.toggle('is-compact', !expanded);
+    layout.classList.toggle('right-compact', !expanded);
+  }
+
+  function filterTable() {
+    const q = document.getElementById('search-input').value.toLowerCase().trim();
+    let count = 0;
+    document.querySelectorAll('#feed-table tbody tr.pond-row').forEach(r => {
+      const show = !q || (r.dataset.name || '').includes(q);
+      r.style.display = show ? '' : 'none';
+      if (show) count++;
+    });
+    document.getElementById('visible-count').textContent = count + ' estanques';
+  }
+
+  function validateCell(input) {
+    const available = parseInt(input.dataset.available || '0');
+    input.classList.toggle('stock-warn', (parseInt(input.value) || 0) > available);
+  }
+
+  function showToast(msg, type = 'ok') {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'toast ' + type; t.style.display = 'block';
+    clearTimeout(t._timer); t._timer = setTimeout(() => { t.style.display = 'none'; }, 3000);
+  }
+
+  function applyConfirmResult(pondId, data) {
+    const row = document.querySelector(`tr[data-pond-id="${pondId}"]`);
+    if (!row) return;
+    data.updated_cells.forEach(cell => {
+      const span = row.querySelector(`.de-yz[data-ft-id="${cell.feed_type_id}"]`);
+      if (span) {
+        span.textContent = `de ${cell.y_bags} de ${cell.z_bags}`;
+        span.classList.toggle('plan-nonzero', (parseInt(cell.z_bags) || 0) > 0);
+      }
+      const stockCell = document.querySelector(`.stock-disp-cell[data-ft-id="${cell.feed_type_id}"]`);
+      if (stockCell) stockCell.textContent = cell.available_bags + ' sacos';
+      document.querySelectorAll(`.x-input[data-ft-id="${cell.feed_type_id}"]`).forEach(inp => { inp.dataset.available = cell.available_bags; });
+
+      const input = row.querySelector(`.x-input[data-ft-id="${cell.feed_type_id}"]`);
+      if (input) {
+        const remaining = Math.max((parseInt(cell.z_bags) || 0) - (parseInt(cell.y_bags) || 0), 0);
+        input.value = remaining;
+        input.classList.remove('stock-warn');
+        input.classList.toggle('plan-suggested', (parseInt(cell.z_bags) || 0) > 0);
+      }
+    });
+    const totalCell = row.querySelector('.total-executed');
+    if (totalCell) totalCell.textContent = data.updated_cells.reduce((s, c) => s + c.y_bags, 0);
+    row.classList.remove('row-empty', 'row-partial', 'row-complete');
+    row.classList.add('row-' + (data.row_status || 'empty'));
+    if (data.has_unplanned && !document.querySelector('.banner-unplanned')) {
+      const div = document.createElement('div');
+      div.className = 'banner-unplanned';
+      div.textContent = '⚠ Este programa contiene confirmaciones fuera de programa. El banner desaparecerá al crear un nuevo programa.';
+      document.querySelector('.container').prepend(div);
+    }
+  }
+
+  async function confirmRow(pondId, btn) {
+    if (!PROGRAM_ID) { showToast('No hay programa vigente', 'error'); return; }
+    const row = document.querySelector(`tr[data-pond-id="${pondId}"]`);
+    let stockError = false;
+    const cells = [];
+    row.querySelectorAll('.x-input').forEach(inp => {
+      if (parseInt(inp.value) > parseInt(inp.dataset.available || '0')) stockError = true;
+      cells.push({ feed_type_id: parseInt(inp.dataset.ftId), bags: parseInt(inp.value) || 0 });
+    });
+    if (stockError) { showToast('Stock insuficiente en alguna celda', 'error'); return; }
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const resp = await fetch('/views/ui/feed/confirm-row', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ program_id: PROGRAM_ID, pond_id: pondId, cells }),
+      });
+      const data = await resp.json();
+      if (data.success) { applyConfirmResult(pondId, data); showToast('Confirmado', 'ok'); }
+      else showToast(data.error || 'Error', 'error');
+    } catch { showToast('Error de red', 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Confirmar'; }
+  }
+
+  async function confirmAll() {
+    if (!PROGRAM_ID) { showToast('No hay programa vigente', 'error'); return; }
+    if (document.querySelector('.x-input.stock-warn')) { showToast('Corrige celdas con stock insuficiente', 'error'); return; }
+    const rows = [];
+    document.querySelectorAll('tr.pond-row').forEach(row => {
+      const cells = [];
+      row.querySelectorAll('.x-input').forEach(inp => cells.push({ feed_type_id: parseInt(inp.dataset.ftId), bags: parseInt(inp.value) || 0 }));
+      if (cells.some(c => c.bags > 0)) rows.push({ pond_id: parseInt(row.dataset.pondId), cells });
+    });
+    if (!rows.length) { showToast('No hay valores para confirmar', 'error'); return; }
+    try {
+      const resp = await fetch('/views/ui/feed/confirm-all', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ program_id: PROGRAM_ID, rows }),
+      });
+      const data = await resp.json();
+      if (data.success) { showToast('Todo confirmado. Recargando...', 'ok'); setTimeout(() => location.reload(), 1200); }
+      else showToast(data.error || 'Error', 'error');
+    } catch { showToast('Error de red', 'error'); }
+  }
+
+  window.addEventListener('DOMContentLoaded', () => { setStickyRowOffset(); updateSidebar(); });
+  window.addEventListener('resize', () => { setStickyRowOffset(); updateSidebar(); });
+</script>
+
+</body>
+</html>

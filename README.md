@@ -29,7 +29,7 @@ Aplicación FastAPI para trazabilidad diaria de peces, siguiendo la especificaci
 
 ## Ejecución
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app
 ```
 
 ## Migraciones

@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cuadrar Inventario - Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+      min-height: 100vh;
+    }
+    .page-wrap { padding: 14px 12px 18px; max-width: 700px; margin: 0 auto; }
+    .title { margin-bottom: 16px; }
+    .title h1 { font-size: 1.28rem; font-weight: 800; color: #111827; }
+    .title p { margin-top: 3px; font-size: .85rem; color: #6b7280; }
+
+    .form-container {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.05);
+    }
+
+    .form-section { margin-bottom: 20px; }
+    .form-section-title {
+      font-size: .85rem;
+      text-transform: uppercase;
+      color: #6b7280;
+      font-weight: 700;
+      letter-spacing: .04em;
+      margin-bottom: 12px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-bottom: 14px;
+    }
+    .form-group label {
+      font-size: .84rem;
+      font-weight: 700;
+      color: #374151;
+    }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      padding: 8px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: .9rem;
+      font-family: inherit;
+    }
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    .form-group input:read-only {
+      background: #f3f4f6;
+      color: #6b7280;
+      cursor: not-allowed;
+    }
+    .form-group.required label::after {
+      content: " *";
+      color: #dc2626;
+    }
+
+    .error-text {
+      font-size: .8rem;
+      color: #dc2626;
+      display: none;
+    }
+    .form-group.error .error-text {
+      display: block;
+    }
+    .form-group.error input,
+    .form-group.error select {
+      border-color: #dc2626;
+    }
+
+    .stat-box {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .stat-box-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: .9rem;
+    }
+    .stat-box-row:last-child {
+      margin-bottom: 0;
+    }
+    .stat-label {
+      color: #6b7280;
+      font-weight: 600;
+    }
+    .stat-value {
+      font-weight: 800;
+      color: #111827;
+    }
+    .stat-diff {
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: .85rem;
+      font-weight: 700;
+    }
+    .stat-diff.positive {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .stat-diff.negative {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    .stat-diff.neutral {
+      background: #e5e7eb;
+      color: #374151;
+    }
+
+    .btn {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .15s ease;
+    }
+    .btn-primary {
+      background: #3b82f6;
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #2563eb;
+    }
+    .btn-secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    .btn-secondary:hover:not(:disabled) {
+      background: #d1d5db;
+    }
+    .btn:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+
+    .alert {
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin-bottom: 14px;
+      font-size: .9rem;
+    }
+    .alert-error {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+    .alert-success {
+      background: #dcfce7;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+    }
+
+    @media (max-width: 768px) {
+      .page-wrap { padding-top: 60px; }
+    }
+  </style>
+</head>
+<body>
+  {% include '_sidebar.html' %}
+
+  <div class="page-wrap">
+    <div class="title">
+      <h1>Cuadrar Inventario</h1>
+      <p>Ajusta el stock real de alimento y registra la diferencia</p>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-error">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <form id="adjustmentForm" class="form-container">
+      <!-- Seccion: Tipo de Alimento -->
+      <div class="form-section">
+        <div class="form-section-title">Seleccionar Alimento</div>
+        <div class="form-group required">
+          <label for="feedType">Tipo de Alimento</label>
+          <select id="feedType" name="feed_type_id" onchange="onFeedTypeChange(this)" required>
+            <option value="">-- Seleccionar --</option>
+            {% for feed_type in feed_types %}
+            <option value="{{ feed_type.id }}">{{ feed_type.name }}</option>
+            {% endfor %}
+          </select>
+          <span class="error-text">Tipo de alimento es requerido</span>
+        </div>
+      </div>
+
+      <!-- Seccion: Stock Actual (solo lectura) -->
+      <div class="form-section">
+        <div class="form-section-title">Stock Calculado (Sistema)</div>
+        <div class="stat-box">
+          <div class="stat-box-row">
+            <span class="stat-label">Stock Disponible:</span>
+            <span class="stat-value" id="stockAvailable">0 sacos</span>
+          </div>
+          <div class="stat-box-row">
+            <span class="stat-label">Stock Planificado:</span>
+            <span class="stat-value" id="stockPlanned">0 sacos</span>
+          </div>
+          <div class="stat-box-row">
+            <span class="stat-label">Stock Calculado Total:</span>
+            <span class="stat-value" id="stockCalculated" style="color: #3b82f6;">0 sacos</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Seccion: Stock Real (entrada del usuario) -->
+      <div class="form-section">
+        <div class="form-section-title">Stock Real (Conteo Físico)</div>
+        <div class="form-group required">
+          <label for="realStock">Cantidad Real (sacos)</label>
+          <input type="number" id="realStock" name="stock_real_bags" min="0" placeholder="Ingresa cantidad contada" onchange="calculateDifference()" required />
+          <span class="error-text">Cantidad real es requerida</span>
+        </div>
+      </div>
+
+      <!-- Seccion: Diferencia (calculada) -->
+      <div class="form-section">
+        <div class="form-section-title">Diferencia</div>
+        <div class="stat-box">
+          <div class="stat-box-row">
+            <span class="stat-label">Diferencia:</span>
+            <span class="stat-diff neutral" id="differenceBadge">0 sacos</span>
+          </div>
+          <div class="stat-box-row" style="font-size: .8rem;">
+            <span class="stat-label">Fórmula:</span>
+            <span style="color: #6b7280;">Stock Real - Stock Calculado</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Seccion: Comentario (obligatorio) -->
+      <div class="form-section">
+        <div class="form-section-title">Registro del Ajuste</div>
+        <div class="form-group required">
+          <label for="comment">Comentario (Explicar el motivo de la diferencia)</label>
+          <textarea 
+            id="comment" 
+            name="comment" 
+            rows="4" 
+            placeholder="Ej: Se encontraron 2 sacos dañados no registrados. Merma por humedad en almacén."
+            required></textarea>
+          <span class="error-text">Comentario es requerido y debe explicar la diferencia</span>
+        </div>
+      </div>
+
+      <!-- Botones de Accion -->
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" onclick="history.back()">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Confirmar Cuadre</button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    // Variables globales
+    let currentFeedTypeId = null;
+    let stockData = {};
+
+    // Inicializar
+    document.addEventListener('DOMContentLoaded', function() {
+      const stockDataJson = {{ stock_data_json | safe }};
+      if (stockDataJson) {
+        Object.assign(stockData, stockDataJson);
+      }
+      document.getElementById('adjustmentForm').addEventListener('submit', handleFormSubmit);
+    });
+
+    // Cambio de tipo de alimento
+    async function onFeedTypeChange(select) {
+      currentFeedTypeId = select.value;
+      
+      if (!currentFeedTypeId) {
+        clearStockDisplay();
+        return;
+      }
+
+      // Obtener stock del servidor
+      try {
+        const response = await fetch(`/views/api/feed/stock/${currentFeedTypeId}`);
+        const result = await response.json();
+        
+        if (result.success) {
+          updateStockDisplay(result.data);
+        } else {
+          alert('Error al obtener stock: ' + result.error);
+        }
+      } catch (err) {
+        console.error('Error:', err);
+        alert('Error al cargar stock');
+      }
+    }
+
+    // Actualizar display de stock
+    function updateStockDisplay(data) {
+      document.getElementById('stockAvailable').textContent = `${data.available_bags} sacos`;
+      document.getElementById('stockPlanned').textContent = `${data.planned_bags} sacos`;
+      document.getElementById('stockCalculated').textContent = `${data.calculated_total_bags} sacos`;
+      
+      stockData[currentFeedTypeId] = data;
+      calculateDifference();
+    }
+
+    // Limpiar display de stock
+    function clearStockDisplay() {
+      document.getElementById('stockAvailable').textContent = '0 sacos';
+      document.getElementById('stockPlanned').textContent = '0 sacos';
+      document.getElementById('stockCalculated').textContent = '0 sacos';
+      document.getElementById('realStock').value = '';
+      document.getElementById('differenceBadge').textContent = '0 sacos';
+    }
+
+    // Calcular diferencia
+    function calculateDifference() {
+      if (!currentFeedTypeId) return;
+
+      const calculatedBags = parseInt(document.getElementById('stockCalculated').textContent) || 0;
+      const realBags = parseInt(document.getElementById('realStock').value) || 0;
+      const difference = realBags - calculatedBags;
+
+      const badge = document.getElementById('differenceBadge');
+      badge.textContent = `${difference > 0 ? '+' : ''}${difference} sacos`;
+      
+      if (difference > 0) {
+        badge.className = 'stat-diff positive';
+      } else if (difference < 0) {
+        badge.className = 'stat-diff negative';
+      } else {
+        badge.className = 'stat-diff neutral';
+      }
+    }
+
+    // Manejar envio del formulario
+    async function handleFormSubmit(e) {
+      e.preventDefault();
+
+      if (!currentFeedTypeId) {
+        alert('Debes seleccionar un tipo de alimento');
+        return;
+      }
+
+      const realBags = parseInt(document.getElementById('realStock').value);
+      const calculatedBags = parseInt(document.getElementById('stockCalculated').textContent);
+      const comment = document.getElementById('comment').value.trim();
+
+      if (!realBags && realBags !== 0) {
+        alert('Ingresa la cantidad real');
+        return;
+      }
+
+      if (!comment) {
+        alert('Debes ingresar un comentario explicando la diferencia');
+        return;
+      }
+
+      const payload = {
+        feed_type_id: parseInt(currentFeedTypeId),
+        stock_calculated_bags: calculatedBags,
+        stock_real_bags: realBags,
+        difference_bags: realBags - calculatedBags,
+        comment: comment
+      };
+
+      try {
+        const response = await fetch('/views/ui/inventory/adjustment-save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (result.success) {
+          alert('Cuadre registrado exitosamente');
+          window.location.href = '/views/ui/inventory';
+        } else {
+          alert('Error: ' + (result.error || 'No se pudo guardar el cuadre'));
+        }
+      } catch (err) {
+        console.error('Error:', err);
+        alert('Error al enviar el formulario');
+      }
+    }
+  </script>
+</body>
+</html>

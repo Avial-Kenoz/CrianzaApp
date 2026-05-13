@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Detalle Declaracion {{ declaration.folio }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+      min-height: 100vh;
+    }
+    header {
+      background: #111827;
+      color: #fff;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 { font-size: 1.05rem; }
+    .meta { font-size: .82rem; opacity: .8; margin-top: 2px; }
+    .top-links { display: flex; gap: 8px; }
+    .btn-link {
+      color: #fff;
+      text-decoration: none;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: .82rem;
+      font-weight: 700;
+    }
+    .container { max-width: 1320px; margin: 0 auto; padding: 18px; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
+      padding: 10px 12px;
+    }
+    .card .label {
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+      font-size: .72rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .card .value { font-size: .96rem; font-weight: 700; color: #111827; }
+    .table-wrap {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      overflow: auto;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      border-bottom: 1px solid #eef2f7;
+      padding: 9px 10px;
+      text-align: left;
+      font-size: .82rem;
+      white-space: nowrap;
+    }
+    th {
+      background: #111827;
+      color: #fff;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+      font-size: .71rem;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f9fafb; }
+    .nd { color: #9ca3af; }
+      .alert-banner {
+        background: #fef3c7;
+        border: 1px solid #f59e0b;
+        border-radius: 10px;
+        padding: 10px 14px;
+        margin-bottom: 14px;
+        font-size: .88rem;
+        color: #92400e;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      tr.missing-weight td { background: #fef2f2 !important; }
+      tr.missing-weight:hover td { background: #fee2e2 !important; }
+      .badge-warn {
+        display: inline-block;
+        background: #fef3c7;
+        color: #92400e;
+        border-radius: 6px;
+        padding: 1px 6px;
+        font-size: .72rem;
+        font-weight: 700;
+      }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Declaracion {{ declaration.folio }}</h1>
+      <div class="meta">Detalle ordenado por lote y PIT tag</div>
+    </div>
+    <div class="top-links">
+      <a class="btn-link" href="/views/ui/faena">Volver a Faena</a>
+      <a class="btn-link" href="/views/ui/cultivation-declarations/{{ declaration.id }}/json" target="_blank">Ver JSON</a>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="cards">
+      <div class="card">
+        <div class="label">Estado</div>
+        <div class="value">{{ declaration.status }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Fecha declaracion</div>
+        <div class="value">{{ declaration.declaration_date.strftime('%d/%m/%Y') if declaration.declaration_date else 'N/D' }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Valida hasta</div>
+        <div class="value">{{ declaration.valid_until.strftime('%d/%m/%Y') if declaration.valid_until else 'N/D' }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Total peces</div>
+        <div class="value">{{ total_fish }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Peso total (kg)</div>
+        <div class="value">{{ payload.get('totals', {}).get('total_weight_kg', 'N/D') }}</div>
+      </div>
+    </div>
+
+    {% if fish_without_weight_count > 0 %}
+    <div class="alert-banner">
+      &#9888; Tarea pendiente: hay {{ fish_without_weight_count }} pez(ces) sin peso / diámetro de ova registrado.
+    </div>
+    {% endif %}
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>PIT tag</th>
+            <th>Lote</th>
+            <th>Sexo</th>
+            <th>Peso (g)</th>
+            <th>Diám. ova (mm)</th>
+            <th>Fármaco</th>
+            <th>Fármaco nombre</th>
+            <th>Aplicacion</th>
+            <th>Retiro (dias)</th>
+            <th>Fin retiro</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if fish_rows %}
+          {% for row in fish_rows %}
+          <tr{% if row.get('missing_weight') %} class="missing-weight"{% endif %}>
+            <td>{{ row.get('pit_tag') or 'N/D' }}</td>
+            <td>{{ row.get('lot') or 'N/D' }}</td>
+            <td>{{ row.get('sex') or 'N/D' }}</td>
+            <td>
+              {% if row.get('weight_g') is not none %}
+                {{ row.get('weight_g') | round(1) }}g
+              {% else %}
+                <span class="badge-warn">sin peso</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if (row.get('sex') or '') | upper == 'F' %}
+                {{ row.get('caviar_diameter_mm') if row.get('caviar_diameter_mm') is not none else '—' }}
+              {% else %}
+                <span class="nd">—</span>
+              {% endif %}
+            </td>
+            <td>{{ 'Sí' if row.get('has_drug_use') else 'No' }}</td>
+            <td>{{ row.get('drug_name') or 'N/D' }}</td>
+            <td>{{ row.get('application_date') or 'N/D' }}</td>
+            <td>{{ row.get('withdrawal_period') or 'N/D' }}</td>
+            <td>{{ row.get('withdrawal_end_date') or 'N/D' }}</td>
+          </tr>
+          {% endfor %}
+          {% else %}
+          <tr><td class="nd" colspan="10">Sin peces en esta declaracion.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

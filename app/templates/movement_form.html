@@ -427,6 +427,15 @@
     document.getElementById('movTime').value = local;
   })();
 
+  function updateTaggedPitRequirement() {
+    const mode = document.getElementById('modeInput').value;
+    const batchEnabled = document.getElementById('taggedBatchToggle').checked;
+    const pitInput = document.getElementById('pitSearch');
+    if (!pitInput) return;
+    // En modo masivo con PIT, la validación la hace la lista batchFish.
+    pitInput.required = (mode === 'tagged' && !batchEnabled);
+  }
+
   function setMode(mode, btn) {
     document.getElementById('modeInput').value = mode;
     document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
@@ -434,7 +443,7 @@
     document.getElementById('sectionTagged').classList.toggle('visible', mode === 'tagged');
     document.getElementById('sectionUntagged').classList.toggle('visible', mode === 'untagged');
     // Reset required
-    document.getElementById('pitSearch').required = (mode === 'tagged');
+    updateTaggedPitRequirement();
     document.getElementById('fishQtyUntagged').required = (mode === 'untagged');
     document.getElementById('lotIdUntagged').required = (mode === 'untagged');
   }
@@ -697,6 +706,7 @@
     const batchTools = document.getElementById('batchTools');
     const enabled = this.checked;
     batchTools.classList.toggle('visible', enabled);
+    updateTaggedPitRequirement();
     document.getElementById('fishIdHidden').value = '';
     if (!enabled) {
       clearBatchList();

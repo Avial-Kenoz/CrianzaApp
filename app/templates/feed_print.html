@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Programa {{ program.program_code }} — Alimentacion</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+      background: #fff;
+      color: #000;
+      font-size: 12pt;
+    }
+
+    /* ── Controles visibles solo en pantalla ─────────────────────── */
+    .screen-only {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 20px;
+      background: #1a1a2e;
+      color: #fff;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .screen-only h2 { font-size: .95rem; font-weight: 600; flex: 1; }
+    .btn-print {
+      background: #0f766e;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 18px;
+      font-size: .88rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-print:hover { background: #0b5f59; }
+    .btn-back {
+      background: transparent;
+      color: #d1d5db;
+      border: 1px solid #4b5563;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: .85rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .btn-back:hover { background: #374151; }
+
+    /* ── Contenido imprimible ────────────────────────────────────── */
+    .print-body {
+      padding: 14px 18px 24px;
+    }
+
+    .doc-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #000;
+    }
+    .doc-title { font-size: 16pt; font-weight: 800; color: #000; line-height: 1.1; }
+    .doc-subtitle { font-size: 10pt; color: #000; margin-top: 3px; }
+    .doc-meta { text-align: right; font-size: 9pt; color: #000; line-height: 1.6; }
+    .doc-meta strong { display: block; font-size: 10pt; font-weight: 800; color: #000; }
+
+    .summary-pills {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .pill {
+      background: #fff;
+      border: 1.5px solid #000;
+      color: #000;
+      border-radius: 4px;
+      padding: 3px 10px;
+      font-size: 9pt;
+      font-weight: 700;
+    }
+    .pill.green { background: #fff; border-color: #000; color: #000; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10pt;
+    }
+    thead tr th {
+      background: #000;
+      color: #fff;
+      padding: 6px 8px;
+      font-weight: 700;
+      text-align: left;
+      white-space: nowrap;
+      font-size: 9pt;
+      text-transform: uppercase;
+      letter-spacing: .3px;
+    }
+    thead tr:nth-child(2) th {
+      background: #fff;
+      color: #000;
+      font-size: 8.5pt;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-bottom: 1.5px solid #000;
+      border-top: none;
+    }
+    th.col-pond { width: 120px; }
+    th.col-unit { width: 75px; }
+    th.col-lot  { width: 85px; }
+    th.col-ft   { text-align: center; }
+    th.col-total{ text-align: center; width: 55px; }
+
+    tbody tr { border-bottom: 1px solid #000; }
+    tbody tr:last-child { border-bottom: 2px solid #000; }
+    tbody tr:nth-child(even) { background: #fff; }
+    tbody tr.has-program { background: #fff; }
+    tbody tr.has-program td { color: #000; }
+
+    tbody td {
+      padding: 5px 8px;
+      vertical-align: middle;
+    }
+    td.col-pond { font-weight: 700; color: #000; }
+    td.col-unit { color: #000; font-size: 9pt; }
+    td.col-lot  { color: #000; font-size: 9pt; }
+    td.col-ft   { text-align: center; font-weight: 600; }
+    td.col-total{ text-align: center; font-weight: 800; font-size: 11pt; color: #000; }
+    td.ft-zero  { color: #000; }
+    td.ft-value { color: #000; font-weight: 700; }
+
+    tfoot td {
+      padding: 6px 8px;
+      font-weight: 800;
+      font-size: 10pt;
+      border-top: 2.5px solid #000;
+      background: #fff;
+    }
+    tfoot td.col-ft { text-align: center; color: #000; }
+    tfoot td.col-total { text-align: center; color: #000; }
+
+    .sig-block {
+      margin-top: 24px;
+      display: flex;
+      gap: 36px;
+    }
+    .sig-line {
+      flex: 1;
+      border-top: 1px solid #000;
+      padding-top: 5px;
+      font-size: 9pt;
+      color: #000;
+    }
+
+    .footer-note {
+      margin-top: 10px;
+      font-size: 8pt;
+      color: #000;
+      text-align: right;
+    }
+
+    /* ── Print media ─────────────────────────────────────────────── */
+    @media print {
+      .screen-only { display: none !important; }
+      .print-body { padding: 0; }
+      body { font-size: 11pt; color: #000 !important; background: #fff !important; }
+      * { color: #000 !important; background: transparent !important; }
+      thead tr th { background: #000 !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      thead tr:nth-child(2) th { background: #fff !important; color: #000 !important; }
+      table { font-size: 10pt; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Barra visible solo en pantalla -->
+<div class="screen-only">
+  <h2>Vista previa — Programa {{ program.program_code }}</h2>
+  <a class="btn-back" href="/views/ui/feed">← Volver</a>
+  <button class="btn-print" onclick="window.print()">🖨 Imprimir / Guardar PDF</button>
+</div>
+
+<div class="print-body">
+
+  <!-- Encabezado del documento -->
+  <div class="doc-header">
+    <div>
+      <div class="doc-title">Programa de Alimentación</div>
+      <div class="doc-subtitle">{{ program.program_code }}{% if program.notes %} — {{ program.notes }}{% endif %}</div>
+    </div>
+    <div class="doc-meta">
+      <strong>Fecha impresión: {{ print_date }}</strong>
+      Creado: {{ program.created_at.strftime('%d/%m/%Y %H:%M') }}<br>
+      Tipos de alimento con stock: {{ feed_types|length }}<br>
+      Estanques con programa: {{ rows|length }}
+    </div>
+  </div>
+
+  <!-- Resumen rápido -->
+  <div class="summary-pills">
+    <span class="pill">{{ total_programmed }} sacos planificados</span>
+    <span class="pill">{{ rows_with_program }} estanques con programa</span>
+    {% for ft in feed_types %}
+      {% set col_total = namespace(v=0) %}
+      {% for row in rows %}{% set col_total.v = col_total.v + row.bags_by_ft.get(ft.id, 0) %}{% endfor %}
+      {% if col_total.v > 0 %}<span class="pill green">{{ ft.name }}: {{ col_total.v }} sacos</span>{% endif %}
+    {% endfor %}
+  </div>
+
+  <!-- Tabla principal -->
+  <table>
+    <thead>
+      <tr>
+        <th class="col-pond">Estanque</th>
+        <th class="col-unit">Unidad</th>
+        <th class="col-lot">Lote(s)</th>
+        {% for ft in feed_types %}<th class="col-ft">{{ ft.name }}</th>{% endfor %}
+        <th class="col-total">Total</th>
+      </tr>
+      <tr>
+        <th class="col-pond" colspan="3">Disponible en bodega →</th>
+        {% for ft in feed_types %}<th class="col-ft">{{ stock_by_feed[ft.id]['available_bags'] }} sac.</th>{% endfor %}
+        <th class="col-total">—</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr class="{{ 'has-program' if row.total_z > 0 else '' }}">
+        <td class="col-pond">{{ row.pond_name }}</td>
+        <td class="col-unit">{{ row.cultivation_unit_name }}</td>
+        <td class="col-lot">{{ row.lot_names|join(', ') if row.lot_names else '—' }}</td>
+        {% for ft in feed_types %}
+          {% set bags = row.bags_by_ft.get(ft.id, 0) %}
+          <td class="col-ft {% if bags > 0 %}ft-value{% else %}ft-zero{% endif %}">
+            {{ bags if bags > 0 else '—' }}
+          </td>
+        {% endfor %}
+        <td class="col-total">{{ row.total_z if row.total_z > 0 else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="3"><strong>TOTAL</strong></td>
+        {% for ft in feed_types %}
+          {% set col_total = namespace(v=0) %}
+          {% for row in rows %}{% set col_total.v = col_total.v + row.bags_by_ft.get(ft.id, 0) %}{% endfor %}
+          <td class="col-ft">{{ col_total.v if col_total.v > 0 else '—' }}</td>
+        {% endfor %}
+        <td class="col-total">{{ total_programmed }}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <!-- Firmas -->
+  <div class="sig-block">
+    <div class="sig-line">Preparado por</div>
+    <div class="sig-line">Revisado por</div>
+    <div class="sig-line">Fecha / Turno</div>
+  </div>
+
+  <div class="footer-note">
+    Generado por CrianzaApp · {{ print_date }} · Programa {{ program.program_code }}
+  </div>
+
+</div>
+
+<script>
+  // Auto-print si viene con ?autoprint=1
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('autoprint') === '1') {
+    window.addEventListener('load', () => { setTimeout(() => window.print(), 300); });
+  }
+</script>
+
+</body>
+</html>

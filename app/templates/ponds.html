@@ -324,6 +324,11 @@
     .action-btn--create:hover { background: #0b5f59; }
 
     /* ── Grupo padre/hijo ── */
+    .cu-parent-row { background: #f1f5f9; }
+    .cu-parent-row:hover { background: #e2e8f0 !important; }
+    .cu-label { font-weight: 800; color: #0f172a; }
+    .cu-meta { font-size: .78rem; color: #64748b; margin-left: 6px; }
+    .pond-under-cu-hidden { display: none; }
     .pond-parent-row { background: #f8f9ff; }
     .pond-parent-row:hover { background: #eef2ff !important; }
     .expand-btn {
@@ -383,7 +388,7 @@
     <label for="search-input">Buscar</label>
     <input id="search-input" type="text" placeholder="Nombre, código…" oninput="filterTable()" />
 
-    <span class="badge-total" id="visible-count">{{ ponds|length }} estanques</span>
+    <span class="badge-total" id="visible-count">{{ total_pond_rows }} estanques</span>
   </div>
 
   {% if msg %}
@@ -394,6 +399,20 @@
   <div class="todo-banner">
     <span>Tarea pendiente: cargar información de fármacos en {{ pending_drug_logs_count }} peces con sufijo _R.</span>
     <a href="/views/ui/fish/pending-drug-logs">Ver pendientes</a>
+  </div>
+  {% endif %}
+
+  {% if sanitary_expiry_warning %}
+  <div class="todo-banner">
+    <span>Tarea pendiente: informe de control sanitario vence el {{ sanitary_expiry_date.strftime('%d/%m/%Y') if sanitary_expiry_date else '—' }} — menos de 2 meses.</span>
+    <a href="/views/ui/faena">Gestionar en Faena</a>
+  </div>
+  {% endif %}
+
+  {% if jaula_quality_conflict_count and jaula_quality_conflict_count > 0 %}
+  <div class="todo-banner">
+    <span>Tarea pendiente: hay {{ jaula_quality_conflict_count }} pez(ces) en Jaula con conflicto de datos (sin peso o sin diametro de ovas).</span>
+    <a href="/views/ui/fish/jaula-quality-conflicts">Ver pendientes</a>
   </div>
   {% endif %}
 
@@ -438,11 +457,56 @@
         </tr>
       </thead>
       <tbody>
-        {% if ponds %}
-        {% for p in ponds %}
+        {% if grouped_units %}
+        {% for cu in grouped_units %}
+        <tr class="cu-parent-row" data-cu-id="{{ cu.id }}" data-name="{{ cu.name|lower }}">
+          <td>
+            <div class="pond-name">
+              <button class="expand-btn" onclick="toggleCultivationUnit('{{ cu.id }}')" title="Expandir/colapsar unidad">▶</button>
+              <span class="cu-label">{{ cu.name }}</span>
+              <span class="cu-meta">({{ cu.ponds|length }} estanques)</span>
+            </div>
+          </td>
+          <td>—</td>
+          <td><span class="badge badge-other">Unidad</span></td>
+          <td>
+            {% if cu.n_fish == 0 %}
+              <span class="fish-count zero">0</span>
+            {% elif cu.n_fish < 50 %}
+              <span class="fish-count low">{{ '{:,}'.format(cu.n_fish) }}</span>
+            {% else %}
+              <span class="fish-count high">{{ '{:,}'.format(cu.n_fish) }}</span>
+            {% endif %}
+          </td>
+          <td>{{ '{:,.1f}'.format(cu.biomass) if cu.biomass is not none else '—' }}</td>
+          <td>{{ '%.2f'|format(cu.density) if cu.density is not none else '—' }}</td>
+          <td>{{ '%.3f'|format(cu.avg_condition_k) if cu.avg_condition_k is not none else '—' }}</td>
+          <td>{{ '{:,.0f}'.format(cu.avg_weight) if cu.avg_weight is not none else '—' }}</td>
+          <td>
+            {% if cu.active_lots %}
+              <div class="lots-list">
+                {% for l in cu.active_lots %}
+                  <span class="lot-tag {% if l.is_unregistered_lot %}lot-tag-unregistered{% endif %}">{{ l.internal_id or l.name }}</span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <span class="no-lots">sin lotes</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if cu.id != 'none' %}
+              <a class="edit-link" href="/views/ui/ponds?cultivation_unit_id={{ cu.id }}">Ver</a>
+            {% else %}
+              <span class="no-lots">—</span>
+            {% endif %}
+          </td>
+        </tr>
+
+        {% for p in cu.ponds %}
         {# ── Fila de grupo padre ── #}
         {% if p.is_parent_group %}
-        <tr class="pond-parent-row"
+        <tr class="pond-parent-row pond-under-cu pond-under-cu-hidden"
+            data-cu="{{ cu.id }}"
             data-sortable
             data-group-id="{{ p.id }}"
             data-name="{{ p.name|lower }} {{ (p.code or '')|lower }} {% for c in p.children %}{{ c.name|lower }} {{ (c.code or '')|lower }} {% endfor %}">
@@ -488,7 +552,8 @@
 
         {# ── Filas hijo (ocultas por defecto) ── #}
         {% for c in p.children %}
-        <tr class="pond-child-row pond-child-hidden"
+        <tr class="pond-child-row pond-child-hidden pond-under-cu pond-under-cu-hidden"
+          data-cu="{{ cu.id }}"
             data-group="{{ p.id }}"
             data-name="{{ c.name|lower }} {{ (c.code or '')|lower }}">
           <td>
@@ -542,7 +607,9 @@
 
         {# ── Fila estanque normal (sin hijos) ── #}
         {% else %}
-        <tr data-sortable
+        <tr class="pond-under-cu pond-under-cu-hidden"
+          data-cu="{{ cu.id }}"
+          data-sortable
             data-name="{{ p.name|lower }} {{ (p.code or '')|lower }} {{ (p.internal_id or '')|lower }}">
           <td>
             <div class="pond-name"><a class="pond-link" href="/views/ui/ponds/{{ p.id }}">{{ p.name }}</a></div>
@@ -590,6 +657,7 @@
         </tr>
         {% endif %}
         {% endfor %}
+        {% endfor %}
         {% else %}
         <tr><td colspan="10" class="empty">No hay estanques para mostrar.</td></tr>
         {% endif %}
@@ -607,6 +675,34 @@
     window.location = url;
   }
 
+  function toggleCultivationUnit(cuId) {
+    const rows = document.querySelectorAll(`#ponds-table tbody tr.pond-under-cu[data-cu="${cuId}"]`);
+    const btn = document.querySelector(`#ponds-table tbody tr.cu-parent-row[data-cu-id="${cuId}"] .expand-btn`);
+    const anyVisible = Array.from(rows).some(r => !r.classList.contains('pond-under-cu-hidden'));
+
+    rows.forEach(r => {
+      r.classList.toggle('pond-under-cu-hidden', anyVisible);
+      if (anyVisible) {
+        // Al cerrar unidad, resetea sub-estanques a colapsado
+        if (r.dataset.group) {
+          r.classList.add('pond-child-hidden');
+        }
+      } else {
+        // Al abrir unidad, filas no-hijo (padres y simples) deben quedar visibles
+        if (!r.dataset.group) {
+          r.classList.remove('pond-child-hidden');
+        }
+      }
+    });
+
+    document.querySelectorAll(`#ponds-table tbody tr.pond-under-cu[data-cu="${cuId}"][data-group-id]`).forEach(parentRow => {
+      const pbtn = parentRow.querySelector('.expand-btn');
+      if (pbtn) pbtn.textContent = '▶';
+    });
+
+    if (btn) btn.textContent = anyVisible ? '▶' : '▼';
+  }
+
   // ── Expandir/colapsar grupo ──
   function toggleGroup(id) {
     const children = document.querySelectorAll(`#ponds-table tbody tr[data-group="${id}"]`);
@@ -620,33 +716,75 @@
   function filterTable() {
     const q = document.getElementById('search-input').value.toLowerCase().trim();
     let count = 0;
-    document.querySelectorAll('#ponds-table tbody tr[data-sortable]').forEach(r => {
-      const match = !q || r.dataset.name.includes(q);
-      r.style.display = match ? '' : 'none';
-      if (match) count++;
-      // Auto-expandir grupo si hay búsqueda activa
-      const gid = r.dataset.groupId;
-      if (gid) {
-        const children = document.querySelectorAll(`#ponds-table tbody tr[data-group="${gid}"]`);
-        if (match && q) {
-          children.forEach(c => { c.classList.remove('pond-child-hidden'); });
-          const btn = r.querySelector('.expand-btn');
-          if (btn) btn.textContent = '▼';
-        } else if (!q) {
-          children.forEach(c => { c.classList.add('pond-child-hidden'); });
-          const btn = r.querySelector('.expand-btn');
-          if (btn) btn.textContent = '▶';
-        } else {
-          children.forEach(c => { c.classList.add('pond-child-hidden'); });
+
+    const cuRows = document.querySelectorAll('#ponds-table tbody tr.cu-parent-row');
+    if (!q) {
+      cuRows.forEach(cuRow => {
+        cuRow.style.display = '';
+        const cuId = cuRow.dataset.cuId;
+        const cuBtn = cuRow.querySelector('.expand-btn');
+        if (cuBtn) cuBtn.textContent = '▶';
+        document.querySelectorAll(`#ponds-table tbody tr.pond-under-cu[data-cu="${cuId}"]`).forEach(r => {
+          r.classList.add('pond-under-cu-hidden');
+          if (r.dataset.group) {
+            r.classList.add('pond-child-hidden');
+          } else {
+            r.classList.remove('pond-child-hidden');
+          }
+          r.style.display = '';
+        });
+      });
+      document.getElementById('visible-count').textContent = '{{ total_pond_rows }} estanques';
+      return;
+    }
+
+    cuRows.forEach(cuRow => {
+      const cuId = cuRow.dataset.cuId;
+      const cuName = (cuRow.dataset.name || '').toLowerCase();
+      const pondRows = document.querySelectorAll(`#ponds-table tbody tr.pond-under-cu[data-cu="${cuId}"]`);
+      let anyPondMatch = false;
+
+      pondRows.forEach(r => {
+        const match = (r.dataset.name || '').includes(q);
+        r.style.display = match ? '' : 'none';
+        if (match) {
+          anyPondMatch = true;
+          count++;
         }
-      }
+
+        if (r.dataset.groupId) {
+          const children = document.querySelectorAll(`#ponds-table tbody tr[data-group="${r.dataset.groupId}"]`);
+          if (match) {
+            children.forEach(c => {
+              c.classList.remove('pond-child-hidden');
+              c.classList.remove('pond-under-cu-hidden');
+            });
+            const btn = r.querySelector('.expand-btn');
+            if (btn) btn.textContent = '▼';
+          }
+        }
+      });
+
+      const showUnit = anyPondMatch || cuName.includes(q);
+      cuRow.style.display = showUnit ? '' : 'none';
+      const cuBtn = cuRow.querySelector('.expand-btn');
+      if (cuBtn) cuBtn.textContent = showUnit ? '▼' : '▶';
+
+      pondRows.forEach(r => {
+        if (showUnit) r.classList.remove('pond-under-cu-hidden');
+        else r.classList.add('pond-under-cu-hidden');
+      });
     });
+
     document.getElementById('visible-count').textContent = count + ' estanques';
   }
 
   // ── Ordenamiento de columnas ──
   let sortCol = 3, sortDir = -1;
   function sortTable(col) {
+    if (document.querySelector('#ponds-table tbody tr.cu-parent-row')) {
+      return;
+    }
     const tbody = document.querySelector('#ponds-table tbody');
     const topRows = Array.from(tbody.querySelectorAll('tr[data-sortable]'));
     const ths = document.querySelectorAll('#ponds-table thead th');

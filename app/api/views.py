@@ -3,14 +3,16 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
 from sqlalchemy.orm import Session, aliased
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from collections import defaultdict
 from urllib.parse import quote_plus
 import re
 import json
+from zoneinfo import ZoneInfo
 from app.db.session import SessionLocal
 from app.models.ponds import Pond
 from app.models.pond_types import PondType
@@ -26,6 +28,9 @@ from app.models.pond_lot_stats import PondLotStats
 from app.models.tag_detachment_events import TagDetachmentEvent
 from app.models.fish_drug_uses import FishDrugUse
 from app.models.species import Species
+from app.models.sanitary_reports import SanitaryReport
+from app.models.cultivation_declarations import CultivationDeclaration
+from app.models.cultivation_declaration_items import CultivationDeclarationItem
 from app.schemas.views import CultivationUnitWithPonds, PondSummary, LotSummary
 
 router = APIRouter(prefix="/views", tags=["views"])
@@ -35,6 +40,20 @@ jinja_env = Environment(loader=FileSystemLoader(str(template_dir)))
 STALE_WEIGHT_DAYS = 90
 RECENT_LOT_WEIGHT_LOOKBACK_DAYS = 365
 MIN_RECENT_LOT_SAMPLES_FOR_FLOOR = 10
+APP_LOCAL_TZ = ZoneInfo("America/Santiago")
+
+
+def _to_local_datetime(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(APP_LOCAL_TZ)
+
+
+def _format_local_datetime(value: Optional[datetime]) -> Optional[str]:
+    local_dt = _to_local_datetime(value)
+    return local_dt.strftime("%d/%m/%Y %H:%M") if local_dt else None
 
 def get_db():
     db = SessionLocal()
@@ -131,6 +150,24 @@ def _get_current_tagged_fish_in_pond(pond_id: int, db: Session) -> List[Fish]:
     )
 
 
+def _get_current_marked_lot_ids_in_pond(pond_id: int, db: Session) -> list[int]:
+    """Lotes de peces marcados cuyo último movimiento los deja en esta laguna."""
+    latest_id_subq = _latest_movement_id_per_fish_subq(db)
+    rows = (
+        db.query(Fish.lot_id)
+        .join(PondMovement, PondMovement.fish_id == Fish.id)
+        .join(latest_id_subq, latest_id_subq.c.max_id == PondMovement.id)
+        .filter(
+            PondMovement.destiny_pond_id == pond_id,
+            PondMovement.fish_id.isnot(None),
+            Fish.lot_id.isnot(None),
+        )
+        .distinct()
+        .all()
+    )
+    return sorted(int(row[0]) for row in rows if row and row[0] is not None)
+
+
 def _get_pending_drug_log_fish_query(db: Session):
     """Peces con sufijo _R pero sin registros en fish_drug_uses."""
     return (
@@ -194,6 +231,89 @@ def _get_unregistered_balances_by_lot(pond_id: int, db: Session) -> dict[int, in
     return {lot_id: qty for lot_id, qty in balances.items() if qty > 0}
 
 
+def _as_int_dict(raw_value) -> dict[int, int]:
+    if not raw_value or not isinstance(raw_value, dict):
+        return {}
+
+    out: dict[int, int] = {}
+    for key, value in raw_value.items():
+        try:
+            lot_id = int(key)
+            qty = int(value)
+        except (TypeError, ValueError):
+            continue
+        if qty > 0:
+            out[lot_id] = qty
+    return out
+
+
+def _get_current_tagged_count_and_lot_ids(pond_id: int, db: Session) -> tuple[int, set[int]]:
+    latest_id_subq = _latest_movement_id_per_fish_subq(db)
+    rows = (
+        db.query(Fish.id, Fish.lot_id)
+        .join(PondMovement, PondMovement.fish_id == Fish.id)
+        .join(latest_id_subq, latest_id_subq.c.max_id == PondMovement.id)
+        .filter(
+            PondMovement.destiny_pond_id == pond_id,
+            Fish.state.in_(["alive", "depuration"]),
+        )
+        .all()
+    )
+    lot_ids = {int(row[1]) for row in rows if row and row[1] is not None}
+    return len(rows), lot_ids
+
+
+def _get_pond_available_lot_ids(pond_id: int, db: Session) -> list[int]:
+    """Lotes disponibles de la laguna, combinando estado actual e historial."""
+    lot_ids: set[int] = set()
+
+    # 1) Lotes con peces sin PIT actualmente en el estanque.
+    lot_ids.update(_get_unregistered_balances_by_lot(pond_id, db).keys())
+
+    # 2) Lotes de peces con PIT actualmente en el estanque (vía helper con estado activo).
+    lot_ids.update(
+        int(f.lot_id)
+        for f in _get_current_tagged_fish_in_pond(pond_id, db)
+        if f.lot_id is not None
+    )
+
+    # 2b) Fallback robusto sin depender del estado del pez.
+    lot_ids.update(_get_current_marked_lot_ids_in_pond(pond_id, db))
+
+    # 3) Cache runtime del estanque (cuando está disponible).
+    pond = db.query(Pond).filter(Pond.id == pond_id).first()
+    if pond and pond.active_lot_ids:
+        for item in _as_int_list(pond.active_lot_ids):
+            lot_ids.add(int(item))
+
+    # 4) Stats de lote en estanque (historial de muestreo/biomasa).
+    stats_rows = (
+        db.query(PondLotStats.lot_id)
+        .filter(PondLotStats.pond_id == pond_id, PondLotStats.lot_id.isnot(None))
+        .distinct()
+        .all()
+    )
+    lot_ids.update(int(row[0]) for row in stats_rows if row and row[0] is not None)
+
+    # 5) Historial de movimientos en la laguna.
+    # Siempre se incorpora para no perder lotes válidos en casos de estado/caché desalineado.
+    movement_rows = (
+        db.query(PondMovement.lot_id)
+        .filter(
+            PondMovement.lot_id.isnot(None),
+            or_(
+                PondMovement.source_pond_id == pond_id,
+                PondMovement.destiny_pond_id == pond_id,
+            ),
+        )
+        .distinct()
+        .all()
+    )
+    lot_ids.update(int(row[0]) for row in movement_rows if row and row[0] is not None)
+
+    return sorted(lot_ids)
+
+
 def _as_int_list(raw_value) -> list[int]:
     if not raw_value:
         return []
@@ -221,9 +341,7 @@ def _refresh_pond_runtime_cache(pond_id: Optional[int], db: Session) -> None:
     if not pond:
         return
 
-    tagged_fish = _get_current_tagged_fish_in_pond(pond_id, db)
-    tagged_count = len(tagged_fish)
-    tagged_lot_ids = {int(f.lot_id) for f in tagged_fish if f.lot_id is not None}
+    tagged_count, tagged_lot_ids = _get_current_tagged_count_and_lot_ids(pond_id, db)
 
     unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
     unregistered_count = sum(unregistered_balances.values())
@@ -238,7 +356,9 @@ def _refresh_pond_runtime_cache(pond_id: Optional[int], db: Session) -> None:
     pond.active_lots_count = len(active_lot_ids)
     pond.active_lot_ids = active_lot_ids
     pond.unregistered_lot_ids = unregistered_lot_ids_sorted
+    pond.unregistered_balances_by_lot = {str(k): int(v) for k, v in unregistered_balances.items()}
     pond.unregistered_lot_conflict = len(unregistered_lot_ids_sorted) > 1
+    pond.runtime_cache_updated_at = datetime.utcnow()
 
 
 def _refresh_pond_runtime_cache_many(pond_ids, db: Session) -> None:
@@ -303,6 +423,467 @@ def _build_cached_pond_rows(
 
         rows.append(row)
 
+    return rows
+
+
+def _parse_month_for_reports(month_value: Optional[str]) -> tuple[str, datetime, datetime, datetime]:
+    raw = (month_value or "").strip()
+    now = datetime.utcnow()
+    if not raw:
+        start = datetime(now.year, now.month, 1)
+    else:
+        try:
+            start = datetime.strptime(raw, "%Y-%m")
+            start = datetime(start.year, start.month, 1)
+        except ValueError:
+            start = datetime(now.year, now.month, 1)
+
+    if start.month == 12:
+        next_month = datetime(start.year + 1, 1, 1)
+    else:
+        next_month = datetime(start.year, start.month + 1, 1)
+    month_end = next_month - timedelta(seconds=1)
+    return start.strftime("%Y-%m"), start, next_month, month_end
+
+
+def _sum_center_lot_balance_until(cutoff_exclusive: datetime, db: Session) -> dict[int, int]:
+    incoming_rows = (
+        db.query(PondMovement.lot_id, func.coalesce(func.sum(PondMovement.fish_quantity), 0))
+        .filter(
+            PondMovement.lot_id.isnot(None),
+            PondMovement.movement_time < cutoff_exclusive,
+            PondMovement.destiny_pond_id.isnot(None),
+            PondMovement.source_pond_id.is_(None),
+        )
+        .group_by(PondMovement.lot_id)
+        .all()
+    )
+    outgoing_rows = (
+        db.query(PondMovement.lot_id, func.coalesce(func.sum(PondMovement.fish_quantity), 0))
+        .filter(
+            PondMovement.lot_id.isnot(None),
+            PondMovement.movement_time < cutoff_exclusive,
+            PondMovement.source_pond_id.isnot(None),
+            PondMovement.destiny_pond_id.is_(None),
+        )
+        .group_by(PondMovement.lot_id)
+        .all()
+    )
+
+    balances: dict[int, int] = {}
+    for lot_id, qty in incoming_rows:
+        lid = int(lot_id)
+        balances[lid] = balances.get(lid, 0) + int(qty or 0)
+    for lot_id, qty in outgoing_rows:
+        lid = int(lot_id)
+        balances[lid] = balances.get(lid, 0) - int(qty or 0)
+
+    return {lot_id: qty for lot_id, qty in balances.items() if qty != 0}
+
+
+def _sum_center_lot_reason_between(
+    start_inclusive: datetime,
+    end_exclusive: datetime,
+    reason: str,
+    db: Session,
+) -> dict[int, int]:
+    rows = (
+        db.query(PondMovement.lot_id, func.coalesce(func.sum(PondMovement.fish_quantity), 0))
+        .filter(
+            PondMovement.lot_id.isnot(None),
+            PondMovement.movement_time >= start_inclusive,
+            PondMovement.movement_time < end_exclusive,
+            PondMovement.source_pond_id.isnot(None),
+            PondMovement.destiny_pond_id.is_(None),
+            PondMovement.movement_reason == reason,
+        )
+        .group_by(PondMovement.lot_id)
+        .all()
+    )
+    return {int(lot_id): int(qty or 0) for lot_id, qty in rows if int(qty or 0) != 0}
+
+
+def _build_lot_weight_snapshot(lot_ids: set[int], snapshot_dt: datetime, db: Session) -> dict[int, float]:
+    if not lot_ids:
+        return {}
+
+    rows = (
+        db.query(PondLotStats.lot_id, PondLotStats.avg_weight, PondLotStats.updated_at, PondLotStats.id)
+        .filter(PondLotStats.lot_id.in_(lot_ids), PondLotStats.avg_weight.isnot(None))
+        .order_by(
+            PondLotStats.lot_id.asc(),
+            PondLotStats.updated_at.desc().nullslast(),
+            PondLotStats.id.desc(),
+        )
+        .all()
+    )
+
+    fallback_map: dict[int, float] = {}
+    before_map: dict[int, float] = {}
+    for lot_id, avg_weight, updated_at, _row_id in rows:
+        lid = int(lot_id)
+        w = float(avg_weight)
+        if lid not in fallback_map:
+            fallback_map[lid] = w
+        if lid not in before_map and updated_at and updated_at <= snapshot_dt:
+            before_map[lid] = w
+
+    out: dict[int, float] = {}
+    for lid in lot_ids:
+        out[lid] = before_map.get(lid, fallback_map.get(lid, 0.0))
+    return out
+
+
+def _sum_pond_lot_balance_until(cutoff_exclusive: datetime, db: Session) -> dict[tuple[int, int], int]:
+    incoming_rows = (
+        db.query(
+            PondMovement.destiny_pond_id,
+            PondMovement.lot_id,
+            func.coalesce(func.sum(PondMovement.fish_quantity), 0),
+        )
+        .filter(
+            PondMovement.destiny_pond_id.isnot(None),
+            PondMovement.lot_id.isnot(None),
+            PondMovement.movement_time < cutoff_exclusive,
+        )
+        .group_by(PondMovement.destiny_pond_id, PondMovement.lot_id)
+        .all()
+    )
+    outgoing_rows = (
+        db.query(
+            PondMovement.source_pond_id,
+            PondMovement.lot_id,
+            func.coalesce(func.sum(PondMovement.fish_quantity), 0),
+        )
+        .filter(
+            PondMovement.source_pond_id.isnot(None),
+            PondMovement.lot_id.isnot(None),
+            PondMovement.movement_time < cutoff_exclusive,
+        )
+        .group_by(PondMovement.source_pond_id, PondMovement.lot_id)
+        .all()
+    )
+
+    balances: dict[tuple[int, int], int] = defaultdict(int)
+    for pond_id, lot_id, qty in incoming_rows:
+        balances[(int(pond_id), int(lot_id))] += int(qty or 0)
+    for pond_id, lot_id, qty in outgoing_rows:
+        balances[(int(pond_id), int(lot_id))] -= int(qty or 0)
+
+    return {k: v for k, v in balances.items() if v != 0}
+
+
+def _sum_pond_lot_between(
+    start_inclusive: datetime,
+    end_exclusive: datetime,
+    mode: str,
+    db: Session,
+) -> dict[tuple[int, int], int]:
+    if mode in ("mortality", "faena"):
+        rows = (
+            db.query(
+                PondMovement.source_pond_id,
+                PondMovement.lot_id,
+                func.coalesce(func.sum(PondMovement.fish_quantity), 0),
+            )
+            .filter(
+                PondMovement.source_pond_id.isnot(None),
+                PondMovement.destiny_pond_id.is_(None),
+                PondMovement.lot_id.isnot(None),
+                PondMovement.movement_time >= start_inclusive,
+                PondMovement.movement_time < end_exclusive,
+                PondMovement.movement_reason == mode,
+            )
+            .group_by(PondMovement.source_pond_id, PondMovement.lot_id)
+            .all()
+        )
+        return {
+            (int(pond_id), int(lot_id)): int(qty or 0)
+            for pond_id, lot_id, qty in rows
+            if int(qty or 0) != 0
+        }
+
+    if mode == "salidas":
+        rows = (
+            db.query(
+                PondMovement.source_pond_id,
+                PondMovement.lot_id,
+                func.coalesce(func.sum(PondMovement.fish_quantity), 0),
+            )
+            .filter(
+                PondMovement.source_pond_id.isnot(None),
+                PondMovement.destiny_pond_id.isnot(None),
+                PondMovement.lot_id.isnot(None),
+                PondMovement.movement_time >= start_inclusive,
+                PondMovement.movement_time < end_exclusive,
+                PondMovement.movement_reason.notin_(["mortality", "faena"]),
+            )
+            .group_by(PondMovement.source_pond_id, PondMovement.lot_id)
+            .all()
+        )
+        return {
+            (int(pond_id), int(lot_id)): int(qty or 0)
+            for pond_id, lot_id, qty in rows
+            if int(qty or 0) != 0
+        }
+
+    if mode == "llegadas":
+        rows = (
+            db.query(
+                PondMovement.destiny_pond_id,
+                PondMovement.lot_id,
+                func.coalesce(func.sum(PondMovement.fish_quantity), 0),
+            )
+            .filter(
+                PondMovement.destiny_pond_id.isnot(None),
+                PondMovement.source_pond_id.isnot(None),
+                PondMovement.lot_id.isnot(None),
+                PondMovement.movement_time >= start_inclusive,
+                PondMovement.movement_time < end_exclusive,
+                PondMovement.movement_reason.notin_(["mortality", "faena"]),
+            )
+            .group_by(PondMovement.destiny_pond_id, PondMovement.lot_id)
+            .all()
+        )
+        return {
+            (int(pond_id), int(lot_id)): int(qty or 0)
+            for pond_id, lot_id, qty in rows
+            if int(qty or 0) != 0
+        }
+
+    return {}
+
+
+def _build_pond_lot_weight_snapshot(
+    pond_lot_pairs: set[tuple[int, int]],
+    snapshot_dt: datetime,
+    db: Session,
+) -> dict[tuple[int, int], float]:
+    if not pond_lot_pairs:
+        return {}
+
+    pond_ids = {pair[0] for pair in pond_lot_pairs}
+    lot_ids = {pair[1] for pair in pond_lot_pairs}
+    rows = (
+        db.query(
+            PondLotStats.pond_id,
+            PondLotStats.lot_id,
+            PondLotStats.avg_weight,
+            PondLotStats.updated_at,
+            PondLotStats.id,
+        )
+        .filter(
+            PondLotStats.pond_id.in_(pond_ids),
+            PondLotStats.lot_id.in_(lot_ids),
+            PondLotStats.avg_weight.isnot(None),
+        )
+        .order_by(
+            PondLotStats.pond_id.asc(),
+            PondLotStats.lot_id.asc(),
+            PondLotStats.updated_at.desc().nullslast(),
+            PondLotStats.id.desc(),
+        )
+        .all()
+    )
+
+    fallback_map: dict[tuple[int, int], float] = {}
+    before_map: dict[tuple[int, int], float] = {}
+    for pond_id, lot_id, avg_weight, updated_at, _row_id in rows:
+        key = (int(pond_id), int(lot_id))
+        if key not in pond_lot_pairs:
+            continue
+        w = float(avg_weight)
+        if key not in fallback_map:
+            fallback_map[key] = w
+        if key not in before_map and updated_at and updated_at <= snapshot_dt:
+            before_map[key] = w
+
+    out: dict[tuple[int, int], float] = {}
+    for key in pond_lot_pairs:
+        out[key] = before_map.get(key, fallback_map.get(key, 0.0))
+    return out
+
+
+def _aggregate_pond_totals(pond_lot_map: dict[tuple[int, int], int]) -> dict[int, int]:
+    totals: dict[int, int] = defaultdict(int)
+    for (pond_id, _lot_id), qty in pond_lot_map.items():
+        totals[int(pond_id)] += int(qty or 0)
+    return dict(totals)
+
+
+def _aggregate_lot_totals(pond_lot_map: dict[tuple[int, int], int]) -> dict[int, int]:
+    totals: dict[int, int] = defaultdict(int)
+    for (_pond_id, lot_id), qty in pond_lot_map.items():
+        totals[int(lot_id)] += int(qty or 0)
+    return dict(totals)
+
+
+def _build_current_pond_lot_counts(db: Session) -> dict[tuple[int, int], int]:
+    """Conteo operacional actual por estanque/lote (tagged + sin registrar)."""
+    latest_id_subq = _latest_movement_id_per_fish_subq(db)
+
+    tagged_rows = (
+        db.query(
+            PondMovement.destiny_pond_id.label("pond_id"),
+            Fish.lot_id.label("lot_id"),
+            func.count(Fish.id).label("cnt"),
+        )
+        .join(Fish, Fish.id == PondMovement.fish_id)
+        .join(latest_id_subq, latest_id_subq.c.max_id == PondMovement.id)
+        .filter(
+            PondMovement.destiny_pond_id.isnot(None),
+            Fish.lot_id.isnot(None),
+            Fish.state.in_(["alive", "depuration"]),
+        )
+        .group_by(PondMovement.destiny_pond_id, Fish.lot_id)
+        .all()
+    )
+
+    tagged_map: dict[tuple[int, int], int] = {
+        (int(r.pond_id), int(r.lot_id)): int(r.cnt)
+        for r in tagged_rows
+        if r.pond_id and r.lot_id
+    }
+
+    # Saldo unregistered operacional actual por estanque/lote, obtenido desde el cache del estanque.
+    # Este valor representa "hoy" y evita arrastrar balances historicos negativos/positivos ya cerrados.
+    unreg_balance_map: dict[tuple[int, int], int] = {}
+    for pond_id, balances in db.query(Pond.id, Pond.unregistered_balances_by_lot).all():
+        if not balances or not isinstance(balances, dict):
+            continue
+        for lot_key, balance in balances.items():
+            try:
+                lot_id = int(lot_key)
+                qty = int(balance or 0)
+            except (TypeError, ValueError):
+                continue
+            unreg_balance_map[(int(pond_id), lot_id)] = qty
+
+    out: dict[tuple[int, int], int] = {}
+    for key in set(tagged_map) | set(unreg_balance_map):
+        tagged_qty = tagged_map.get(key, 0)
+        unreg_qty = max(0, unreg_balance_map.get(key, 0))
+        total = tagged_qty + unreg_qty
+        if total > 0:
+            out[key] = total
+    return out
+
+
+def _compute_biomass_for_lot_counts(counts: dict[int, int], lot_weights_g: dict[int, float]) -> dict[int, float]:
+    out: dict[int, float] = {}
+    for lot_id, qty in counts.items():
+        w = float(lot_weights_g.get(lot_id, 0.0))
+        out[lot_id] = max(float(qty), 0.0) * w / 1000.0
+    return out
+
+
+def _compute_biomass_for_pond_lot_counts(
+    counts: dict[tuple[int, int], int],
+    pond_lot_weights_g: dict[tuple[int, int], float],
+    lot_fallback_weights_g: dict[int, float],
+) -> dict[int, float]:
+    by_pond: dict[int, float] = defaultdict(float)
+    for (pond_id, lot_id), qty in counts.items():
+        if qty <= 0:
+            continue
+        w = pond_lot_weights_g.get((pond_id, lot_id), lot_fallback_weights_g.get(lot_id, 0.0))
+        by_pond[pond_id] += float(qty) * float(w or 0.0) / 1000.0
+    return dict(by_pond)
+
+
+def _get_jaula_quality_conflict_rows(db: Session) -> list[dict]:
+    """Peces activos en Jaula con conflicto de datos para faena (sin peso o sin diametro en hembras)."""
+    jaula_units = (
+        db.query(CultivationUnit)
+        .filter(func.lower(CultivationUnit.name).like("%jaula%"))
+        .all()
+    )
+    if not jaula_units:
+        return []
+
+    jaula_unit_ids = [u.id for u in jaula_units]
+    jaula_ponds = db.query(Pond).filter(Pond.cultivation_unit_id.in_(jaula_unit_ids)).all()
+    if not jaula_ponds:
+        return []
+
+    jaula_pond_ids = [p.id for p in jaula_ponds]
+    jaula_pond_name_map = {p.id: p.name for p in jaula_ponds}
+
+    latest_mv_subq = _latest_movement_id_per_fish_subq(db)
+    fish_rows = (
+        db.query(Fish, PondMovement.destiny_pond_id)
+        .join(latest_mv_subq, latest_mv_subq.c.fish_id == Fish.id)
+        .join(PondMovement, PondMovement.id == latest_mv_subq.c.max_id)
+        .filter(
+            PondMovement.destiny_pond_id.in_(jaula_pond_ids),
+            Fish.state.notin_(["dead", "faena", "in_process", "processed"]),
+            Fish.internal_id.isnot(None),
+            Fish.internal_id != "",
+            ~func.upper(Fish.internal_id).like("%\\_R", escape="\\"),
+        )
+        .order_by(Fish.internal_id.asc(), Fish.id.asc())
+        .all()
+    )
+    if not fish_rows:
+        return []
+
+    fish_ids = [fish.id for fish, _pond_id in fish_rows]
+    latest_sampling_subq = (
+        db.query(
+            FishSampling.fish_id,
+            func.max(func.coalesce(FishSampling.registry_time, FishSampling.created_at)).label("max_sample_time"),
+        )
+        .filter(FishSampling.fish_id.in_(fish_ids))
+        .group_by(FishSampling.fish_id)
+        .subquery()
+    )
+    latest_samples = (
+        db.query(FishSampling)
+        .join(
+            latest_sampling_subq,
+            (latest_sampling_subq.c.fish_id == FishSampling.fish_id)
+            & (latest_sampling_subq.c.max_sample_time == func.coalesce(FishSampling.registry_time, FishSampling.created_at)),
+        )
+        .all()
+    )
+    samples_map = {s.fish_id: s for s in latest_samples}
+
+    lot_ids = {fish.lot_id for fish, _pond_id in fish_rows if fish.lot_id}
+    lots_map = {lot.id: lot for lot in db.query(Lot).filter(Lot.id.in_(lot_ids)).all()} if lot_ids else {}
+
+    rows = []
+    for fish, current_pond_id in fish_rows:
+        sample = samples_map.get(fish.id)
+        missing_weight = sample is None or sample.weight is None
+        sex_norm = _normalize_sex_value(fish.sex)
+        missing_diameter = sex_norm == "f" and (sample is None or sample.diameter is None)
+        if not missing_weight and not missing_diameter:
+            continue
+
+        lot = lots_map.get(fish.lot_id) if fish.lot_id else None
+        lot_label = (lot.internal_id or lot.name) if lot else "N/D"
+
+        conflict_labels = []
+        if missing_weight:
+            conflict_labels.append("sin peso")
+        if missing_diameter:
+            conflict_labels.append("sin diametro de ovas")
+
+        rows.append(
+            {
+                "fish_id": fish.id,
+                "internal_id": _normalize_pit_tag(fish.internal_id),
+                "state": fish.state or "N/D",
+                "sex": sex_norm or "",
+                "lot": lot_label,
+                "current_pond": jaula_pond_name_map.get(current_pond_id) or "N/D",
+                "missing_weight": missing_weight,
+                "missing_diameter": missing_diameter,
+                "conflict_label": ", ".join(conflict_labels),
+            }
+        )
+
+    rows.sort(key=lambda item: ((item.get("current_pond") or "").lower(), (item.get("internal_id") or "").lower()))
     return rows
 
 
@@ -387,7 +968,7 @@ def ui_ponds(
     query = db.query(Pond)
     if cultivation_unit_id:
         query = query.filter(Pond.cultivation_unit_id == cultivation_unit_id)
-    ponds_db = query.order_by(Pond.name).all()
+    ponds_db = query.order_by(Pond.id).all()
 
     # Cargar tipos de estanque
     pond_types_list = db.query(PondType).order_by(PondType.name).all()
@@ -464,6 +1045,93 @@ def ui_ponds(
             parent_row["children"] = []
         grouped.append(parent_row)
 
+    # ── Agrupar por unidad de cultivo (nivel superior colapsable) ──
+    pond_obj_by_id = {p.id: p for p in ponds_db}
+    cu_name_by_id = {u.id: u.name for u in cultivation_units}
+
+    grouped_units_map: dict[str, dict] = {}
+    for row in grouped:
+        pond_obj = pond_obj_by_id.get(row["id"])
+        cu_id = pond_obj.cultivation_unit_id if pond_obj else None
+        cu_name = cu_name_by_id.get(cu_id, "Sin unidad") if cu_id else "Sin unidad"
+        cu_key = str(cu_id) if cu_id is not None else "none"
+
+        if cu_key not in grouped_units_map:
+            grouped_units_map[cu_key] = {
+                "id": cu_key,
+                "name": cu_name,
+                "ponds": [],
+                "n_fish": 0,
+                "biomass": None,
+                "avg_condition_k": None,
+                "density": None,
+                "avg_weight": None,
+                "active_lots": [],
+            }
+
+        unit_row = grouped_units_map[cu_key]
+        unit_row["ponds"].append(row)
+        unit_row["n_fish"] += int(row.get("n_fish") or 0)
+
+        cur_biomass = unit_row.get("biomass")
+        row_biomass = row.get("biomass")
+        if row_biomass is not None:
+            unit_row["biomass"] = float(cur_biomass or 0.0) + float(row_biomass)
+
+    # Densidad, peso promedio y lotes por unidad
+    for unit_row in grouped_units_map.values():
+        rows = unit_row["ponds"]
+
+        total_volume = sum((r.get("volume") or 0) for r in rows if r.get("biomass") is not None)
+        total_biomass = unit_row.get("biomass")
+        unit_row["density"] = round(float(total_biomass) / total_volume, 2) if (total_biomass is not None and total_volume > 0) else None
+
+        w_sum = 0.0
+        w_cnt = 0
+        for r in rows:
+            avg_w = r.get("avg_weight")
+            n_fish = int(r.get("n_fish") or 0)
+            if avg_w is None or n_fish <= 0:
+                continue
+            w_sum += float(avg_w) * n_fish
+            w_cnt += n_fish
+        unit_row["avg_weight"] = round(w_sum / w_cnt, 1) if w_cnt > 0 else None
+
+        lots_by_id: dict[int, dict] = {}
+        for r in rows:
+            for lot in r.get("active_lots", []):
+                lot_id = int(lot["id"])
+                existing = lots_by_id.get(lot_id)
+                if not existing:
+                    lots_by_id[lot_id] = {
+                        "id": lot_id,
+                        "name": lot.get("name"),
+                        "internal_id": lot.get("internal_id"),
+                        "is_unregistered_lot": bool(lot.get("is_unregistered_lot")),
+                    }
+                else:
+                    existing["is_unregistered_lot"] = bool(existing.get("is_unregistered_lot") or lot.get("is_unregistered_lot"))
+
+        unit_row["active_lots"] = list(lots_by_id.values())
+
+    # K por unidad (promedio ponderado por n_fish)
+    for unit_row in grouped_units_map.values():
+        k_weighted_sum = 0.0
+        k_weight = 0
+        for pond_row in unit_row["ponds"]:
+            pond_k = pond_row.get("avg_condition_k")
+            pond_n = int(pond_row.get("n_fish") or 0)
+            if pond_k is None or pond_n <= 0:
+                continue
+            k_weighted_sum += float(pond_k) * pond_n
+            k_weight += pond_n
+        unit_row["avg_condition_k"] = round(k_weighted_sum / k_weight, 3) if k_weight > 0 else None
+
+    ordered_unit_keys = [str(u.id) for u in cultivation_units if str(u.id) in grouped_units_map]
+    if "none" in grouped_units_map:
+        ordered_unit_keys.append("none")
+    grouped_units = [grouped_units_map[key] for key in ordered_unit_keys]
+
     # Tarjetas de resumen
     total_fish = sum(s["n_fish"] for s in summaries)
     total_biomass = sum(s["biomass"] for s in summaries if s["biomass"])
@@ -473,6 +1141,16 @@ def ui_ponds(
     avg_k = round(sum(k_values) / len(k_values), 3) if k_values else None
     pending_drug_logs_count = _get_pending_drug_log_fish_query(db).count()
 
+    # Informe sanitario del centro — alerta si vence en < 2 meses
+    _latest_san = (
+        db.query(SanitaryReport)
+        .order_by(SanitaryReport.report_date.desc())
+        .first()
+    )
+    from datetime import date as _date2, timedelta as _td2
+    _san_expiry = (_latest_san.report_date + _td2(days=365)) if _latest_san and _latest_san.report_date else None
+    sanitary_expiry_warning_ponds = bool(_san_expiry and _san_expiry <= (_date2.today() + _td2(days=60)))
+
     # Lista flat de estanques sin padre para el selector del formulario de creación
     all_parent_ponds = [
         {"id": p.id, "name": p.name}
@@ -480,9 +1158,13 @@ def ui_ponds(
         if p.parent_pond_id is None
     ]
 
+    jaula_quality_conflict_count = len(_get_jaula_quality_conflict_rows(db))
+
     context = {
         "request": request,
         "ponds": grouped,
+        "grouped_units": grouped_units,
+        "total_pond_rows": len(grouped),
         "cultivation_units": [{"id": u.id, "name": u.name} for u in cultivation_units],
         "pond_types": [{"id": pt.id, "name": pt.name} for pt in pond_types_list],
         "all_parent_ponds": all_parent_ponds,
@@ -494,9 +1176,209 @@ def ui_ponds(
         "stat_density": global_density,
         "stat_k": avg_k,
         "pending_drug_logs_count": pending_drug_logs_count,
+        "sanitary_expiry_warning": sanitary_expiry_warning_ponds,
+        "sanitary_expiry_date": _san_expiry,
+        "jaula_quality_conflict_count": jaula_quality_conflict_count,
     }
     template = jinja_env.get_template("ponds.html")
     html = template.render(context)
+    return HTMLResponse(content=html)
+
+
+@router.get("/ui/reports", response_class=HTMLResponse)
+def ui_reports(
+    request: Request,
+    month: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    month_value, month_start, month_next, month_end = _parse_month_for_reports(month)
+
+    # Si se consulta el mes en curso, cortar al instante actual para que el
+    # cierre "final" sea consistente con la vista operativa de estanques.
+    now_utc = datetime.utcnow()
+    is_current_month = month_start.year == now_utc.year and month_start.month == now_utc.month
+    if is_current_month:
+        report_end_exclusive = now_utc + timedelta(seconds=1)
+        report_end_snapshot = now_utc
+    else:
+        report_end_exclusive = month_next
+        report_end_snapshot = month_end
+
+    # Reporte 1: Existencia por lotes (nivel centro)
+    initial_lot_counts = _sum_center_lot_balance_until(month_start, db)
+    movement_final_lot_counts = _sum_center_lot_balance_until(report_end_exclusive, db)
+    if is_current_month:
+        current_pond_lot_counts = _build_current_pond_lot_counts(db)
+        final_lot_counts = _aggregate_lot_totals(current_pond_lot_counts)
+    else:
+        current_pond_lot_counts = None
+        final_lot_counts = _sum_center_lot_balance_until(report_end_exclusive, db)
+    mortality_lot_counts = _sum_center_lot_reason_between(month_start, report_end_exclusive, "mortality", db)
+    faena_lot_counts = _sum_center_lot_reason_between(month_start, report_end_exclusive, "faena", db)
+
+    lot_ids = set(initial_lot_counts.keys()) | set(final_lot_counts.keys()) | set(mortality_lot_counts.keys()) | set(faena_lot_counts.keys())
+    lots_map = {
+        lot.id: lot
+        for lot in db.query(Lot).filter(Lot.id.in_(lot_ids)).all()
+    } if lot_ids else {}
+
+    lot_weights_start = _build_lot_weight_snapshot(lot_ids, month_start, db)
+    lot_weights_end = _build_lot_weight_snapshot(lot_ids, report_end_snapshot, db)
+
+    initial_lot_biomass = _compute_biomass_for_lot_counts(initial_lot_counts, lot_weights_start)
+    mortality_lot_biomass = _compute_biomass_for_lot_counts(mortality_lot_counts, lot_weights_end)
+    faena_lot_biomass = _compute_biomass_for_lot_counts(faena_lot_counts, lot_weights_end)
+    if is_current_month:
+        current_lot_biomass_alloc, _current_pond_lot_biomass_alloc = _allocate_biomass_by_pond_lot(db)
+        final_lot_biomass = current_lot_biomass_alloc
+    else:
+        final_lot_biomass = _compute_biomass_for_lot_counts(final_lot_counts, lot_weights_end)
+
+    lot_rows = []
+    for lot_id in sorted(lot_ids, key=lambda lid: ((lots_map.get(lid).internal_id or lots_map.get(lid).name or str(lid)).lower() if lots_map.get(lid) else str(lid))):
+        lot = lots_map.get(lot_id)
+        lot_label = (lot.internal_id or lot.name) if lot else f"Lote {lot_id}"
+        lot_rows.append({
+            "lot_id": lot_id,
+            "lot_label": lot_label,
+            "initial_qty": int(initial_lot_counts.get(lot_id, 0)),
+            "initial_biomass_kg": round(float(initial_lot_biomass.get(lot_id, 0.0)), 1),
+            "mortality_qty": int(mortality_lot_counts.get(lot_id, 0)),
+            "mortality_biomass_kg": round(float(mortality_lot_biomass.get(lot_id, 0.0)), 1),
+            "faena_qty": int(faena_lot_counts.get(lot_id, 0)),
+            "faena_biomass_kg": round(float(faena_lot_biomass.get(lot_id, 0.0)), 1),
+            "final_qty": int(final_lot_counts.get(lot_id, 0)),
+            "final_biomass_kg": round(float(final_lot_biomass.get(lot_id, 0.0)), 1),
+            "reconciliation_qty": int(final_lot_counts.get(lot_id, 0)) - int(movement_final_lot_counts.get(lot_id, 0)),
+        })
+
+    lot_totals = {
+        "initial_qty": sum(r["initial_qty"] for r in lot_rows),
+        "initial_biomass_kg": round(sum(r["initial_biomass_kg"] for r in lot_rows), 1),
+        "mortality_qty": sum(r["mortality_qty"] for r in lot_rows),
+        "mortality_biomass_kg": round(sum(r["mortality_biomass_kg"] for r in lot_rows), 1),
+        "faena_qty": sum(r["faena_qty"] for r in lot_rows),
+        "faena_biomass_kg": round(sum(r["faena_biomass_kg"] for r in lot_rows), 1),
+        "final_qty": sum(r["final_qty"] for r in lot_rows),
+        "final_biomass_kg": round(sum(r["final_biomass_kg"] for r in lot_rows), 1),
+        "reconciliation_qty": sum(r["reconciliation_qty"] for r in lot_rows),
+    }
+
+    # Reporte 2: Existencia por estanque
+    initial_pond_lot = _sum_pond_lot_balance_until(month_start, db)
+    movement_final_pond_lot = _sum_pond_lot_balance_until(report_end_exclusive, db)
+    if is_current_month:
+        final_pond_lot = current_pond_lot_counts or {}
+    else:
+        final_pond_lot = _sum_pond_lot_balance_until(report_end_exclusive, db)
+    mortality_pond_lot = _sum_pond_lot_between(month_start, report_end_exclusive, "mortality", db)
+    faena_pond_lot = _sum_pond_lot_between(month_start, report_end_exclusive, "faena", db)
+    salidas_pond_lot = _sum_pond_lot_between(month_start, report_end_exclusive, "salidas", db)
+    llegadas_pond_lot = _sum_pond_lot_between(month_start, report_end_exclusive, "llegadas", db)
+
+    pond_lot_pairs = (
+        set(initial_pond_lot.keys())
+        | set(final_pond_lot.keys())
+        | set(mortality_pond_lot.keys())
+        | set(faena_pond_lot.keys())
+        | set(salidas_pond_lot.keys())
+        | set(llegadas_pond_lot.keys())
+    )
+
+    pond_ids = {pair[0] for pair in pond_lot_pairs}
+    pond_map = {
+        pond.id: pond
+        for pond in db.query(Pond).filter(Pond.id.in_(pond_ids)).all()
+    } if pond_ids else {}
+
+    lot_ids_for_pond_report = {pair[1] for pair in pond_lot_pairs}
+    lot_weights_start_for_pond = _build_lot_weight_snapshot(lot_ids_for_pond_report, month_start, db)
+    lot_weights_end_for_pond = _build_lot_weight_snapshot(lot_ids_for_pond_report, report_end_snapshot, db)
+    pond_lot_weights_start = _build_pond_lot_weight_snapshot(pond_lot_pairs, month_start, db)
+    pond_lot_weights_end = _build_pond_lot_weight_snapshot(pond_lot_pairs, report_end_snapshot, db)
+
+    initial_pond_counts = _aggregate_pond_totals(initial_pond_lot)
+    movement_final_pond_counts = _aggregate_pond_totals(movement_final_pond_lot)
+    final_pond_counts = _aggregate_pond_totals(final_pond_lot)
+    mortality_pond_counts = _aggregate_pond_totals(mortality_pond_lot)
+    faena_pond_counts = _aggregate_pond_totals(faena_pond_lot)
+    salidas_pond_counts = _aggregate_pond_totals(salidas_pond_lot)
+    llegadas_pond_counts = _aggregate_pond_totals(llegadas_pond_lot)
+
+    initial_pond_biomass = _compute_biomass_for_pond_lot_counts(initial_pond_lot, pond_lot_weights_start, lot_weights_start_for_pond)
+    if is_current_month:
+        ponds_current_biomass_rows = db.query(Pond.id, Pond.biomass_current).all()
+        final_pond_biomass = {
+            int(pond_id): float(biomass)
+            for pond_id, biomass in ponds_current_biomass_rows
+            if biomass is not None
+        }
+    else:
+        final_pond_biomass = _compute_biomass_for_pond_lot_counts(final_pond_lot, pond_lot_weights_end, lot_weights_end_for_pond)
+    mortality_pond_biomass = _compute_biomass_for_pond_lot_counts(mortality_pond_lot, pond_lot_weights_end, lot_weights_end_for_pond)
+    faena_pond_biomass = _compute_biomass_for_pond_lot_counts(faena_pond_lot, pond_lot_weights_end, lot_weights_end_for_pond)
+    salidas_pond_biomass = _compute_biomass_for_pond_lot_counts(salidas_pond_lot, pond_lot_weights_end, lot_weights_end_for_pond)
+    llegadas_pond_biomass = _compute_biomass_for_pond_lot_counts(llegadas_pond_lot, pond_lot_weights_end, lot_weights_end_for_pond)
+
+    pond_row_ids = (
+        set(initial_pond_counts.keys())
+        | set(final_pond_counts.keys())
+        | set(mortality_pond_counts.keys())
+        | set(faena_pond_counts.keys())
+        | set(salidas_pond_counts.keys())
+        | set(llegadas_pond_counts.keys())
+    )
+
+    pond_rows = []
+    for pond_id in sorted(pond_row_ids, key=lambda pid: ((pond_map.get(pid).name or f"Estanque {pid}").lower() if pond_map.get(pid) else str(pid))):
+        pond = pond_map.get(pond_id)
+        pond_rows.append({
+            "pond_id": pond_id,
+            "pond_name": pond.name if pond else f"Estanque {pond_id}",
+            "initial_qty": int(initial_pond_counts.get(pond_id, 0)),
+            "initial_biomass_kg": round(float(initial_pond_biomass.get(pond_id, 0.0)), 1),
+            "mortality_qty": int(mortality_pond_counts.get(pond_id, 0)),
+            "mortality_biomass_kg": round(float(mortality_pond_biomass.get(pond_id, 0.0)), 1),
+            "faena_qty": int(faena_pond_counts.get(pond_id, 0)),
+            "faena_biomass_kg": round(float(faena_pond_biomass.get(pond_id, 0.0)), 1),
+            "salidas_qty": int(salidas_pond_counts.get(pond_id, 0)),
+            "salidas_biomass_kg": round(float(salidas_pond_biomass.get(pond_id, 0.0)), 1),
+            "llegadas_qty": int(llegadas_pond_counts.get(pond_id, 0)),
+            "llegadas_biomass_kg": round(float(llegadas_pond_biomass.get(pond_id, 0.0)), 1),
+            "final_qty": int(final_pond_counts.get(pond_id, 0)),
+            "final_biomass_kg": round(float(final_pond_biomass.get(pond_id, 0.0)), 1),
+            "reconciliation_qty": int(final_pond_counts.get(pond_id, 0)) - int(movement_final_pond_counts.get(pond_id, 0)),
+        })
+
+    pond_totals = {
+        "initial_qty": sum(r["initial_qty"] for r in pond_rows),
+        "initial_biomass_kg": round(sum(r["initial_biomass_kg"] for r in pond_rows), 1),
+        "mortality_qty": sum(r["mortality_qty"] for r in pond_rows),
+        "mortality_biomass_kg": round(sum(r["mortality_biomass_kg"] for r in pond_rows), 1),
+        "faena_qty": sum(r["faena_qty"] for r in pond_rows),
+        "faena_biomass_kg": round(sum(r["faena_biomass_kg"] for r in pond_rows), 1),
+        "salidas_qty": sum(r["salidas_qty"] for r in pond_rows),
+        "salidas_biomass_kg": round(sum(r["salidas_biomass_kg"] for r in pond_rows), 1),
+        "llegadas_qty": sum(r["llegadas_qty"] for r in pond_rows),
+        "llegadas_biomass_kg": round(sum(r["llegadas_biomass_kg"] for r in pond_rows), 1),
+        "final_qty": sum(r["final_qty"] for r in pond_rows),
+        "final_biomass_kg": round(sum(r["final_biomass_kg"] for r in pond_rows), 1),
+        "reconciliation_qty": sum(r["reconciliation_qty"] for r in pond_rows),
+    }
+
+    template = jinja_env.get_template("reports.html")
+    html = template.render(
+        {
+            "request": request,
+            "month": month_value,
+            "month_start": month_start,
+            "month_end": report_end_snapshot,
+            "lot_rows": lot_rows,
+            "lot_totals": lot_totals,
+            "pond_rows": pond_rows,
+            "pond_totals": pond_totals,
+        }
+    )
     return HTMLResponse(content=html)
 
 
@@ -536,6 +1418,27 @@ def ui_pending_drug_logs(
         "rows": rows,
         "pending_count": len(rows),
     })
+    return HTMLResponse(content=html)
+
+
+@router.get("/ui/fish/jaula-quality-conflicts", response_class=HTMLResponse)
+def ui_jaula_quality_conflicts(
+    request: Request,
+    status: Optional[str] = None,
+    msg: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    rows = _get_jaula_quality_conflict_rows(db)
+    template = jinja_env.get_template("fish_jaula_quality_conflicts.html")
+    html = template.render(
+        {
+            "request": request,
+            "status": status,
+            "msg": msg,
+            "rows": rows,
+            "pending_count": len(rows),
+        }
+    )
     return HTMLResponse(content=html)
 
 
@@ -833,55 +1736,87 @@ def ui_pond_detail(
     if not pond:
         raise HTTPException(status_code=404, detail="Pond not found")
 
+    if pond.unregistered_balances_by_lot is None:
+        _refresh_pond_runtime_cache_many([pond_id], db)
+        db.flush()
+        db.refresh(pond)
+
     current_fish = _get_current_tagged_fish_in_pond(pond_id, db)
-    unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
-    unregistered_count = sum(unregistered_balances.values())
+    # Fuente de verdad operacional para sin-tag en esta vista.
+    live_unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
+    cached_unregistered_balances = _as_int_dict(pond.unregistered_balances_by_lot)
+    live_unregistered_count = int(sum(live_unregistered_balances.values()))
+    cached_unregistered_count = int(pond.unregistered_count or 0)
+
+    # Si el cache quedó desfasado, lo re-sincronizamos para evitar mostrar
+    # peces sin tag "fantasma" en la UI de detalle.
+    if (
+        cached_unregistered_balances != live_unregistered_balances
+        or cached_unregistered_count != live_unregistered_count
+    ):
+        _refresh_pond_runtime_cache_many([pond_id], db)
+        db.flush()
+        db.refresh(pond)
+
+    unregistered_balances = live_unregistered_balances
+    unregistered_count = live_unregistered_count
 
     lot_ids = list({f.lot_id for f in current_fish if f.lot_id})
     lots_map = {
         l.id: l for l in db.query(Lot).filter(Lot.id.in_(lot_ids)).all()
     } if lot_ids else {}
 
-    latest_sampling_subq = (
-        db.query(
-            FishSampling.fish_id,
-            func.max(
-                func.coalesce(FishSampling.registry_time, FishSampling.created_at)
-            ).label("max_sample_time"),
-        )
-        .group_by(FishSampling.fish_id)
-        .subquery()
-    )
-
-    latest_samples = (
-        db.query(FishSampling)
-        .join(
-            latest_sampling_subq,
-            (latest_sampling_subq.c.fish_id == FishSampling.fish_id) &
-            (
-                latest_sampling_subq.c.max_sample_time ==
-                func.coalesce(FishSampling.registry_time, FishSampling.created_at)
-            )
-        )
-        .all()
-    )
-    samples_map = {s.fish_id: s for s in latest_samples}
-
     fish_ids = [f.id for f in current_fish]
 
-    depuration_start_map = {}
+    samples_map = {}
     if fish_ids:
+        latest_sampling_subq = (
+            db.query(
+                FishSampling.fish_id,
+                func.max(
+                    func.coalesce(FishSampling.registry_time, FishSampling.created_at)
+                ).label("max_sample_time"),
+            )
+            .filter(FishSampling.fish_id.in_(fish_ids))
+            .group_by(FishSampling.fish_id)
+            .subquery()
+        )
+
+        latest_samples = (
+            db.query(FishSampling)
+            .join(
+                latest_sampling_subq,
+                (latest_sampling_subq.c.fish_id == FishSampling.fish_id) &
+                (
+                    latest_sampling_subq.c.max_sample_time ==
+                    func.coalesce(FishSampling.registry_time, FishSampling.created_at)
+                )
+            )
+            .filter(FishSampling.fish_id.in_(fish_ids))
+            .all()
+        )
+        samples_map = {s.fish_id: s for s in latest_samples}
+
+    depuration_start_map = {}
+    depuration_fish_ids = [f.id for f in current_fish if f.state == "depuration"]
+    if depuration_fish_ids:
         movements = (
-            db.query(PondMovement)
-            .filter(PondMovement.fish_id.in_(fish_ids))
+            db.query(
+                PondMovement.fish_id,
+                PondMovement.source_pond_id,
+                PondMovement.destiny_pond_id,
+                PondMovement.movement_time,
+                PondMovement.id,
+            )
+            .filter(PondMovement.fish_id.in_(depuration_fish_ids))
             .order_by(PondMovement.fish_id.asc(), PondMovement.movement_time.asc(), PondMovement.id.asc())
             .all()
         )
 
         pond_ids = {
-            m.source_pond_id for m in movements if m.source_pond_id
+            m[1] for m in movements if m[1]
         } | {
-            m.destiny_pond_id for m in movements if m.destiny_pond_id
+            m[2] for m in movements if m[2]
         }
         pond_depuration_map = {
             p.id: bool(p.depuration)
@@ -889,21 +1824,20 @@ def ui_pond_detail(
         } if pond_ids else {}
 
         cycle_start_by_fish = {}
-        for movement in movements:
-            fish_id = movement.fish_id
+        for fish_id, source_pond_id, destiny_pond_id, movement_time, _movement_id in movements:
             if fish_id is None:
                 continue
 
             src_is_depuration = bool(
-                movement.source_pond_id and pond_depuration_map.get(movement.source_pond_id)
+                source_pond_id and pond_depuration_map.get(source_pond_id)
             )
             dst_is_depuration = bool(
-                movement.destiny_pond_id and pond_depuration_map.get(movement.destiny_pond_id)
+                destiny_pond_id and pond_depuration_map.get(destiny_pond_id)
             )
 
             # La depuración se inicia solo en transición no-depuración -> depuración.
             if (not src_is_depuration) and dst_is_depuration:
-                cycle_start_by_fish[fish_id] = movement.movement_time
+                cycle_start_by_fish[fish_id] = movement_time
             # La depuración termina al salir a estanque no-depuración.
             elif src_is_depuration and (not dst_is_depuration):
                 cycle_start_by_fish[fish_id] = None
@@ -933,7 +1867,7 @@ def ui_pond_detail(
         fish_rows.append({
             "fish_id": fish.id,
             "internal_id": fish.internal_id or "N/D",
-            "lot": (lot.internal_id or lot.name) if lot else "N/D",
+            "lot": (lot.name or lot.internal_id) if lot else "N/D",
             "sex": sex_label,
             "sex_value": "f" if is_female else ("m" if sex_norm in ["m", "male", "macho"] else ""),
             "last_weight": float(sample.weight) if sample and sample.weight is not None else None,
@@ -976,6 +1910,27 @@ def ui_pond_detail(
             "qty": qty,
         })
 
+    present_lot_ids = sorted(set(lots_map.keys()) | set(unregistered_lots_map.keys()))
+    present_lot_options = []
+    for lot_id in present_lot_ids:
+        lot = lots_map.get(lot_id) or unregistered_lots_map.get(lot_id)
+        present_lot_options.append({
+            "id": int(lot_id),
+            "label": (
+                lot.internal_id if lot and lot.internal_id
+                else (lot.name if lot and lot.name else f"Lote {lot_id}")
+            ),
+        })
+
+    tag_detachment_lot_options = []
+    for opt in present_lot_options:
+        tag_detachment_lot_options.append({
+            "id": opt["id"],
+            "label": opt["label"],
+            "qty": int(unregistered_balances.get(opt["id"], 0)),
+            "fallback": int(unregistered_balances.get(opt["id"], 0)) == 0,
+        })
+
     females_state_4_count = sum(
         1
         for row in fish_rows
@@ -1008,6 +1963,7 @@ def ui_pond_detail(
         "caviar_estimated_kg": round(caviar_estimated_kg, 1),
         "can_register_from_untagged": unregistered_count > 0,
         "unregistered_lot_options": unregistered_lot_options,
+        "tag_detachment_lot_options": tag_detachment_lot_options,
         "pending_detachment_events": [
             {"id": e.id, "event_date": e.event_date, "notes": e.notes}
             for e in pending_detachment_events
@@ -1093,6 +2049,40 @@ def _archive_dead_fish_tag(pit_tag: str, next_idx: int, db: Session) -> None:
     if dead:
         dead.internal_id = f"{pit_tag}_{next_idx}"
         dead.updated_at = datetime.utcnow()
+
+
+def _sync_postgres_pk_sequence(model, db: Session) -> None:
+    """Realigns a PostgreSQL serial/bigserial sequence with the current max(id)."""
+    bind = db.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+
+    max_id = db.query(func.max(model.id)).scalar() or 0
+    db.execute(
+        text(
+            "SELECT setval(pg_get_serial_sequence(:table_name, 'id'), :next_value, false)"
+        ),
+        {"table_name": model.__tablename__, "next_value": max_id + 1},
+    )
+
+
+def _create_fish_with_sequence_retry(db: Session, **fish_kwargs) -> Fish:
+    """Retries once if the fish primary-key sequence is behind the table max(id)."""
+    fish = Fish(**fish_kwargs)
+    db.add(fish)
+    try:
+        db.flush()
+        return fish
+    except IntegrityError as exc:
+        db.rollback()
+        if "fish_pkey" not in str(getattr(exc, "orig", exc)):
+            raise
+
+        _sync_postgres_pk_sequence(Fish, db)
+        fish = Fish(**fish_kwargs)
+        db.add(fish)
+        db.flush()
+        return fish
 
 
 def _normalize_development_state(value: Optional[str]) -> Optional[str]:
@@ -1521,6 +2511,7 @@ def ui_pond_register_tagged(
     sex: Optional[str] = Form(None),
     weight: Optional[str] = Form(None),
     diameter: Optional[str] = Form(None),
+    development_state: Optional[str] = Form(None),
     female_destination_pond_id: Optional[str] = Form(None),
     confirm_reuse: Optional[str] = Form(None),
     db: Session = Depends(get_db),
@@ -1536,6 +2527,24 @@ def ui_pond_register_tagged(
     pond = db.query(Pond).filter(Pond.id == pond_id).first()
     if not pond:
         return go("error", "Estanque no encontrado.")
+
+    pending_event = (
+        db.query(TagDetachmentEvent)
+        .filter(
+            TagDetachmentEvent.pond_id == pond_id,
+            TagDetachmentEvent.status == "unidentified",
+        )
+        .order_by(TagDetachmentEvent.event_date.asc(), TagDetachmentEvent.id.asc())
+        .first()
+    )
+    if pending_event:
+        return RedirectResponse(
+            url=(
+                f"/views/ui/ponds/{pond_id}/retag/{pending_event.id}"
+                f"?status={quote_plus('warn')}&msg={quote_plus('Hay un tag perdido vigente. Complete el re-tag para cerrar el caso.')}"
+            ),
+            status_code=303,
+        )
 
     pit_tag = _normalize_pit_tag(internal_id)
     if not pit_tag:
@@ -1567,6 +2576,7 @@ def ui_pond_register_tagged(
         return go("error", "No hay saldo disponible del lote seleccionado en este estanque.")
 
     target_sex = _normalize_sex_value(sex)
+    target_development_state = _normalize_development_state(development_state)
 
     try:
         new_weight = _parse_decimal_field(weight, "Peso")
@@ -1578,6 +2588,15 @@ def ui_pond_register_tagged(
         return go("error", "El peso debe ser mayor a 0.")
     if new_diameter is not None and new_diameter <= 0:
         return go("error", "El diámetro debe ser mayor a 0.")
+
+    if target_development_state and not target_sex:
+        return go("error", "Para actualizar estado de desarrollo debe indicar sexo (hembra o macho).")
+    if not _is_valid_development_state_for_sex(target_development_state, target_sex):
+        if target_sex == "f":
+            return go("error", "Estado de desarrollo inválido para hembra. Use: 0, 1, 2, 3, 4 o R.")
+        if target_sex == "m":
+            return go("error", "Estado de desarrollo inválido para macho. Use: 0 o L.")
+        return go("error", "Estado de desarrollo inválido.")
 
     female_destination = None
     if female_destination_pond_id and female_destination_pond_id.strip():
@@ -1631,11 +2650,12 @@ def ui_pond_register_tagged(
         )
         db.add(in_registered)
 
-        if new_weight is not None or new_diameter is not None:
+        if new_weight is not None or new_diameter is not None or target_development_state is not None:
             sample = FishSampling(
                 fish_id=fish.id,
                 weight=new_weight,
                 diameter=new_diameter,
+                development_state=target_development_state,
                 registry_time=now,
                 created_at=now,
                 updated_at=now,
@@ -1686,6 +2706,15 @@ def ui_pond_register_tagged(
         return go("error", "No se pudo registrar el PIT tag.")
 
 
+@router.get("/ui/fish/check-pit-tag")
+def fish_check_pit_tag(tag: str, db: Session = Depends(get_db)):
+    """AJAX: valida si un PIT tag puede registrarse (libre, bloqueado, o reutilizable)."""
+    pit_tag = _normalize_pit_tag(tag)
+    if not pit_tag:
+        return JSONResponse({"status": "blocked", "message": "Tag vacio."})
+    return JSONResponse(_check_pit_tag_reuse(pit_tag, db))
+
+
 @router.get("/ui/fish/{fish_id}", response_class=HTMLResponse)
 def ui_fish_history(
     fish_id: int,
@@ -1709,7 +2738,17 @@ def ui_fish_history(
         .order_by(PondMovement.movement_time.desc())
         .first()
     )
-    current_pond_name = pond_name_map.get(last_mv.destiny_pond_id) if last_mv and last_mv.destiny_pond_id else None
+    current_pond_id = last_mv.destiny_pond_id if last_mv and last_mv.destiny_pond_id else None
+    current_pond_name = pond_name_map.get(current_pond_id) if current_pond_id else None
+    can_use_pond_actions = fish.state in ("alive", "depuration") and current_pond_id is not None
+
+    move_pond_options = []
+    if current_pond_id is not None:
+        move_pond_options = [
+            {"id": p.id, "name": p.name}
+            for p in db.query(Pond).order_by(Pond.name.asc()).all()
+            if p.id != current_pond_id
+        ]
 
     # Last fish sampling
     last_sampling = (
@@ -1847,12 +2886,15 @@ def ui_fish_history(
             "sex": fish.sex,
             "sex_display": sex_display,
             "state": fish.state,
-            "lot": (lot.internal_id if lot and lot.internal_id else (lot.name if lot else "N/D")),
+            "lot": (lot.name if lot and lot.name else (lot.internal_id if lot else "N/D")),
             "lot_name": lot.name if lot else None,
             "can_edit_internal_id": not (has_drug_use or has_r_suffix),
             "needs_drug_log": needs_drug_log,
         },
         "current_pond": current_pond_name,
+        "current_pond_id": current_pond_id,
+        "can_use_pond_actions": can_use_pond_actions,
+        "move_pond_options": move_pond_options,
         "last_sampling": last_sampling_data,
         "drug_uses": drug_rows,
         "events": events,
@@ -2001,16 +3043,6 @@ def ui_fish_edit_notes(
     return JSONResponse({"ok": True, "notes": new_val})
 
 
-# ── Búsqueda de pez por PIT tag (AJAX) ─────────────────────────────────────
-@router.get("/ui/fish/check-pit-tag")
-def fish_check_pit_tag(tag: str, db: Session = Depends(get_db)):
-    """AJAX: valida si un PIT tag puede registrarse (libre, bloqueado, o reutilizable)."""
-    pit_tag = _normalize_pit_tag(tag)
-    if not pit_tag:
-        return JSONResponse({"status": "blocked", "message": "Tag vacío."})
-    return JSONResponse(_check_pit_tag_reuse(pit_tag, db))
-
-
 @router.get("/ui/fish-by-pit")
 def ui_fish_find_by_pit(
     pit_tag: Optional[str] = None,
@@ -2069,7 +3101,7 @@ def fish_search(q: str, db: Session = Depends(get_db)):
         "id": fish.id,
         "internal_id": fish.internal_id,
         "state": fish.state,
-        "lot": lot.internal_id if lot else "N/D",
+        "lot": (lot.name or lot.internal_id) if lot else "N/D",
         "lot_id": fish.lot_id,
         "current_pond": current_pond,
     })
@@ -2298,6 +3330,11 @@ def ui_movement_create(
                     moved_pits.append(fish.internal_id or str(fish.id))
 
                 _refresh_pond_runtime_cache_many([src_id, dst_id], db)
+                # Recalculate avg_weight after movements
+                if src_id:
+                    _recalc_pond_biomass(src_id, db)
+                if dst_id:
+                    _recalc_pond_biomass(dst_id, db)
                 db.commit()
             except Exception:
                 db.rollback()
@@ -2324,36 +3361,47 @@ def ui_movement_create(
 
         lot_id_int = fish.lot_id
 
-        new_mov = PondMovement(
-            fish_id=fish_id_int,
-            lot_id=lot_id_int,
-            source_pond_id=src_id,
-            destiny_pond_id=dst_id,
-            fish_quantity=1,
-            movement_reason=movement_reason,
-            movement_time=mov_time,
-        )
-        db.add(new_mov)
-        db.flush()
+        try:
+            new_mov = PondMovement(
+                fish_id=fish_id_int,
+                lot_id=lot_id_int,
+                source_pond_id=src_id,
+                destiny_pond_id=dst_id,
+                fish_quantity=1,
+                movement_reason=movement_reason,
+                movement_time=mov_time,
+            )
+            db.add(new_mov)
+            db.flush()
 
-        # Transición de estado por depuración
-        src_pond = db.query(Pond).filter(Pond.id == src_id).first() if src_id else None
-        dest_pond = db.query(Pond).filter(Pond.id == dst_id).first() if dst_id else None
+            # Transición de estado por depuración
+            src_pond = db.query(Pond).filter(Pond.id == src_id).first() if src_id else None
+            dest_pond = db.query(Pond).filter(Pond.id == dst_id).first() if dst_id else None
 
-        if dst_id:
-            if dest_pond and dest_pond.depuration:
-                fish.state = "depuration"
-                # Inicia ciclo solo en transición no-depuración -> depuración.
-                if not (src_pond and src_pond.depuration):
-                    fish.depuration_start_time = mov_time
-        if src_pond and src_pond.depuration and dst_id and dest_pond and not dest_pond.depuration:
-            fish.state = "alive"
-            fish.depuration_start_time = None
+            if dst_id:
+                if dest_pond and dest_pond.depuration:
+                    fish.state = "depuration"
+                    # Inicia ciclo solo en transición no-depuración -> depuración.
+                    if not (src_pond and src_pond.depuration):
+                        fish.depuration_start_time = mov_time
+            if src_pond and src_pond.depuration and dst_id and dest_pond and not dest_pond.depuration:
+                fish.state = "alive"
+                fish.depuration_start_time = None
 
-        _adjust_biomass_on_movement(new_mov, db)
-        _refresh_pond_runtime_cache_many([src_id, dst_id], db)
-        db.commit()
-        return go_after_save("ok", f"Peces movidos con éxito: 1 ({fish.internal_id}) hacia {dest_pond.name if dst_id else 'egreso'}.")
+            _adjust_biomass_on_movement(new_mov, db)
+            _refresh_pond_runtime_cache_many([src_id, dst_id], db)
+            # Recalculate avg_weight after movements
+            if src_id:
+                _recalc_pond_biomass(src_id, db)
+            if dst_id:
+                _recalc_pond_biomass(dst_id, db)
+            db.commit()
+            dest_name = dest_pond.name if dst_id and dest_pond else "egreso"
+            fish_label = fish.internal_id or str(fish.id)
+            return go_after_save("ok", f"Peces movidos con éxito: 1 ({fish_label}) hacia {dest_name}.")
+        except Exception:
+            db.rollback()
+            return render_form(error="No se pudo registrar el movimiento del pez con PIT tag.")
 
     else:
         # Peces sin PIT tag (masivo)
@@ -2376,24 +3424,33 @@ def ui_movement_create(
                           "No se pueden mezclar lotes sin registrar."
                 )
 
-        new_mov = PondMovement(
-            fish_id=None,
-            lot_id=lot_id_int,
-            source_pond_id=src_id,
-            destiny_pond_id=dst_id,
-            fish_quantity=fish_quantity_untagged,
-            movement_reason=movement_reason,
-            movement_time=mov_time,
-        )
-        db.add(new_mov)
-        db.flush()
-        _adjust_biomass_on_movement(new_mov, db)
-        _refresh_pond_runtime_cache_many([src_id, dst_id], db)
-        db.commit()
+        try:
+            new_mov = PondMovement(
+                fish_id=None,
+                lot_id=lot_id_int,
+                source_pond_id=src_id,
+                destiny_pond_id=dst_id,
+                fish_quantity=fish_quantity_untagged,
+                movement_reason=movement_reason,
+                movement_time=mov_time,
+            )
+            db.add(new_mov)
+            db.flush()
+            _adjust_biomass_on_movement(new_mov, db)
+            _refresh_pond_runtime_cache_many([src_id, dst_id], db)
+            # Recalculate avg_weight after movements
+            if src_id:
+                _recalc_pond_biomass(src_id, db)
+            if dst_id:
+                _recalc_pond_biomass(dst_id, db)
+            db.commit()
 
-        lot = db.query(Lot).filter(Lot.id == lot_id_int).first()
-        lot_label = lot.internal_id if lot else str(lot_id_int)
-        return go_after_save("ok", f"Peces movidos con éxito: {fish_quantity_untagged} sin PIT (lote {lot_label}).")
+            lot = db.query(Lot).filter(Lot.id == lot_id_int).first()
+            lot_label = lot.internal_id if lot else str(lot_id_int)
+            return go_after_save("ok", f"Peces movidos con éxito: {fish_quantity_untagged} sin PIT (lote {lot_label}).")
+        except Exception:
+            db.rollback()
+            return render_form(error="No se pudo registrar el movimiento de peces sin PIT tag.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3148,9 +4205,10 @@ def ui_tag_detachment_new(
     if not pond:
         raise HTTPException(status_code=404, detail="Pond not found")
 
-    template = jinja_env.get_template("tag_detachment_form.html")
-    html = template.render({"request": request, "pond": pond})
-    return HTMLResponse(content=html)
+    return RedirectResponse(
+        url=f"/views/ui/ponds/{pond_id}?status=warn&msg={quote_plus('Usa la tarjeta Pérdida Pit-tag en esta vista para registrar o declarar mortalidad sin tag.')}",
+        status_code=303,
+    )
 
 
 @router.post("/ui/ponds/{pond_id}/tag-detachment")
@@ -3158,6 +4216,9 @@ def ui_tag_detachment_save(
     pond_id: int,
     request: Request,
     event_date: str = Form(...),
+    lot_id: Optional[str] = Form(None),
+    tagloss_quantity: Optional[str] = Form(None),
+    action: str = Form("register"),
     notes: str = Form(""),
     db: Session = Depends(get_db),
 ):
@@ -3169,7 +4230,7 @@ def ui_tag_detachment_save(
 
     def go(s, m):
         return RedirectResponse(
-            url=f"/views/ui/ponds/{pond_id}?status={s}&msg={m}",
+            url=f"/views/ui/ponds/{pond_id}?status={quote_plus(s)}&msg={quote_plus(m)}",
             status_code=303,
         )
 
@@ -3178,30 +4239,137 @@ def ui_tag_detachment_save(
     except ValueError:
         return go("error", "Fecha inválida.")
 
+    if action not in {"register", "mortality"}:
+        return go("error", "Acción no válida.")
+
+    raw_qty = (tagloss_quantity or "").strip()
+    if not raw_qty:
+        return go("error", "Debe ingresar una cantidad para la pérdida de tag.")
     try:
-        # Registrar el evento
-        event = TagDetachmentEvent(
-            pond_id=pond_id,
+        quantity = int(raw_qty)
+    except ValueError:
+        return go("error", "La cantidad debe ser un número entero.")
+
+    if quantity < 1:
+        return go("error", "La cantidad debe ser mayor a 0.")
+
+    selected_lot_id: Optional[int] = None
+    if lot_id and lot_id.strip():
+        if not lot_id.strip().isdigit():
+            return go("error", "Lote no válido.")
+        selected_lot_id = int(lot_id.strip())
+
+    if selected_lot_id is None:
+        # Fallback: primer lote disponible en la laguna.
+        available_lot_ids = _get_pond_available_lot_ids(pond_id, db)
+        selected_lot_id = available_lot_ids[0] if available_lot_ids else None
+
+    if selected_lot_id is None:
+        return go("error", "No se pudo determinar lote. Selecciona un lote para continuar.")
+
+    lot_obj = db.query(Lot).filter(Lot.id == selected_lot_id).first()
+    if not lot_obj:
+        return go("error", "El lote seleccionado no existe.")
+
+    lot_label = lot_obj.internal_id if lot_obj.internal_id else lot_obj.name
+    note_base = notes.strip() if notes and notes.strip() else None
+    note_with_lot = f"[lote:{lot_label}] {note_base}" if note_base else f"[lote:{lot_label}]"
+
+    now = datetime.utcnow()
+    try:
+        if action == "register":
+            events = [
+                TagDetachmentEvent(
+                    pond_id=pond_id,
+                    fish_id=None,
+                    event_date=event_dt,
+                    notes=note_with_lot,
+                    status="unidentified",
+                )
+                for _ in range(quantity)
+            ]
+            db.add_all(events)
+
+            in_unregistered = PondMovement(
+                fish_id=None,
+                lot_id=selected_lot_id,
+                source_pond_id=None,
+                destiny_pond_id=pond_id,
+                fish_quantity=quantity,
+                movement_reason="inventory_mismatch",
+                movement_time=event_dt,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(in_unregistered)
+            db.flush()
+            _adjust_biomass_on_movement(in_unregistered, db)
+            _refresh_pond_runtime_cache_many([pond_id], db)
+            db.commit()
+            return go(
+                "ok",
+                f"Pérdida de tag registrada en lote {lot_label}: {quantity} evento(s) creado(s) y {quantity} pez(ces) sin tag agregado(s) al estanque.",
+            )
+
+        # action == mortality
+        events = [
+            TagDetachmentEvent(
+                pond_id=pond_id,
+                fish_id=None,
+                event_date=event_dt,
+                notes=note_with_lot,
+                status="written_off",
+                resolution="mortality",
+                resolved_at=event_dt,
+            )
+            for _ in range(quantity)
+        ]
+        db.add_all(events)
+
+        balances = _get_unregistered_balances_by_lot(pond_id, db)
+        available_balance = int(balances.get(selected_lot_id, 0) or 0)
+        shortfall = max(0, quantity - available_balance)
+        if shortfall > 0:
+            # Si no alcanza el saldo sin tag en el lote, registramos ingreso para cubrir el faltante
+            # y luego mortalidad del total solicitado.
+            in_unregistered = PondMovement(
+                fish_id=None,
+                lot_id=selected_lot_id,
+                source_pond_id=None,
+                destiny_pond_id=pond_id,
+                fish_quantity=shortfall,
+                movement_reason="inventory_mismatch",
+                movement_time=event_dt,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(in_unregistered)
+            db.flush()
+            _adjust_biomass_on_movement(in_unregistered, db)
+
+        out_mortality = PondMovement(
             fish_id=None,
-            event_date=event_dt,
-            notes=notes.strip() or None,
-            status="unidentified",
+            lot_id=selected_lot_id,
+            source_pond_id=pond_id,
+            destiny_pond_id=None,
+            fish_quantity=quantity,
+            movement_reason="mortality",
+            movement_time=event_dt,
+            created_at=now,
+            updated_at=now,
         )
-        db.add(event)
-
-        # Incrementar peces sin tag en el estanque
-        pond.unregistered_count = (pond.unregistered_count or 0) + 1
-        pond.n_fish_cached = (pond.tagged_count or 0) + pond.unregistered_count
-
+        db.add(out_mortality)
+        db.flush()
+        _adjust_biomass_on_movement(out_mortality, db)
+        _refresh_pond_runtime_cache_many([pond_id], db)
         db.commit()
-
-        # Actualizar cache completo del estanque
-        _refresh_pond_runtime_cache(pond_id, db)
-
-        return go("ok", "Pérdida de tag registrada. Pez sin tag sumado al estanque.")
+        return go(
+            "ok",
+            f"Mortalidad sin tag registrada para lote {lot_label}: {quantity} evento(s) cerrado(s).",
+        )
     except Exception:
         db.rollback()
-        return go("error", "No se pudo registrar la pérdida de tag.")
+        return go("error", "No se pudo registrar el evento de pérdida/mortalidad sin tag.")
 
 
 # ---------------------------------------------------------------------------
@@ -3233,13 +4401,40 @@ def ui_retag_form(
         for lot in lots
     ]
 
+    # Fallback: si no hay lotes sin tag, permitir lotes disponibles en la laguna.
+    if not lot_options:
+        present_lot_ids = sorted(
+            {
+                int(f.lot_id)
+                for f in _get_current_tagged_fish_in_pond(pond_id, db)
+                if f.lot_id is not None
+            }
+            | set(unregistered_balances.keys())
+        )
+        if present_lot_ids:
+            present_lots = db.query(Lot).filter(Lot.id.in_(present_lot_ids)).all()
+            lot_options = [
+                {
+                    "id": lot.id,
+                    "label": lot.internal_id or lot.name,
+                    "qty": 0,
+                    "fallback": True,
+                }
+                for lot in present_lots
+            ]
+
     template = jinja_env.get_template("retag_form.html")
+    female_destination_options = [
+        {"id": p.id, "name": p.name}
+        for p in db.query(Pond).filter(Pond.id != pond_id).order_by(Pond.name.asc(), Pond.id.asc()).all()
+    ]
     html = template.render({
         "request": request,
         "pond": pond,
         "event": {"id": event.id, "event_date": event.event_date, "notes": event.notes},
         "lot_options": lot_options,
         "single_lot": lot_options[0] if len(lot_options) == 1 else None,
+        "female_destination_options": female_destination_options,
     })
     return HTMLResponse(content=html)
 
@@ -3253,6 +4448,9 @@ def ui_retag_save(
     lot_id: str = Form(...),
     sex: Optional[str] = Form(None),
     weight: Optional[str] = Form(None),
+    diameter: Optional[str] = Form(None),
+    development_state: Optional[str] = Form(None),
+    female_destination_pond_id: Optional[str] = Form(None),
     confirm_reuse: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
@@ -3289,31 +4487,71 @@ def ui_retag_save(
     selected_lot_id = int(lot_id.strip())
 
     unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
-    if unregistered_balances.get(selected_lot_id, 0) < 1:
-        return go("error", "No hay saldo disponible del lote seleccionado.")
+    has_unregistered_balance = unregistered_balances.get(selected_lot_id, 0) >= 1
 
     try:
         new_weight = _parse_decimal_field(weight, "Peso")
+        new_diameter = _parse_decimal_field(diameter, "Diámetro")
     except ValueError as exc:
         return go("error", str(exc))
 
     target_sex = _normalize_sex_value(sex)
+    target_development_state = _normalize_development_state(development_state)
+    if new_weight is not None and new_weight <= 0:
+        return go("error", "El peso debe ser mayor a 0.")
+    if new_diameter is not None and new_diameter <= 0:
+        return go("error", "El diámetro debe ser mayor a 0.")
+    if target_development_state and not target_sex:
+        return go("error", "Para actualizar estado de desarrollo debe indicar sexo (hembra o macho).")
+    if not _is_valid_development_state_for_sex(target_development_state, target_sex):
+        if target_sex == "f":
+            return go("error", "Estado de desarrollo inválido para hembra. Use: 0, 1, 2, 3, 4 o R.")
+        if target_sex == "m":
+            return go("error", "Estado de desarrollo inválido para macho. Use: 0 o L.")
+        return go("error", "Estado de desarrollo inválido.")
+
+    female_destination = None
+    if female_destination_pond_id and female_destination_pond_id.strip():
+        raw_dest = female_destination_pond_id.strip()
+        if not raw_dest.isdigit():
+            return go("error", "Destino de hembras no válido.")
+        female_destination = db.query(Pond).filter(Pond.id == int(raw_dest)).first()
+        if not female_destination:
+            return go("error", "Destino de hembras no encontrado.")
+        if female_destination.id == pond_id:
+            return go("error", "El destino de hembras debe ser distinto al estanque actual.")
+
     now = datetime.utcnow()
+    fish_kwargs = {
+        "internal_id": pit_tag,
+        "lot_id": selected_lot_id,
+        "sex": target_sex,
+        "state": "depuration" if pond.depuration else "alive",
+        "registration_time": now,
+        "depuration_start_time": now if pond.depuration else None,
+        "created_at": now,
+        "updated_at": now,
+    }
 
     try:
         # Crear nuevo pez con el nuevo tag
-        fish = Fish(
-            internal_id=pit_tag,
-            lot_id=selected_lot_id,
-            sex=target_sex,
-            state="depuration" if pond.depuration else "alive",
-            registration_time=now,
-            depuration_start_time=now if pond.depuration else None,
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(fish)
-        db.flush()
+        fish = _create_fish_with_sequence_retry(db, **fish_kwargs)
+
+        if not has_unregistered_balance:
+            # Fallback legacy: crear ingreso sin-tag para poder consumirlo en el re-tag.
+            in_unregistered = PondMovement(
+                fish_id=None,
+                lot_id=selected_lot_id,
+                source_pond_id=None,
+                destiny_pond_id=pond_id,
+                fish_quantity=1,
+                movement_reason="inventory_mismatch",
+                movement_time=now,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(in_unregistered)
+            db.flush()
 
         # Sacar del pool de no-taggeados del estanque
         out_unregistered = PondMovement(
@@ -3343,25 +4581,61 @@ def ui_retag_save(
         )
         db.add(in_registered)
 
-        if new_weight is not None and new_weight > 0:
+        if new_weight is not None or new_diameter is not None or target_development_state is not None:
             sample = FishSampling(
                 fish_id=fish.id,
                 weight=new_weight,
+                diameter=new_diameter,
+                development_state=target_development_state,
                 registry_time=now,
                 created_at=now,
                 updated_at=now,
             )
             db.add(sample)
 
+        moved_female = False
+        female_movement = None
+        if target_sex == "f" and female_destination:
+            female_movement = PondMovement(
+                fish_id=fish.id,
+                lot_id=selected_lot_id,
+                source_pond_id=pond_id,
+                destiny_pond_id=female_destination.id,
+                fish_quantity=1,
+                movement_reason="pond_movement",
+                movement_time=now,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(female_movement)
+            moved_female = True
+
+            # Transición de estado por depuración para el destino final de la hembra.
+            if female_destination.depuration and not pond.depuration:
+                fish.depuration_start_time = now
+            if female_destination.depuration:
+                fish.state = "depuration"
+            elif pond.depuration and fish.state == "depuration":
+                fish.state = "alive"
+                fish.depuration_start_time = None
+
         # Cerrar el evento de pérdida de tag
         event.retag_fish_id = fish.id
         event.status = "retagged"
 
+        if not has_unregistered_balance:
+            _adjust_biomass_on_movement(in_unregistered, db)
         _adjust_biomass_on_movement(out_unregistered, db)
         _adjust_biomass_on_movement(in_registered, db)
-        _refresh_pond_runtime_cache_many([pond_id], db)
+        affected_pond_ids = {pond_id}
+        if moved_female and female_movement is not None:
+            _adjust_biomass_on_movement(female_movement, db)
+            affected_pond_ids.add(female_destination.id)
+        _refresh_pond_runtime_cache_many(affected_pond_ids, db)
 
         db.commit()
+        if moved_female:
+            return go("ok", f"PIT tag {pit_tag} asignado y enviado a {female_destination.name}. Pez re-taggeado correctamente.")
         return go("ok", f"PIT tag {pit_tag} asignado. Pez re-taggeado correctamente.")
     except Exception:
         db.rollback()
@@ -3844,20 +5118,128 @@ def ui_lot_detail(
             "id": lot.id,
             "name": lot.name,
             "internal_id": lot.internal_id,
+            "species_id": lot.species_id,
             "species": species_map.get(lot.species_id, "—"),
             "hatch_year": lot.hatch_year,
             "origin": lot.origin,
+            "national": lot.national,
         },
+        "species_list": [{"id": s.id, "name": s.name} for s in db.query(Species).order_by(Species.name).all()],
         "pond_rows": pond_rows,
         "stat_fish": total_fish,
         "stat_biomass": round(total_biomass, 1) if total_biomass else None,
         "stat_k": avg_k,
         "stat_avg_weight": avg_w_global,
+        "msg": request.query_params.get("msg"),
+        "status_msg": request.query_params.get("status", "ok"),
     })
     return HTMLResponse(content=html)
 
 
+@router.post("/ui/lots/{lot_id}/edit", response_class=HTMLResponse)
+def ui_lot_edit(
+    lot_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    name: str = Form(...),
+    internal_id: str = Form(""),
+    species_id: int = Form(...),
+    hatch_year: str = Form(""),
+    origin: str = Form(""),
+    national: str = Form(""),
+):
+    lot = db.query(Lot).filter(Lot.id == lot_id).first()
+    if not lot:
+        raise HTTPException(status_code=404, detail="Lot not found")
+    lot.name = name.strip()
+    lot.internal_id = internal_id.strip() or None
+    lot.species_id = species_id
+    lot.hatch_year = int(hatch_year) if hatch_year.strip().isdigit() else None
+    lot.origin = origin.strip() or None
+    lot.national = (national == "1")
+    db.commit()
+    return RedirectResponse(
+        url=f"/views/ui/lots/{lot_id}?status=ok&msg=Lote+actualizado",
+        status_code=303,
+    )
+
+
 # ── Vista Faena ─────────────────────────────────────────────────────────────
+
+@router.post("/ui/sanitary-report", response_class=HTMLResponse)
+def ui_add_sanitary_report(
+    request: Request,
+    db: Session = Depends(get_db),
+    report_number: str = Form(...),
+    laboratory: str = Form(...),
+    report_date: str = Form(...),
+):
+    from datetime import date as _date_type
+    from fastapi.responses import RedirectResponse
+    try:
+        parsed_date = _date_type.fromisoformat(report_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Fecha inválida")
+    now = datetime.utcnow()
+    report = SanitaryReport(
+        report_number=report_number.strip(),
+        laboratory=laboratory.strip(),
+        report_date=parsed_date,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(report)
+    db.commit()
+    return RedirectResponse(url="/views/ui/faena", status_code=303)
+
+
+@router.get("/ui/feed-legacy", response_class=HTMLResponse)
+def ui_feed_legacy(request: Request, db: Session = Depends(get_db)):
+    """Vista legacy de alimentacion (reemplazada por feed_endpoints)."""
+    total_ponds = db.query(func.count(Pond.id)).scalar() or 0
+    total_lots = db.query(func.count(Lot.id)).scalar() or 0
+    total_fish = (
+        db.query(func.count(Fish.id))
+        .filter(Fish.state.in_(["alive", "depuration", "faena"]))
+        .scalar()
+        or 0
+    )
+    total_biomass = db.query(func.coalesce(func.sum(Pond.biomass_current), 0.0)).scalar() or 0.0
+
+    template = jinja_env.get_template("feed.html")
+    html = template.render({
+        "request": request,
+        "stat_ponds": int(total_ponds),
+        "stat_lots": int(total_lots),
+        "stat_fish": int(total_fish),
+        "stat_biomass": float(total_biomass),
+    })
+    return HTMLResponse(content=html)
+
+
+@router.get("/ui/feed/inventory-legacy", response_class=HTMLResponse)
+def ui_feed_inventory_legacy(request: Request, db: Session = Depends(get_db)):
+    """Vista legacy de inventario feed (reemplazada por feed_endpoints)."""
+    total_ponds = db.query(func.count(Pond.id)).scalar() or 0
+    total_lots = db.query(func.count(Lot.id)).scalar() or 0
+    total_fish = (
+        db.query(func.count(Fish.id))
+        .filter(Fish.state.in_(["alive", "depuration", "faena"]))
+        .scalar()
+        or 0
+    )
+    total_biomass = db.query(func.coalesce(func.sum(Pond.biomass_current), 0.0)).scalar() or 0.0
+
+    template = jinja_env.get_template("feed_inventory.html")
+    html = template.render({
+        "request": request,
+        "stat_ponds": int(total_ponds),
+        "stat_lots": int(total_lots),
+        "stat_fish": int(total_fish),
+        "stat_biomass": float(total_biomass),
+    })
+    return HTMLResponse(content=html)
+
 
 @router.get("/ui/faena", response_class=HTMLResponse)
 def ui_faena(request: Request, db: Session = Depends(get_db)):
@@ -3955,6 +5337,20 @@ def ui_faena(request: Request, db: Session = Depends(get_db)):
     if lot_ids:
         lots_map = {lot.id: lot for lot in db.query(Lot).filter(Lot.id.in_(lot_ids)).all()}
 
+    # Último informe sanitario por lote
+    # Último informe sanitario del centro (aplica globalmente)
+    latest_sanitary = (
+        db.query(SanitaryReport)
+        .order_by(SanitaryReport.report_date.desc())
+        .first()
+    )
+    from datetime import date as _date, timedelta as _timedelta
+    sanitary_expiry = None
+    sanitary_expiry_warning = False
+    if latest_sanitary and latest_sanitary.report_date:
+        sanitary_expiry = latest_sanitary.report_date + _timedelta(days=365)
+        sanitary_expiry_warning = sanitary_expiry <= (_date.today() + _timedelta(days=60))
+
     # Depuración: días en depuración al momento del despacho
     # Calculamos desde fish.depuration_start_time (ya registrado) hasta fecha del movimiento faena
     fish_rows = []
@@ -3998,7 +5394,7 @@ def ui_faena(request: Request, db: Session = Depends(get_db)):
         fish_rows.append({
             "fish_id": fish.id,
             "internal_id": fish.internal_id or "N/D",
-            "lot": (lot.internal_id or lot.name) if lot else "N/D",
+            "lot": (lot.name or lot.internal_id) if lot else "N/D",
             "lot_id": fish.lot_id,
             "sex": sex_label,
             "sex_value": "f" if is_female else ("m" if sex_norm in ["m", "male", "macho"] else ""),
@@ -4008,7 +5404,9 @@ def ui_faena(request: Request, db: Session = Depends(get_db)):
             "dev_state": dev_state,
             "depuration_days": dep_days,
             "source_pond": source_pond.name if source_pond else "N/D",
+            "source_pond_id": source_pond.id if source_pond else None,
             "dispatched_at": dispatched_at,
+            "dispatched_at_display": _format_local_datetime(dispatched_at),
         })
 
     # Estadísticas globales
@@ -4034,6 +5432,153 @@ def ui_faena(request: Request, db: Session = Depends(get_db)):
         for v in by_lot.values()
     ]
 
+    source_pond_options = sorted(
+        [
+            {"id": p.id, "name": p.name}
+            for p in ponds_map.values()
+        ],
+        key=lambda x: x["name"],
+    )
+
+    jaula_unit_ids = [
+        int(u.id)
+        for u in db.query(CultivationUnit.id, CultivationUnit.name)
+        .filter(func.lower(CultivationUnit.name).like("%jaula%"))
+        .all()
+    ]
+    jaula_pond_scope_options = []
+    if jaula_unit_ids:
+        jaula_pond_scope_options = [
+            {"id": int(p.id), "name": p.name}
+            for p in db.query(Pond.id, Pond.name)
+            .filter(Pond.cultivation_unit_id.in_(jaula_unit_ids))
+            .order_by(Pond.name.asc(), Pond.id.asc())
+            .all()
+        ]
+
+    decl_scope_selected = (request.query_params.get("decl_scope") or "unit").strip().lower()
+    valid_scope_values = {"unit"} | {f"pond:{item['id']}" for item in jaula_pond_scope_options}
+    if decl_scope_selected not in valid_scope_values:
+        decl_scope_selected = "unit"
+
+    decl_status = request.query_params.get("decl_status")
+    decl_folio = request.query_params.get("decl_folio")
+    decl_id = request.query_params.get("decl_id")
+    decl_msg = request.query_params.get("decl_msg")
+
+    latest_declarations = []
+    try:
+        _decls = (
+            db.query(CultivationDeclaration)
+            .order_by(CultivationDeclaration.created_at.desc(), CultivationDeclaration.id.desc())
+            .limit(10)
+            .all()
+        )
+        latest_declarations = [
+            {
+                "id": d.id,
+                "folio": d.folio,
+                "source_pond_id": d.source_pond_id,
+                "declaration_date": d.declaration_date,
+                "status": d.status,
+            }
+            for d in _decls
+        ]
+    except Exception:
+        latest_declarations = []
+
+    # Faenas confirmadas (fish.state cambiado a dead tras confirmacion en planta)
+    confirmed_date_raw = (request.query_params.get("confirmed_date") or "").strip()
+    try:
+        confirmed_date = datetime.strptime(confirmed_date_raw, "%Y-%m-%d").date() if confirmed_date_raw else datetime.now(APP_LOCAL_TZ).date()
+    except ValueError:
+        confirmed_date = datetime.now(APP_LOCAL_TZ).date()
+    confirmed_date_value = confirmed_date.isoformat()
+
+    confirmed_day_start_local = datetime(confirmed_date.year, confirmed_date.month, confirmed_date.day, tzinfo=APP_LOCAL_TZ)
+    confirmed_day_end_local = confirmed_day_start_local + timedelta(days=1)
+    confirmed_day_start_utc_naive = confirmed_day_start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    confirmed_day_end_utc_naive = confirmed_day_end_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+    confirmed_fish = (
+        db.query(Fish)
+        .filter(
+            Fish.date_of_death.isnot(None),
+            Fish.date_of_death >= confirmed_day_start_utc_naive,
+            Fish.date_of_death < confirmed_day_end_utc_naive,
+        )
+        .order_by(Fish.date_of_death.desc(), Fish.id.desc())
+        .all()
+    )
+    confirmed_fish_ids = [f.id for f in confirmed_fish]
+
+    confirmed_mov_map: dict[int, PondMovement] = {}
+    if confirmed_fish_ids:
+        confirmed_movements = (
+            db.query(PondMovement)
+            .filter(
+                PondMovement.fish_id.in_(confirmed_fish_ids),
+                PondMovement.movement_reason == "faena",
+                PondMovement.destiny_pond_id.is_(None),
+            )
+            .order_by(PondMovement.fish_id.asc(), PondMovement.movement_time.desc(), PondMovement.id.desc())
+            .all()
+        )
+        for mv in confirmed_movements:
+            if mv.fish_id not in confirmed_mov_map:
+                confirmed_mov_map[mv.fish_id] = mv
+
+    confirmed_lot_ids = {f.lot_id for f in confirmed_fish if f.lot_id}
+    confirmed_lots_map: dict[int, Lot] = {}
+    if confirmed_lot_ids:
+        confirmed_lots_map = {
+            lot.id: lot
+            for lot in db.query(Lot).filter(Lot.id.in_(confirmed_lot_ids)).all()
+        }
+
+    confirmed_source_pond_ids = {
+        mv.source_pond_id
+        for mv in confirmed_mov_map.values()
+        if mv.source_pond_id
+    }
+    confirmed_ponds_map: dict[int, Pond] = {}
+    if confirmed_source_pond_ids:
+        confirmed_ponds_map = {
+            p.id: p
+            for p in db.query(Pond).filter(Pond.id.in_(confirmed_source_pond_ids)).all()
+        }
+
+    confirmed_faena_rows = []
+    for fish in confirmed_fish:
+        mov = confirmed_mov_map.get(fish.id)
+        # Solo consideramos confirmadas de faena (evita incluir mortalidades no asociadas)
+        if not mov:
+            continue
+        lot = confirmed_lots_map.get(fish.lot_id)
+        source_pond = confirmed_ponds_map.get(mov.source_pond_id) if mov.source_pond_id else None
+        dispatched_at = mov.movement_time
+        confirmed_at = fish.date_of_death
+        dispatched_local = _to_local_datetime(dispatched_at)
+        confirmed_local = _to_local_datetime(confirmed_at)
+        same_dispatch_confirmation = bool(
+            dispatched_local
+            and confirmed_local
+            and abs((confirmed_local - dispatched_local).total_seconds()) < 1
+        )
+        confirmed_faena_rows.append(
+            {
+                "fish_id": fish.id,
+                "internal_id": fish.internal_id or "N/D",
+                "lot": (lot.name or lot.internal_id) if lot else "N/D",
+                "source_pond": source_pond.name if source_pond else "N/D",
+                "dispatched_at": dispatched_at,
+                "dispatched_at_display": _format_local_datetime(dispatched_at),
+                "confirmed_at": confirmed_at,
+                "confirmed_at_display": _format_local_datetime(confirmed_at),
+                "same_dispatch_confirmation": same_dispatch_confirmation,
+            }
+        )
+
     template = jinja_env.get_template("faena.html")
     html = template.render({
         "request": request,
@@ -4044,6 +5589,18 @@ def ui_faena(request: Request, db: Session = Depends(get_db)):
         "state4_count": state4_count,
         "caviar_est_kg": caviar_est_kg,
         "lot_summary": lot_summary,
+        "latest_sanitary": latest_sanitary,
+        "sanitary_expiry": sanitary_expiry,
+        "sanitary_expiry_warning": sanitary_expiry_warning,
+        "source_pond_options": source_pond_options,
+        "decl_status": decl_status,
+        "decl_folio": decl_folio,
+        "decl_id": decl_id,
+        "decl_msg": decl_msg,
+        "latest_declarations": latest_declarations,
+        "decl_scope_selected": decl_scope_selected,
+        "jaula_scope_options": jaula_pond_scope_options,
+        "confirmed_date": confirmed_date_value,
+        "confirmed_faena_rows": confirmed_faena_rows,
     })
     return HTMLResponse(content=html)
-

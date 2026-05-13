@@ -2,7 +2,7 @@
   /* ── Sidebar layout ── */
   .app-shell   { display: flex; min-height: 100vh; }
   .sidebar {
-    width: 220px;
+    width: 72px;
     background: #1a1a2e;
     min-height: 100vh;
     position: fixed;
@@ -11,9 +11,8 @@
     flex-direction: column;
     z-index: 200;
     border-right: 1px solid rgba(255,255,255,.06);
-    transition: width .2s ease;
   }
-  .app-shell.sidebar-collapsed .sidebar { width: 72px; }
+  .app-shell:not(.sidebar-collapsed) .sidebar { width: 220px; }
   .sidebar-brand {
     padding: 18px 18px 16px;
     border-bottom: 1px solid rgba(255,255,255,.08);
@@ -124,7 +123,6 @@
     color: rgba(255,255,255,.6);
     text-decoration: none;
     font-size: .86rem;
-    transition: background .13s, color .13s;
     border-left: 3px solid transparent;
   }
   .app-shell.sidebar-collapsed .sidebar-item {
@@ -158,10 +156,14 @@
     justify-content: center;
     padding: 10px 0;
   }
-  .main-content { flex: 1; margin-left: 220px; min-width: 0; display: flex; flex-direction: column; transition: margin-left .2s ease; }
-  .app-shell.sidebar-collapsed .main-content { margin-left: 72px; }
+  .main-content { flex: 1; margin-left: 72px; min-width: 0; display: flex; flex-direction: column; }
+  .app-shell:not(.sidebar-collapsed) .main-content { margin-left: 220px; }
+  .app-shell.no-sidebar-transition .sidebar,
+  .app-shell.no-sidebar-transition .main-content {
+    transition: none !important;
+  }
   @media (max-width: 900px) {
-    .sidebar { transform: translateX(-100%); transition: transform .22s; }
+    .sidebar { transform: translateX(-100%); }
     .sidebar.open { transform: translateX(0); }
     .main-content { margin-left: 0; }
     .app-shell.sidebar-collapsed .main-content { margin-left: 0; }
@@ -195,7 +197,7 @@
 </button>
 <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
-<div class="app-shell sidebar-collapsed" id="app-shell">
+<div class="app-shell sidebar-collapsed no-sidebar-transition" id="app-shell">
 
   <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
@@ -226,16 +228,41 @@
 
       <a class="sidebar-item" href="/views/ui/lots" data-match="/views/ui/lots" aria-label="Lotes" title="Lotes">
         <svg class="s-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 6h18M3 12h18M3 18h18"/>
+          <path d="M2 12c1.5-3.5 5-6 9-6s7.5 2.5 9 6c-1.5 3.5-5 6-9 6s-7.5-2.5-9-6z"/>
+          <path d="M20 12l3-3v6l-3-3z" fill="currentColor" stroke="none"/>
+          <circle cx="9" cy="11" r="1.5" fill="currentColor" stroke="none"/>
         </svg>
         <span class="item-label">Lotes</span>
       </a>
 
       <a class="sidebar-item" href="/views/ui/faena" data-match="/views/ui/faena" aria-label="Faena" title="Faena">
-        <svg class="s-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+        <svg class="s-icon" width="16" height="16" viewBox="0 -0.5 17 17" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <path d="M4.344,5.262 C4.344,5.262 2.199,3.118 1.746,2.664 C1.292,2.211 0.803,2.696 0.221,2.113 C-0.361,1.531 0.294,0.745 0.7,0.34 C1.106,-0.065 1.725,-0.104 2.083,0.253 L5.358,3.529 C5.715,3.887 4.701,5.621 4.344,5.262 Z" transform="translate(1,0)"/>
+          <path d="M15.938,15.625 C14.726,16.837 9.588,12.389 4.315,7.115 C4.315,7.115 5.842,5.594 6.633,4.804 C6.633,4.805 16.518,15.044 15.938,15.625 Z" transform="translate(1,0)"/>
         </svg>
         <span class="item-label">Faena</span>
+      </a>
+
+      <a class="sidebar-item" href="/views/ui/feed" data-match="/views/ui/feed" aria-label="Alimentación" title="Alimentación">
+        <svg class="s-icon" width="16" height="16" viewBox="0 0 1024 1024" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <path d="M166.38686 994.64729l-13.925472-139.937337c0-12.833278 16.382908-1.433504 37.066329-1.433505 20.546897 0 37.134591-11.399773 37.134591 1.433505l-11.60456 136.455969c0 29.830545-48.670889 17.679888-48.670888 3.481368z m-59.592828-455.513099C4.878693 493.057263 13.138409 420.562896 13.138409 420.562896c-12.833278 25.598293 14.471569 248.883674 120.755683 248.883674 47.510433 0.068262 87.44377-78.842744-27.10006-130.312379z m0-157.75375C4.878693 335.440037 13.138409 262.94567 13.138409 262.94567c-12.833278 25.530031 14.471569 248.883674 120.755683 248.883675 47.510433 0 87.44377-78.842744-27.10006-130.448904z m0-153.043663C4.878693 182.60116 13.138409 109.902007 13.138409 109.902007c-12.833278 25.598293 14.471569 248.815412 120.755683 248.815412 47.510433 0 87.44377-78.637957-27.10006-130.380641z m141.30258 441.178054c106.215852 0 133.452437-223.285381 120.755683-248.883674 0 0 8.259716 72.494367-93.792147 118.571295-114.407306 51.401373-74.610493 130.312379-26.963536 130.312379z m-141.30258 31.264049C4.878693 654.701953 13.138409 582.207586 13.138409 582.207586c-12.833278 25.598293 14.471569 248.883674 120.755683 248.883675 47.510433 0 87.44377-78.842744-27.10006-130.31238z m141.30258 130.31238c106.215852 0 133.452437-223.285381 120.755683-248.883675 0 0 8.259716 72.494367-93.792147 118.571295-114.407306 51.469635-74.610493 130.312379-26.963536 130.31238z m0-319.261916c106.215852 0 133.452437-223.353643 120.755683-248.883675 0 0 8.259716 72.494367-93.792147 118.434771-114.407306 51.60616-74.610493 130.448903-26.963536 130.448904z m0-153.111926c106.215852 0 133.452437-223.217119 120.755683-248.815412 0 0 8.259716 72.630891-93.792147 118.366508-114.407306 51.810946-74.610493 130.448903-26.963536 130.448904zM198.401792 240.282648C311.102545 240.282648 192.189939 0 192.189939 0c-14.335044 22.59476-106.488901 240.282648 6.211853 240.282648zM503.055615 1013.419372l67.989067-118.980868c5.392707-11.468035-14.403306-8.327978-32.970602-16.860743-18.840344-8.737551-28.943137-26.007866-34.267582-14.335044l-46.349976 132.633291c-6.007066 12.969802 32.970602 44.438637 45.599093 17.543364z m92.222118-455.649623c-72.90394-84.713286-34.950203-146.968335-34.950203-146.968336-22.458236 17.74815-91.607759 231.886408 4.573562 276.598094 43.141657 20.069062 112.632491-34.608893 30.376641-129.629758z m66.487301-143.213919c-72.90394-84.508499-34.950203-146.763549-34.950203-146.763549-22.458236 17.74815-91.744284 231.818145 4.5053 276.666355 43.209919 20.0008 112.632491-34.540631 30.444903-129.902806z m64.5077-138.640358C653.095746 191.543497 691.32253 129.015399 691.32253 129.015399c-22.526498 17.74815-91.744284 231.749883 4.573562 276.598093 43.141657 19.932538 112.495967-34.472369 30.376642-129.69802z m-57.613226 459.745351c96.317845 44.575162 215.093927-146.285714 214.274782-174.955803 0 0-23.004333 69.286048-134.954203 67.989067-125.534031-1.365242-122.530498 86.761149-79.320579 106.966736z m-141.370842-31.400574c-73.040464-84.645024-35.086728-146.831811-35.086727-146.831811-22.389974 17.74815-91.607759 231.818145 4.641823 276.393307 43.278181 20.069062 112.564229-34.472369 30.444904-129.561496z m73.24525 177.822812c96.249583 44.779948 215.093927-146.285714 214.343044-174.887541 0 0-23.072595 69.286048-134.954203 67.989068-125.534031-1.29698-122.530498 86.897673-79.388841 106.898473z m134.544631-289.499633c96.317845 44.711686 215.093927-146.422239 214.274781-174.887541 0 0-23.004333 69.217785-134.88594 67.989067-125.602293-1.365242-122.59876 86.965936-79.388841 106.898474z m64.507699-138.913406c96.317845 44.84821 215.025665-146.14919 214.20652-174.819279 0 0-23.140857 69.490834-134.885941 67.989068-125.534031-1.29698-122.462236 86.897673-79.320579 106.830211z m4.710086-128.40104c102.188387 47.442171 95.566962-220.486634 95.566962-220.486634-22.458236 14.608093-197.687088 172.976202-95.566962 220.486634z"/>
+        </svg>
+        <span class="item-label">Alimentación</span>
+      </a>
+
+      <a class="sidebar-item" href="/views/ui/inventory" data-match="/views/ui/inventory" aria-label="Inventario" title="Inventario">
+        <svg class="s-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
+          <path d="M3.29 7 12 12l8.71-5"/><line x1="12" y1="22" x2="12" y2="12"/>
+        </svg>
+        <span class="item-label">Inventario</span>
+      </a>
+
+      <a class="sidebar-item" href="/views/ui/reports" data-match="/views/ui/reports" aria-label="Reportes" title="Reportes">
+        <svg class="s-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3v18h18"/><path d="M7 14l3-3 3 2 4-5"/>
+        </svg>
+        <span class="item-label">Reportes</span>
       </a>
 
       <div class="sidebar-section sidebar-section-system">Sistema</div>
@@ -291,12 +318,8 @@
   (function initSidebarCollapse() {
     if (!appShell || window.innerWidth <= 900) return;
     var key = 'leftSidebarCollapsed';
-    var saved = localStorage.getItem(key);
-    if (saved === null || saved === '1') {
-      appShell.classList.add('sidebar-collapsed');
-    } else {
-      appShell.classList.remove('sidebar-collapsed');
-    }
+    appShell.classList.add('sidebar-collapsed');
+    localStorage.setItem(key, '1');
     document.querySelectorAll('.sidebar-item').forEach(function(el) {
       var label = el.querySelector('.item-label');
       if (label && !el.getAttribute('title')) {
@@ -312,6 +335,10 @@
         syncSidebarToggleButton();
       });
     }
+
+    requestAnimationFrame(function() {
+      appShell.classList.remove('no-sidebar-transition');
+    });
   })();
 
   if (toggle) {

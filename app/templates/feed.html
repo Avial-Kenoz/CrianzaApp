@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alimentacion Operativa - Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+      min-height: 100vh;
+    }
+    .page-wrap {
+      padding: 14px 12px 18px;
+    }
+    .page-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .title h1 { font-size: 1.28rem; font-weight: 800; color: #111827; }
+    .title p { margin-top: 3px; font-size: .85rem; color: #6b7280; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .stat-card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 12px 14px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.05);
+    }
+    .stat-label {
+      font-size: .72rem;
+      text-transform: uppercase;
+      color: #6b7280;
+      font-weight: 700;
+      letter-spacing: .04em;
+      margin-bottom: 5px;
+    }
+    .stat-value {
+      font-size: 1.3rem;
+      font-weight: 800;
+      color: #1f2937;
+    }
+
+    .notice {
+      background: #eff6ff;
+      color: #1e3a8a;
+      border: 1px solid #bfdbfe;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: .84rem;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+
+    .modules {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 12px;
+    }
+    .module-card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.05);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 160px;
+    }
+    .module-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: .97rem;
+      font-weight: 800;
+      color: #111827;
+    }
+    .badge {
+      font-size: .7rem;
+      background: #fffbeb;
+      color: #92400e;
+      border: 1px solid #fde68a;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .module-copy {
+      font-size: .84rem;
+      color: #4b5563;
+      line-height: 1.45;
+    }
+
+    @media (max-width: 900px) {
+      .page-wrap { padding-top: 60px; }
+    }
+  </style>
+</head>
+<body>
+
+{% include '_sidebar.html' %}
+
+<div class="page-wrap">
+  <div class="page-header">
+    <div class="title">
+      <h1>Alimentacion Operativa</h1>
+      <p>Uso operativo: programas de alimentacion y confirmaciones de consumo.</p>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-label">Estanques</div>
+      <div class="stat-value">{{ '{:,}'.format(stat_ponds) }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Lotes</div>
+      <div class="stat-value">{{ '{:,}'.format(stat_lots) }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Peces activos/faena</div>
+      <div class="stat-value">{{ '{:,}'.format(stat_fish) }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Biomasa total estimada</div>
+      <div class="stat-value">{{ '{:,.1f}'.format(stat_biomass) }} kg</div>
+    </div>
+  </div>
+
+  <div class="notice">
+    Esta vista concentra la operacion diaria de alimentacion. El acceso Inventario cubre cargas y atribuciones por lote.
+  </div>
+
+  <div class="modules">
+    <section class="module-card">
+      <div class="module-title">Programacion semanal <span class="badge">Proximamente</span></div>
+      <p class="module-copy">Matriz por estanque padre y tipo de alimento para reserva de stock planificado.</p>
+    </section>
+
+    <section class="module-card">
+      <div class="module-title">Confirmacion de consumo <span class="badge">Proximamente</span></div>
+      <p class="module-copy">Confirmaciones parciales, no planificadas y asignacion por lote con prioridad por biomasa.</p>
+    </section>
+
+    <section class="module-card">
+      <div class="module-title">Cuadres e historico <span class="badge">Proximamente</span></div>
+      <p class="module-copy">Consulta de programas ejecutados y seguimiento operativo de confirmaciones.</p>
+    </section>
+  </div>
+</div>
+
+</div><!-- /.main-content -->
+</div><!-- /.app-shell -->
+</body>
+</html>

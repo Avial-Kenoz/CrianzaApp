@@ -1,20 +1,119 @@
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+import hashlib
+import hmac
+import json
+import os
+import time as pytime
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional
 from app.db.session import SessionLocal
 from app.models.fish import Fish
 from app.models.ponds_movements import PondMovement
+from app.models.ponds import Pond
+from app.models.cultivation_units import CultivationUnit
+from app.api.views import (
+    _adjust_biomass_on_movement,
+    _recalc_pond_biomass,
+    _refresh_pond_runtime_cache_many,
+)
 from app.schemas.fish import FishCreate, FishRead
 
 router = APIRouter(prefix="/fish", tags=["fish"])
+
+INTEGRATION_SHARED_SECRET = (os.getenv("INTEGRATION_SHARED_SECRET") or "kenoz-integration-dev-secret-change-me").strip()
+INTEGRATION_ALLOWED_KEYS = {
+    key.strip().lower()
+    for key in (os.getenv("INTEGRATION_ALLOWED_KEYS_CRIANZA") or "plantaapp").split(",")
+    if key.strip()
+}
+INTEGRATION_ALLOWED_SKEW_SECONDS = max(30, int(os.getenv("INTEGRATION_ALLOWED_SKEW_SECONDS") or "300"))
+INTEGRATION_NONCE_TTL_SECONDS = int(os.getenv("INTEGRATION_NONCE_TTL_SECONDS") or "600")
+INTEGRATION_MAX_BODY_BYTES = int(os.getenv("INTEGRATION_MAX_BODY_BYTES") or "2000000")
+INTEGRATION_USED_NONCES: dict[str, int] = {}
 
 
 def _normalize_pit_tag(value: Optional[str]) -> str:
     if value is None:
         return ""
     return str(value).strip().upper()
+
+
+def _integration_cleanup_used_nonces(now_ts: int):
+    expired = [nonce for nonce, exp in INTEGRATION_USED_NONCES.items() if exp < now_ts]
+    for nonce in expired:
+        INTEGRATION_USED_NONCES.pop(nonce, None)
+
+
+def _latest_pond_for_fish(fish_id: int, db: Session) -> Optional[int]:
+    latest_mv = (
+        db.query(PondMovement.destiny_pond_id)
+        .filter(PondMovement.fish_id == fish_id)
+        .order_by(PondMovement.movement_time.desc(), PondMovement.id.desc())
+        .first()
+    )
+    if not latest_mv or not latest_mv[0]:
+        return None
+    return int(latest_mv[0])
+
+
+def _is_jaula_pond(pond_id: Optional[int], db: Session) -> bool:
+    if not pond_id:
+        return False
+    unit_name = (
+        db.query(CultivationUnit.name)
+        .join(Pond, Pond.cultivation_unit_id == CultivationUnit.id)
+        .filter(Pond.id == pond_id)
+        .scalar()
+    )
+    return "jaula" in str(unit_name or "").strip().lower()
+
+
+def _verify_integration_request_headers(raw_body: bytes, headers) -> str:
+    if not INTEGRATION_SHARED_SECRET:
+        raise HTTPException(status_code=503, detail="Integración no disponible: secreto no configurado")
+
+    source_key = (headers.get("x-integration-key") or "").strip().lower()
+    ts_raw = (headers.get("x-integration-timestamp") or "").strip()
+    nonce = (headers.get("x-integration-nonce") or "").strip()
+    signature = (headers.get("x-integration-signature") or "").strip().lower()
+
+    if not source_key or source_key not in INTEGRATION_ALLOWED_KEYS:
+        raise HTTPException(status_code=401, detail="Integración no autorizada")
+    if not ts_raw or not nonce or not signature:
+        raise HTTPException(status_code=401, detail="Headers de integración incompletos")
+    if len(nonce) < 16:
+        raise HTTPException(status_code=401, detail="Nonce inválido")
+    if len(raw_body) > INTEGRATION_MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Payload de integración demasiado grande")
+
+    try:
+        ts_int = int(ts_raw)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Timestamp inválido")
+
+    now_ts = int(pytime.time())
+    if abs(now_ts - ts_int) > INTEGRATION_ALLOWED_SKEW_SECONDS:
+        raise HTTPException(status_code=401, detail="Timestamp fuera de ventana permitida")
+
+    _integration_cleanup_used_nonces(now_ts)
+    existing_expiry = INTEGRATION_USED_NONCES.get(nonce)
+    if existing_expiry and existing_expiry >= now_ts:
+        raise HTTPException(status_code=409, detail="Nonce reutilizado")
+
+    signed_message = f"{ts_raw}.{nonce}.".encode("utf-8") + raw_body
+    expected_signature = hmac.new(
+        INTEGRATION_SHARED_SECRET.encode("utf-8"),
+        signed_message,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected_signature, signature):
+        raise HTTPException(status_code=401, detail="Firma inválida")
+
+    INTEGRATION_USED_NONCES[nonce] = now_ts + INTEGRATION_NONCE_TTL_SECONDS
+    return source_key
 
 def get_db():
     db = SessionLocal()
@@ -97,6 +196,109 @@ def get_fish_traceability(fish_id: int, db: Session = Depends(get_db)):
 
 class ConfirmFaenaPayload(BaseModel):
     confirmed_at: Optional[datetime] = None  # si APP-FAENA envía su timestamp; si no, se usa utcnow
+
+
+@router.post("/integration/v1/confirm-faena-crotales")
+async def confirm_faena_by_crotales(request: Request, db: Session = Depends(get_db)):
+    raw_body = await request.body()
+    source_key = _verify_integration_request_headers(raw_body, request.headers)
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="JSON inválido")
+
+    crotales = payload.get("crotales") or []
+    if not isinstance(crotales, list):
+        raise HTTPException(status_code=400, detail="El campo 'crotales' debe ser una lista")
+
+    confirmed_at_raw = payload.get("confirmed_at")
+    confirmed_at = datetime.utcnow()
+    if confirmed_at_raw:
+        try:
+            confirmed_at = datetime.fromisoformat(str(confirmed_at_raw).replace("Z", "+00:00"))
+        except ValueError:
+            confirmed_at = datetime.utcnow()
+
+    normalized_crotales = sorted({_normalize_pit_tag(item) for item in crotales if _normalize_pit_tag(item)})
+
+    confirmed = []
+    already_dead = []
+    not_found = []
+    skipped_state = []
+    auto_sent_from_jaula = []
+    affected_pond_ids: set[int] = set()
+    generated_movements: list[PondMovement] = []
+
+    for crotal in normalized_crotales:
+        fish = db.query(Fish).filter(func.upper(Fish.internal_id) == crotal).order_by(Fish.id.desc()).first()
+        if not fish:
+            not_found.append(crotal)
+            continue
+
+        source_pond_id = _latest_pond_for_fish(fish.id, db)
+        if source_pond_id:
+            affected_pond_ids.add(int(source_pond_id))
+
+        if fish.state == "faena":
+            fish.state = "dead"
+            fish.date_of_death = confirmed_at
+            fish.updated_at = datetime.utcnow()
+            confirmed.append(crotal)
+            continue
+
+        if fish.state == "dead":
+            already_dead.append(crotal)
+            continue
+
+        if fish.state in ("alive", "depuration"):
+            if not _is_jaula_pond(source_pond_id, db):
+                skipped_state.append({"crotal": crotal, "state": fish.state, "reason": "not_in_jaula"})
+                continue
+
+            now = datetime.utcnow()
+            movement = PondMovement(
+                source_pond_id=source_pond_id,
+                destiny_pond_id=None,
+                fish_id=fish.id,
+                lot_id=fish.lot_id,
+                fish_quantity=1,
+                movement_reason="faena",
+                movement_time=confirmed_at,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(movement)
+            generated_movements.append(movement)
+
+            fish.state = "dead"
+            fish.date_of_death = confirmed_at
+            fish.updated_at = now
+            confirmed.append(crotal)
+            auto_sent_from_jaula.append(crotal)
+            continue
+
+        skipped_state.append({"crotal": crotal, "state": fish.state})
+
+    db.flush()
+    for movement in generated_movements:
+        _adjust_biomass_on_movement(movement, db)
+    for pond_id in sorted(affected_pond_ids):
+        _recalc_pond_biomass(pond_id, db)
+    _refresh_pond_runtime_cache_many(affected_pond_ids, db)
+
+    db.commit()
+
+    return {
+        "ok": True,
+        "source_key": source_key,
+        "requested": len(normalized_crotales),
+        "confirmed": confirmed,
+        "already_dead": already_dead,
+        "not_found": not_found,
+        "skipped_state": skipped_state,
+        "auto_sent_from_jaula": auto_sent_from_jaula,
+    }
 
 
 @router.post("/{fish_id}/confirm-faena")

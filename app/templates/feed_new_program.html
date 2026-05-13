@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nuevo Programa de Alimentacion</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    header { background: #111827; color: #fff; padding: 16px 22px; display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 1.1rem; font-weight: 700; }
+    .back-link { font-size: .82rem; color: #9ca3af; text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid #374151; }
+    .back-link:hover { color: #fff; }
+    .container { padding: 14px 10px 32px; }
+    .flash { border-radius: 10px; padding: 10px 12px; font-size: .88rem; margin-bottom: 14px; font-weight: 600; }
+    .flash.ok  { color: #166534; background: #f0fdf4; border: 1px solid #86efac; }
+    .flash.error { color: #991b1b; background: #fff1f2; border: 1px solid #fca5a5; }
+    .info-bar { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 10px 14px; font-size: .86rem; color: #1e40af; margin-bottom: 14px; }
+    {% if prefill_program %}.prefill-bar { background: #f5f3ff; border: 1px solid #c4b5fd; border-radius: 10px; padding: 10px 14px; font-size: .86rem; color: #5b21b6; margin-bottom: 14px; }{% endif %}
+    .filter-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    .filter-bar label { font-size: .85rem; font-weight: 600; color: #555; }
+    .filter-bar input { padding: 7px 11px; border: 1px solid #d1d5db; border-radius: 8px; font-size: .9rem; background: #fff; outline: none; min-width: 200px; }
+    .filter-bar input:focus { border-color: #4f8ef7; }
+    .badge-total { margin-left: auto; background: #e8f0fe; color: #1967d2; font-size: .8rem; font-weight: 700; padding: 4px 12px; border-radius: 20px; }
+    .feed-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 10px; align-items: start; }
+    .table-wrap { background: #fff; border-radius: 14px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: auto; max-height: calc(100vh - 220px); min-width: 0; }
+    table { width: max-content; min-width: 100%; border-collapse: collapse; }
+    thead tr:nth-child(1) th { position: sticky; top: 0; z-index: 4; background: #1a1a2e; color: #fff; }
+    thead tr:nth-child(2) th { position: sticky; top: var(--thead-row1-h, 44px); z-index: 4; background: #eef6ff; color: #1e3a8a; }
+    th.col-sticky, td.col-sticky { position: sticky; left: 0; z-index: 2; }
+    thead tr th.col-sticky { z-index: 5; }
+    thead th { padding: 13px 16px; font-size: .78rem; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; text-align: left; white-space: nowrap; }
+    tbody tr { border-bottom: 1px solid #f0f2f5; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody td { padding: 13px 16px; font-size: .88rem; vertical-align: middle; }
+    td.col-sticky { background: #fff; position: sticky; overflow: visible; }
+    td.col-sticky:hover { z-index: 30; }
+    .pond-name { font-weight: 700; color: #1f2937; }
+    .pond-meta { font-size: .75rem; color: #6b7280; margin-top: 1px; }
+    /* Tooltip biomasa/lotes */
+    .pond-name-wrap { position: relative; display: inline-block; cursor: default; z-index: 1; }
+    .pond-name-wrap:hover { z-index: 40; }
+    .pond-name-wrap .tooltip {
+      display: none;
+      position: absolute;
+      left: 0; top: 100%;
+      z-index: 999;
+      background: #1f2937;
+      color: #f9fafb;
+      font-size: .78rem;
+      padding: 8px 12px;
+      border-radius: 8px;
+      white-space: nowrap;
+      box-shadow: 0 4px 12px rgba(0,0,0,.25);
+      min-width: 160px;
+      line-height: 1.6;
+    }
+    .pond-name-wrap:hover .tooltip { display: block; }
+    .lot-tag { display: inline-block; background: #ede9fe; color: #5b21b6; font-size: .72rem; font-weight: 600; padding: 1px 6px; border-radius: 5px; margin: 1px 2px 0 0; }
+    .z-input { width: 28px; min-width: 28px; padding: 2px 3px; border: 1px solid #d1d5db; border-radius: 6px; font-size: .76rem; text-align: center; background: #fff; appearance: textfield; -moz-appearance: textfield; }
+    .z-input::-webkit-outer-spin-button,
+    .z-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .z-input:focus { outline: none; border-color: #0f766e; box-shadow: 0 0 0 2px rgba(15,118,110,.15); }
+    .z-input.over-stock { border-color: #f97316; background: #fff7ed; }
+    .row-saved { background: #f0fdf4 !important; }
+    .row-saved td.col-sticky { background: #f0fdf4; }
+    .row-actions { white-space: nowrap; }
+    .btn { border: none; border-radius: 7px; font-size: .78rem; font-weight: 700; padding: 6px 10px; cursor: pointer; }
+    .btn-save-row { background: #0f766e; color: #fff; } .btn-save-row:hover { background: #0b5f59; }
+    .save-all-wrap { padding: 12px 14px; border-top: 1px solid #f0f2f5; display: flex; justify-content: flex-end; gap: 10px; }
+    .btn-save-all { background: #0f766e; color: #fff; border: none; border-radius: 9px; padding: 11px 22px; font-size: .92rem; font-weight: 700; cursor: pointer; }
+    .btn-save-all:hover { background: #0b5f59; }
+    .btn-cancel { background: transparent; color: #6b7280; border: 1px solid #d1d5db; border-radius: 9px; padding: 11px 18px; font-size: .88rem; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; line-height: 1; }
+    .toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 18px; border-radius: 10px; font-size: .87rem; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.18); z-index: 9999; display: none; }
+    .toast.ok { background: #f0fdf4; color: #166534; border: 1px solid #86efac; }
+    .toast.error { background: #fff1f2; color: #991b1b; border: 1px solid #fca5a5; }
+    .action-cards { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 16px; }
+    .action-card { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); border-top: 3px solid #0f766e; overflow: hidden; }
+    .action-card__head { padding: 14px 16px; font-size: .88rem; font-weight: 700; color: #0f766e; }
+    .action-card__body { padding: 0 16px 14px; display: flex; flex-direction: column; gap: 8px; }
+    .help-text { font-size: .82rem; color: #6b7280; line-height: 1.5; }
+    @media (max-width: 1100px) { .feed-layout { grid-template-columns: 1fr; } .action-cards { position: static; } }
+  </style>
+</head>
+<body>
+
+{% include '_sidebar.html' %}
+
+<header>
+  <a class="back-link" href="/views/ui/feed">← Volver</a>
+  <h1>Nuevo Programa de Alimentacion</h1>
+</header>
+
+<div class="container">
+  {% if msg %}<div class="flash {{ 'ok' if status_msg == 'ok' else 'error' }}">{{ msg }}</div>{% endif %}
+
+  {% if prefill_program %}
+  <div class="prefill-bar">📋 Reprogramando desde <strong>{{ prefill_program.program_code }}</strong> — revisa los valores antes de guardar.</div>
+  {% endif %}
+
+  <div class="info-bar">
+    El programa se nombrará automáticamente (<strong>PROG-YYYYMMDD</strong>) con vigencia de 30 días.
+    Completa los sacos planificados por estanque. Celdas en blanco o 0 no reservan stock.
+    Pasa el mouse sobre el nombre del estanque para ver biomasa y lotes activos.
+  </div>
+
+  <div class="filter-bar">
+    <label for="search-input">Buscar estanque</label>
+    <input id="search-input" type="text" placeholder="Unidad o nombre..." oninput="filterTable()" />
+    <span class="badge-total" id="visible-count">{{ pond_rows|length }} estanques</span>
+  </div>
+
+  <div class="feed-layout">
+    <div class="table-wrap">
+      <form method="post" action="/views/ui/feed/new-program" id="new-prog-form">
+        <table id="prog-table">
+          <thead>
+            <tr>
+              <th class="col-sticky">Estanque</th>
+              {% for ft in feed_types %}<th>{{ ft.name }}</th>{% endfor %}
+              <th>Total</th>
+              <th>Acciones</th>
+            </tr>
+            <tr>
+              <th class="col-sticky" style="font-weight:600;">Disponibles →</th>
+              {% for ft in feed_types %}
+              <th style="font-weight:700;color:#1e3a8a;" data-ft-id="{{ ft.id }}">{{ stock_by_feed[ft.id]["available_bags"] }} sacos</th>
+              {% endfor %}
+              <th>—</th><th>—</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in pond_rows %}
+            <tr class="pond-row"
+                data-pond-id="{{ row.pond_id }}"
+                data-name="{{ (row.cultivation_unit_name ~ ' ' ~ row.pond_name)|lower }}">
+              <td class="col-sticky">
+                <div class="pond-name-wrap">
+                  <div class="pond-name">{{ row.pond_name }}</div>
+                  <div class="pond-meta">{{ row.cultivation_unit_name }}</div>
+                  <div class="tooltip">
+                    <strong>Biomasa est.:</strong> {{ '%.1f'|format(row.biomass_estimated) }} kg<br>
+                    <strong>Lotes:</strong>
+                    {% for ln in row.lot_names %}<span class="lot-tag">{{ ln }}</span>{% endfor %}
+                    {% if not row.lot_names %}sin lotes{% endif %}
+                  </div>
+                </div>
+              </td>
+              {% for cell in row.feed_cells %}
+              <td>
+                <input class="z-input" type="text" inputmode="numeric"
+                  name="feed_{{ row.pond_id }}_{{ cell.feed_type_id }}"
+                  value="{{ cell.prefill_bags if cell.prefill_bags else '' }}"
+                  data-ft-id="{{ cell.feed_type_id }}"
+                  data-available="{{ cell.available_bags }}"
+                  oninput="validateZ(this); updateRowTotal(this); this.value = this.value.replace(/[^0-9]/g, '')" />
+              </td>
+              {% endfor %}
+              <td class="row-total">0</td>
+              <td class="row-actions">
+                <button type="button" class="btn btn-save-row" onclick="saveRowLocal({{ row.pond_id }}, this)">Guardar fila</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <div class="save-all-wrap">
+          <a class="btn-cancel" href="/views/ui/feed">Cancelar</a>
+          <button type="submit" class="btn-save-all">Guardar programa</button>
+        </div>
+      </form>
+    </div>
+
+    <aside class="action-cards">
+      <div class="action-card">
+        <div class="action-card__head">Instrucciones</div>
+        <div class="action-card__body">
+          <p class="help-text">
+            • Ingresa los sacos planificados para cada estanque y tipo de alimento.<br>
+            • Usa <strong>Guardar fila</strong> para confirmar una fila sin perder el resto.<br>
+            • Al final, <strong>Guardar programa</strong> registra todo y cierra el programa anterior si existe.<br>
+            • Celdas vacías o en 0 se guardan como 0 (sin reserva).<br>
+            • La fila muestra disponibles en stock para referencia.<br>
+            • Pasa el mouse sobre el estanque para ver biomasa y lotes.
+          </p>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  function setStickyRowOffset() {
+    const row1 = document.querySelector('thead tr:nth-child(1)');
+    if (!row1) return;
+    document.documentElement.style.setProperty('--thead-row1-h', row1.getBoundingClientRect().height + 'px');
+  }
+
+  function filterTable() {
+    const q = document.getElementById('search-input').value.toLowerCase().trim();
+    let count = 0;
+    document.querySelectorAll('#prog-table tbody tr.pond-row').forEach(r => {
+      const show = !q || (r.dataset.name || '').includes(q);
+      r.style.display = show ? '' : 'none';
+      if (show) count++;
+    });
+    document.getElementById('visible-count').textContent = count + ' estanques';
+  }
+
+  function validateZ(input) {
+    const available = parseInt(input.dataset.available || '999999');
+    const val = parseInt(input.value) || 0;
+    input.classList.toggle('over-stock', val > available);
+  }
+
+  function updateRowTotal(input) {
+    const row = input.closest('tr');
+    let total = 0;
+    row.querySelectorAll('.z-input').forEach(inp => total += parseInt(inp.value) || 0);
+    const tc = row.querySelector('.row-total');
+    if (tc) tc.textContent = total;
+  }
+
+  function showToast(msg, type = 'ok') {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'toast ' + type; t.style.display = 'block';
+    clearTimeout(t._timer); t._timer = setTimeout(() => { t.style.display = 'none'; }, 2500);
+  }
+
+  // Guarda fila en sessionStorage para feedback visual (sin POST al backend)
+  function saveRowLocal(pondId, btn) {
+    const row = document.querySelector(`tr[data-pond-id="${pondId}"]`);
+    if (!row) return;
+    let overStock = false;
+    row.querySelectorAll('.z-input').forEach(inp => { if (inp.classList.contains('over-stock')) overStock = true; });
+    if (overStock) { showToast('Hay celdas que superan el stock disponible', 'error'); return; }
+    row.classList.add('row-saved');
+    showToast('Fila guardada localmente', 'ok');
+  }
+
+  // Validar antes de submit final
+  document.getElementById('new-prog-form').addEventListener('submit', function(e) {
+    if (document.querySelector('.z-input.over-stock')) {
+      e.preventDefault();
+      showToast('Hay celdas que superan el stock disponible — corrige antes de guardar', 'error');
+    }
+  });
+
+  // Inicializar totales al cargar
+  document.addEventListener('DOMContentLoaded', () => {
+    setStickyRowOffset();
+    document.querySelectorAll('tr.pond-row').forEach(row => {
+      let total = 0;
+      row.querySelectorAll('.z-input').forEach(inp => {
+        const v = parseInt(inp.value) || 0;
+        total += v;
+        if (v > 0) validateZ(inp);
+      });
+      const tc = row.querySelector('.row-total');
+      if (tc) tc.textContent = total;
+    });
+  });
+  window.addEventListener('resize', setStickyRowOffset);
+</script>
+
+</body>
+</html>

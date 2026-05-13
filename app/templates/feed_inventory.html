@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inventario de Alimentacion - Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #111827;
+      min-height: 100vh;
+    }
+    header {
+      background: #111827;
+      color: #fff;
+      padding: 16px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 700; }
+
+    .page-wrap { padding: 12px 10px 14px; }
+
+    .flash {
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      margin-bottom: 14px;
+      font-weight: 600;
+    }
+    .flash.ok {
+      color: #166534;
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+    }
+    .flash.error {
+      color: #991b1b;
+      background: #fff1f2;
+      border: 1px solid #fca5a5;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .stat-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 18px 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    .stat-label {
+      font-size: .75rem;
+      text-transform: uppercase;
+      color: #888;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .stat-value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #1a1a2e;
+    }
+
+    .feed-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 10px;
+      align-items: start;
+      transition: grid-template-columns .2s ease;
+    }
+    .feed-layout.right-compact {
+      grid-template-columns: minmax(0, 1fr) 72px;
+    }
+
+    .table-wrap {
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.09);
+      overflow-x: auto;
+      overflow-y: auto;
+      max-height: calc(100vh - 240px);
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead { background: #1a1a2e; color: #fff; position: sticky; top: 0; z-index: 3; }
+    thead th {
+      padding: 13px 12px;
+      font-size: .78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    tbody tr { border-bottom: 1px solid #f0f2f5; transition: background .15s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f7f9ff; }
+    tbody td { padding: 10px 12px; font-size: .86rem; vertical-align: middle; }
+
+    .feed-name { font-weight: 700; color: #1f2937; }
+    .feed-meta { font-size: .76rem; color: #6b7280; margin-top: 2px; }
+
+    .stock-pill {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 74px;
+      width: fit-content;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: .78rem;
+      font-weight: 700;
+      background: #eef2ff;
+      color: #3730a3;
+    }
+
+    .comment {
+      color: #4b5563;
+      font-size: .8rem;
+      line-height: 1.35;
+      max-width: 280px;
+    }
+    .comment-empty {
+      color: #9ca3af;
+      font-size: .8rem;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 8px;
+      font-size: .78rem;
+      font-weight: 700;
+      padding: 7px 10px;
+      cursor: pointer;
+      display: inline-block;
+      text-decoration: none;
+      text-align: center;
+    }
+    .btn-primary {
+      background: #1e40af;
+      color: #fff;
+    }
+    .btn-primary:hover { background: #1e3a8a; }
+    .btn-secondary {
+      background: #0f766e;
+      color: #fff;
+    }
+    .btn-secondary:hover { background: #0b5f59; }
+
+    .action-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      position: sticky;
+      top: 16px;
+      width: 100%;
+      transition: width .2s ease;
+    }
+    .action-cards.is-compact { width: 72px; justify-self: end; }
+    .action-card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      border-top: 3px solid transparent;
+      overflow: hidden;
+    }
+    .action-card__toggle {
+      width: 100%;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      text-align: left;
+    }
+    .action-card__chevron {
+      flex-shrink: 0;
+      color: #6b7280;
+      transition: transform .18s ease;
+    }
+    .action-card__title-text { white-space: nowrap; }
+    .action-card.is-collapsed .action-card__chevron { transform: rotate(-90deg); }
+    .action-card.is-collapsed .action-card__toggle { justify-content: center; padding: 9px 8px; }
+    .action-card.is-collapsed .action-card__title { justify-content: center; }
+    .action-card.is-collapsed .action-card__title-text,
+    .action-card.is-collapsed .action-card__chevron { display: none; }
+    .action-card__body {
+      padding: 0 16px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .action-card.is-collapsed .action-card__body { display: none; }
+    .action-card--load { border-top-color: #1e40af; }
+    .action-card--helper { border-top-color: #0f766e; }
+    .action-card__title {
+      font-size: .88rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: #1a1a2e;
+    }
+    .action-card--load .action-card__title { color: #1e40af; }
+    .action-card--helper .action-card__title { color: #0f766e; }
+
+    .action-btn {
+      display: block;
+      width: 100%;
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      padding: 10px 16px;
+      font-size: .88rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+      margin-top: 4px;
+    }
+    .action-btn--load { background: #1e40af; }
+    .action-btn--load:hover { background: #1e3a8a; }
+    .action-btn--helper { background: #0f766e; }
+    .action-btn--helper:hover { background: #0b5f59; }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, .45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 1100;
+    }
+    .modal-backdrop.is-open { display: flex; }
+    .modal {
+      width: min(100%, 520px);
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 20px 40px rgba(15, 23, 42, .25);
+      overflow: hidden;
+    }
+    .modal__header {
+      padding: 16px 18px;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .modal__title { font-size: 1rem; font-weight: 800; color: #111827; }
+    .modal__body { padding: 16px 18px; display: grid; gap: 12px; }
+    .modal__actions {
+      padding: 14px 18px 18px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .field { display: grid; gap: 6px; }
+    .field label { font-size: .82rem; font-weight: 700; color: #374151; }
+    .field input, .field textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: .9rem;
+      font-family: inherit;
+    }
+    .field textarea { min-height: 92px; resize: vertical; }
+    .field-readonly {
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      color: #111827;
+      font-size: .9rem;
+      font-weight: 600;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 56px 20px;
+      color: #aaa;
+      font-size: .95rem;
+    }
+
+    @media (max-width: 1100px) {
+      .feed-layout { grid-template-columns: 1fr; }
+      .action-cards { position: static; }
+    }
+  </style>
+</head>
+<body>
+
+{% include '_sidebar.html' %}
+
+<header>
+  <h1>Inventario de Alimento</h1>
+</header>
+
+<div class="page-wrap">
+  {% if success %}
+  <div class="flash ok">{{ success }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-label">Sacos Totales</div>
+      <div class="stat-value">{{ total_bags }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Disponibles</div>
+      <div class="stat-value">{{ total_available }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Programados</div>
+      <div class="stat-value">{{ total_planned }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Ejecutados</div>
+      <div class="stat-value">{{ total_executed }}</div>
+    </div>
+  </div>
+
+  <div class="feed-layout right-compact" id="feed-layout">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Alimento</th>
+            <th>Sacos Totales</th>
+            <th>Disponibles</th>
+            <th>Programados</th>
+            <th>Ejecutados</th>
+            <th>Observacion</th>
+            <th>Accion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if inventory_rows %}
+            {% for row in inventory_rows %}
+            <tr>
+              <td>
+                <div class="feed-name">{{ row.feed_name }}</div>
+                <div class="feed-meta">tipo activo en bodega</div>
+              </td>
+              <td><span class="stock-pill">{{ row.total_bags }} sacos</span></td>
+              <td><span class="stock-pill">{{ row.available_bags }} sacos</span></td>
+              <td>{{ row.planned_bags }}</td>
+              <td>{{ row.executed_bags }}</td>
+              <td>
+                {% if row.latest_comment %}
+                <div class="comment">{{ row.latest_comment }}</div>
+                {% if row.latest_adjustment_at %}
+                <div class="feed-meta">{{ row.latest_adjustment_at.strftime('%d-%m-%Y %H:%M') }}</div>
+                {% endif %}
+                {% else %}
+                <span class="comment-empty">sin observaciones recientes</span>
+                {% endif %}
+              </td>
+              <td>
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  data-feed-id="{{ row.feed_type_id }}"
+                  data-feed-name="{{ row.feed_name }}"
+                  data-calculated="{{ row.available_bags }}"
+                  onclick="openAdjustModal(this)"
+                >Editar disponible</button>
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+          <tr><td colspan="7" class="empty">No hay tipos de alimento activos para mostrar.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <aside class="action-cards is-compact">
+      <div class="action-card action-card--load is-collapsed">
+        <button type="button" class="action-card__toggle" aria-expanded="false" title="Carga inventario" onclick="toggleActionCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span class="action-card__title-text">Carga Inventario</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          <p style="font-size: .82rem; color: #6b7280;">Registrar una guía nueva y aumentar el stock disponible en bodega.</p>
+          <a class="action-btn action-btn--load" href="/views/ui/inventory/load-new">Ir a carga</a>
+        </div>
+      </div>
+
+      <div class="action-card action-card--helper is-collapsed">
+        <button type="button" class="action-card__toggle" aria-expanded="false" title="Alimentacion" onclick="toggleActionCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/></svg>
+            <span class="action-card__title-text">Alimentacion</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          <p style="font-size: .82rem; color: #6b7280;">Volver a la matriz por estanque para programar y preparar confirmaciones.</p>
+          <a class="action-btn action-btn--helper" href="/views/ui/feed">Ir a alimentacion</a>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="adjust-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="adjust-modal-title">
+    <div class="modal__header">
+      <div class="modal__title" id="adjust-modal-title">Ajustar inventario</div>
+      <button type="button" class="btn" onclick="closeAdjustModal()">Cerrar</button>
+    </div>
+    <div class="modal__body">
+      <div class="field">
+        <label>Alimento</label>
+        <div class="field-readonly" id="adjust-feed-name">—</div>
+      </div>
+      <div class="field">
+        <label>Stock calculado</label>
+        <div class="field-readonly" id="adjust-calculated-readonly">0 sacos</div>
+      </div>
+      <div class="field">
+        <label for="adjust-stock-real">Stock real</label>
+        <input id="adjust-stock-real" type="number" min="0" step="1" value="0" />
+      </div>
+      <div class="field">
+        <label>Diferencia</label>
+        <div class="field-readonly" id="adjust-difference-readonly">0 sacos</div>
+      </div>
+      <div class="field">
+        <label for="adjust-comment">Comentario</label>
+        <textarea id="adjust-comment" placeholder="Motivo del ajuste"></textarea>
+      </div>
+    </div>
+    <div class="modal__actions">
+      <button type="button" class="btn" onclick="closeAdjustModal()">Cancelar</button>
+      <button type="button" class="btn btn-secondary" onclick="saveAdjustment()">Guardar ajuste</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const adjustState = {
+    feedTypeId: null,
+    stockCalculated: 0,
+  };
+
+  function toggleActionCard(button) {
+    const card = button && button.closest('.action-card');
+    if (!card) return;
+    const isCollapsed = card.classList.toggle('is-collapsed');
+    button.setAttribute('aria-expanded', String(!isCollapsed));
+    updateSidebarCompact();
+  }
+
+  function updateSidebarCompact() {
+    const aside = document.querySelector('.action-cards');
+    const layout = document.getElementById('feed-layout');
+    if (!aside || !layout) return;
+    if (window.innerWidth <= 1100) {
+      aside.classList.remove('is-compact');
+      layout.classList.remove('right-compact');
+      return;
+    }
+    const hasExpanded = aside.querySelector('.action-card:not(.is-collapsed)') !== null;
+    aside.classList.toggle('is-compact', !hasExpanded);
+    layout.classList.toggle('right-compact', !hasExpanded);
+  }
+
+  function openAdjustModal(button) {
+    adjustState.feedTypeId = Number(button.dataset.feedId);
+    adjustState.stockCalculated = Number(button.dataset.calculated || 0);
+    document.getElementById('adjust-feed-name').textContent = button.dataset.feedName || '—';
+    document.getElementById('adjust-calculated-readonly').textContent = adjustState.stockCalculated + ' sacos';
+    document.getElementById('adjust-stock-real').value = adjustState.stockCalculated;
+    document.getElementById('adjust-comment').value = '';
+    updateDifference();
+    document.getElementById('adjust-modal').classList.add('is-open');
+  }
+
+  function closeAdjustModal() {
+    document.getElementById('adjust-modal').classList.remove('is-open');
+  }
+
+  function updateDifference() {
+    const stockReal = Number(document.getElementById('adjust-stock-real').value || 0);
+    const diff = stockReal - adjustState.stockCalculated;
+    document.getElementById('adjust-difference-readonly').textContent = diff + ' sacos';
+  }
+
+  async function saveAdjustment() {
+    const stockReal = Number(document.getElementById('adjust-stock-real').value || 0);
+    const difference = stockReal - adjustState.stockCalculated;
+    const comment = document.getElementById('adjust-comment').value.trim();
+
+    const response = await fetch('/views/ui/inventory/adjustment-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        feed_type_id: adjustState.feedTypeId,
+        stock_calculated_bags: adjustState.stockCalculated,
+        stock_real_bags: stockReal,
+        difference_bags: difference,
+        comment,
+      }),
+    });
+
+    const result = await response.json();
+    if (!response.ok || !result.success) {
+      alert(result.error || 'No se pudo guardar el ajuste');
+      return;
+    }
+
+    window.location.reload();
+  }
+
+  document.getElementById('adjust-stock-real').addEventListener('input', updateDifference);
+  document.getElementById('adjust-modal').addEventListener('click', (event) => {
+    if (event.target.id === 'adjust-modal') {
+      closeAdjustModal();
+    }
+  });
+  window.addEventListener('DOMContentLoaded', updateSidebarCompact);
+  window.addEventListener('resize', updateSidebarCompact);
+</script>
+</body>
+</html>

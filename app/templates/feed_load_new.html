@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ingresar Alimento - Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+      min-height: 100vh;
+    }
+    .page-wrap { padding: 14px 12px 18px; max-width: 900px; margin: 0 auto; }
+    .title { margin-bottom: 16px; }
+    .title h1 { font-size: 1.28rem; font-weight: 800; color: #111827; }
+    .title p { margin-top: 3px; font-size: .85rem; color: #6b7280; }
+
+    .form-container {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.05);
+    }
+
+    .form-section { margin-bottom: 20px; }
+    .form-section-title {
+      font-size: .85rem;
+      text-transform: uppercase;
+      color: #6b7280;
+      font-weight: 700;
+      letter-spacing: .04em;
+      margin-bottom: 12px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .form-group label {
+      font-size: .84rem;
+      font-weight: 700;
+      color: #374151;
+    }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      padding: 8px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: .9rem;
+      font-family: inherit;
+    }
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    .form-group.required label::after {
+      content: " *";
+      color: #dc2626;
+    }
+
+    .error-text {
+      font-size: .8rem;
+      color: #dc2626;
+      display: none;
+    }
+    .form-group.error .error-text {
+      display: block;
+    }
+    .form-group.error input,
+    .form-group.error select {
+      border-color: #dc2626;
+    }
+
+    .lines-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 14px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .lines-table thead {
+      background: #f3f4f6;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .lines-table th {
+      padding: 10px;
+      text-align: left;
+      font-size: .8rem;
+      font-weight: 700;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: .02em;
+    }
+    .lines-table td {
+      padding: 10px;
+      border-bottom: 1px solid #e5e7eb;
+      font-size: .9rem;
+    }
+    .lines-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+    .lines-table input,
+    .lines-table select {
+      width: 100%;
+      padding: 6px 8px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      font-size: .85rem;
+    }
+    .lines-table input:focus,
+    .lines-table select:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+    }
+
+    .btn {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .15s ease;
+    }
+    .btn-primary {
+      background: #3b82f6;
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #2563eb;
+    }
+    .btn-secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    .btn-secondary:hover:not(:disabled) {
+      background: #d1d5db;
+    }
+    .btn-danger {
+      background: #ef4444;
+      color: #fff;
+      padding: 6px 10px;
+      font-size: .85rem;
+    }
+    .btn-danger:hover:not(:disabled) {
+      background: #dc2626;
+    }
+    .btn:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+
+    .add-line-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .alert {
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin-bottom: 14px;
+      font-size: .9rem;
+    }
+    .alert-error {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+    .alert-success {
+      background: #dcfce7;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+    }
+
+    @media (max-width: 768px) {
+      .page-wrap { padding-top: 60px; }
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+      .lines-table {
+        font-size: .8rem;
+      }
+      .lines-table th,
+      .lines-table td {
+        padding: 8px 6px;
+      }
+    }
+  </style>
+</head>
+<body>
+  {% include '_sidebar.html' %}
+
+  <div class="page-wrap">
+    <div class="title">
+      <h1>Ingresar Alimento</h1>
+      <p>Registra una nueva guía de despacho con productos y cantidades</p>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-error">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <form id="feedForm" class="form-container">
+      <!-- Seccion: Cabecera -->
+      <div class="form-section">
+        <div class="form-section-title">Información de Guía</div>
+        <div class="form-row">
+          <div class="form-group required">
+            <label for="guia">Guía de Despacho</label>
+            <input type="text" id="guia" name="guia_despacho" placeholder="Ej: DES-2026-05-001" value="{{ request.query_params.get('guia_despacho', '') }}" required />
+            <span class="error-text">Guía de despacho es requerida y debe ser única</span>
+          </div>
+          <div class="form-group required">
+            <label for="fecha">Fecha de Ingreso</label>
+            <input type="date" id="fecha" name="fecha_ingreso" value="{{ request.query_params.get('fecha_ingreso', '') }}" required />
+            <span class="error-text">Fecha de ingreso es requerida</span>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="proveedor">Proveedor (Opcional)</label>
+            <input type="text" id="proveedor" name="supplier_name" placeholder="Ej: Alimentos Global S.A." value="{{ request.query_params.get('supplier_name', '') }}" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Seccion: Lineas de Productos -->
+      <div class="form-section">
+        <div class="form-section-title">Productos</div>
+        <div class="add-line-btn">
+          <button type="button" id="addLineBtn" class="btn btn-secondary">+ Agregar Producto</button>
+        </div>
+
+        <table class="lines-table" id="linesTable">
+          <thead>
+            <tr>
+              <th>Tipo de Alimento</th>
+              <th>Cantidad (kg)</th>
+              <th>Peso Saco</th>
+              <th>Sacos</th>
+              <th>Acción</th>
+            </tr>
+          </thead>
+          <tbody id="linesBody">
+            <!-- Las filas se agregan dinamicamente -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Botones de Accion -->
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" onclick="history.back()">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Guardar Ingreso</button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    // Variables globales
+    const feedTypes = {{ feed_types_json | safe }};
+    let lineCount = 0;
+
+    // Inicializar tabla con una fila vacía
+    document.addEventListener('DOMContentLoaded', function() {
+      addLine();
+      setupEventListeners();
+    });
+
+    // Agregar una nueva linea de producto
+    function addLine() {
+      lineCount++;
+      const tbody = document.getElementById('linesBody');
+      const row = document.createElement('tr');
+      row.id = `line-${lineCount}`;
+      row.innerHTML = `
+        <td>
+          <select name="feed_type_id" class="feed-type-select" data-line="${lineCount}" onchange="onFeedTypeChange(this)">
+            <option value="">-- Seleccionar --</option>
+            ${feedTypes.map(ft => `<option value="${ft.id}">${ft.name}</option>`).join('')}
+          </select>
+        </td>
+        <td>
+          <input type="number" name="quantity_kg" class="quantity-kg" data-line="${lineCount}" step="0.001" min="0" placeholder="0" onchange="calculateBags(this)" />
+        </td>
+        <td>
+          <select name="bag_weight_kg" class="bag-weight-select" data-line="${lineCount}" onchange="calculateBags(this)">
+            <option value="">--</option>
+            <option value="20">20 kg</option>
+            <option value="25">25 kg</option>
+          </select>
+        </td>
+        <td>
+          <input type="number" name="quantity_bags" class="quantity-bags" data-line="${lineCount}" readonly placeholder="0" />
+        </td>
+        <td>
+          <button type="button" class="btn btn-danger" onclick="removeLine('line-${lineCount}')">✕</button>
+        </td>
+      `;
+      tbody.appendChild(row);
+    }
+
+    // Remover una linea
+    function removeLine(lineId) {
+      const row = document.getElementById(lineId);
+      if (row) {
+        row.remove();
+      }
+      // Si queda vacia la tabla, agregar una linea nueva
+      if (document.getElementById('linesBody').children.length === 0) {
+        addLine();
+      }
+    }
+
+    // Calcular sacos basado en cantidad_kg y peso_saco
+    function calculateBags(input) {
+      const line = input.closest('tr');
+      const quantityKg = parseFloat(line.querySelector('.quantity-kg').value) || 0;
+      const bagWeight = parseInt(line.querySelector('.bag-weight-select').value) || 0;
+      
+      if (quantityKg > 0 && bagWeight > 0) {
+        const bags = Math.round(quantityKg / bagWeight);
+        line.querySelector('.quantity-bags').value = bags;
+      } else {
+        line.querySelector('.quantity-bags').value = '';
+      }
+    }
+
+    // Validar cambio de tipo de alimento
+    function onFeedTypeChange(select) {
+      // Aqui se puede agregar validacion adicional si es necesaria
+    }
+
+    // Setup de event listeners
+    function setupEventListeners() {
+      document.getElementById('addLineBtn').addEventListener('click', addLine);
+      document.getElementById('feedForm').addEventListener('submit', handleFormSubmit);
+    }
+
+    // Manejar envio del formulario
+    async function handleFormSubmit(e) {
+      e.preventDefault();
+
+      // Validar campos cabecera
+      const guia = document.getElementById('guia').value.trim();
+      const fecha = document.getElementById('fecha').value;
+
+      if (!guia) {
+        alert('Guía de despacho es requerida');
+        return;
+      }
+      if (!fecha) {
+        alert('Fecha de ingreso es requerida');
+        return;
+      }
+
+      // Recolectar lineas
+      const lines = [];
+      document.querySelectorAll('#linesBody tr').forEach(row => {
+        const feedTypeId = row.querySelector('[name="feed_type_id"]').value;
+        const quantityKg = row.querySelector('[name="quantity_kg"]').value;
+        const bagWeight = row.querySelector('[name="bag_weight_kg"]').value;
+
+        if (feedTypeId && quantityKg && bagWeight) {
+          lines.push({
+            feed_type_id: parseInt(feedTypeId),
+            quantity_kg: parseFloat(quantityKg),
+            bag_weight_kg: parseInt(bagWeight),
+            quantity_bags: parseInt(row.querySelector('[name="quantity_bags"]').value || 0)
+          });
+        }
+      });
+
+      if (lines.length === 0) {
+        alert('Debes agregar al menos una línea de producto');
+        return;
+      }
+
+      // Validaciones finales
+      for (let line of lines) {
+        if (line.quantity_kg % line.bag_weight_kg !== 0) {
+          alert(`La cantidad ${line.quantity_kg} kg debe ser múltiplo de ${line.bag_weight_kg} kg por saco`);
+          return;
+        }
+      }
+
+      // Enviar formulario
+      const payload = {
+        guia_despacho: guia,
+        fecha_ingreso: fecha,
+        supplier_name: document.querySelector('[name="supplier_name"]').value || null,
+        lines: lines
+      };
+
+      try {
+        const response = await fetch('/views/ui/inventory/load-save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (result.success) {
+          alert('Alimento ingresado exitosamente');
+          window.location.href = '/views/ui/inventory';
+        } else {
+          alert('Error: ' + (result.error || 'No se pudo guardar el ingreso'));
+        }
+      } catch (err) {
+        console.error('Error:', err);
+        alert('Error al enviar el formulario');
+      }
+    }
+  </script>
+</body>
+</html>

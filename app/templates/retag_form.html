@@ -162,6 +162,17 @@
       </div>
 
       <div class="form-group">
+        <label for="female_destination_pond_id">Mover hembras a (opcional)</label>
+        <select id="female_destination_pond_id" name="female_destination_pond_id">
+          <option value="">Mantener en {{ pond.name }}</option>
+          {% for option in female_destination_options %}
+          <option value="{{ option.id }}">{{ option.name }}</option>
+          {% endfor %}
+        </select>
+        <p class="hint">Si el sexo es Hembra, al confirmar se moverá automáticamente al estanque seleccionado.</p>
+      </div>
+
+      <div class="form-group">
         <label for="weight">Peso actual (g) — opcional</label>
         <input type="number" id="weight" name="weight"
                step="0.1" min="0" placeholder="Ej: 3500" />

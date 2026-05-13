@@ -18,3 +18,17 @@ from .transports import Transport
 from .fish_traceability_events import FishTraceabilityEvent
 from .tag_detachment_events import TagDetachmentEvent
 from .fish_drug_uses import FishDrugUse
+from .sanitary_reports import SanitaryReport
+from .cultivation_declarations import CultivationDeclaration
+from .cultivation_declaration_items import CultivationDeclarationItem
+from .feed import (
+    FeedType,
+    FeedReceiptHeader,
+    FeedReceiptLine,
+    FeedInventoryAdjustment,
+    FeedStockLedger,
+    FeedProgram,
+    FeedProgramLine,
+    FeedExecutionLotAllocations,
+    AccountingOutboxEvent,
+)

@@ -49,17 +49,42 @@
 
     /* ── Pending tasks banner ── */
     .pending-banner {
-      background: #fffbeb;
-      border: 1px solid #fde68a;
       border-radius: 10px;
-      padding: 9px 14px;
+      padding: 10px 14px;
       font-size: .84rem;
-      color: #92400e;
       font-weight: 600;
       margin-bottom: 10px;
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 8px;
+      flex-wrap: wrap;
+    }
+    .pending-banner.warning {
+      background: #fffbeb; border: 1px solid #fcd34d; color: #92400e;
+    }
+    .pending-banner.ok {
+      background: #f0fdf4; border: 1px solid #86efac; color: #166534;
+    }
+    .pending-banner.no-report {
+      background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b;
+    }
+    .pending-banner a, .pending-banner button.add-report-toggle {
+      text-decoration: none;
+      background: #f59e0b;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: .8rem;
+      font-weight: 700;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .pending-banner.ok a, .pending-banner.ok button.add-report-toggle {
+      background: #16a34a;
+    }
+    .pending-banner.no-report a, .pending-banner.no-report button.add-report-toggle {
+      background: #dc2626;
     }
 
     /* ── Lot summary ── */
@@ -168,6 +193,148 @@
       font-size: .95rem;
     }
     .empty-state strong { display: block; font-size: 1.1rem; color: #374151; margin-bottom: 6px; }
+
+    .decl-panel {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+    }
+    .decl-title { font-size: .92rem; font-weight: 700; color: #111827; margin-bottom: 8px; }
+    .decl-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .decl-form label { display: flex; flex-direction: column; gap: 4px; font-size: .8rem; color: #374151; font-weight: 600; }
+    .decl-form input, .decl-form select {
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: .84rem;
+      min-width: 150px;
+      background: #fff;
+    }
+    .decl-form button {
+      background: #0f766e;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: .84rem;
+      font-weight: 700;
+      cursor: pointer;
+      height: 36px;
+    }
+    .decl-status {
+      margin-bottom: 10px;
+      border-radius: 10px;
+      padding: 9px 12px;
+      font-size: .83rem;
+      font-weight: 600;
+    }
+    .decl-status.ok { background: #ecfeff; border: 1px solid #67e8f9; color: #155e75; }
+    .decl-status.confirmed { background: #ecfdf5; border: 1px solid #86efac; color: #166534; }
+    .decl-status.error { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; }
+    .decl-links { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .decl-links a {
+      font-size: .8rem;
+      color: #1d4ed8;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .decl-links a:hover { text-decoration: underline; }
+    .decl-table-wrap { margin-top: 10px; overflow: auto; }
+    .decl-table { width: 100%; border-collapse: collapse; }
+    .decl-table th, .decl-table td { border-bottom: 1px solid #eef2f7; padding: 8px 6px; font-size: .8rem; }
+    .decl-table th { color: #6b7280; text-transform: uppercase; letter-spacing: .03em; font-size: .72rem; }
+    .decl-inline-form { display: inline-flex; }
+    .decl-inline-form button {
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: #fff;
+      font-size: .76rem;
+      font-weight: 700;
+      color: #374151;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+    .confirmed-faena-panel {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-top: 12px;
+    }
+    .confirmed-faena-title {
+      font-size: .92rem;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 8px;
+    }
+    .confirmed-faena-filter {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: flex-end;
+      margin-bottom: 10px;
+    }
+    .confirmed-faena-filter label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: .8rem;
+      color: #374151;
+      font-weight: 600;
+    }
+    .confirmed-faena-filter input {
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: .84rem;
+      background: #fff;
+      min-width: 150px;
+    }
+    .confirmed-faena-filter button {
+      background: #1f2937;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: .84rem;
+      font-weight: 700;
+      cursor: pointer;
+      height: 36px;
+    }
+    .confirmed-faena-meta {
+      font-size: .8rem;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+    .confirmed-faena-table-wrap {
+      overflow: auto;
+      border: 1px solid #eef2f7;
+      border-radius: 10px;
+    }
+    .confirmed-faena-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .confirmed-faena-table th,
+    .confirmed-faena-table td {
+      border-bottom: 1px solid #eef2f7;
+      padding: 8px 7px;
+      font-size: .8rem;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .confirmed-faena-table th {
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+      font-size: .72rem;
+      background: #f9fafb;
+    }
+    .confirmed-faena-table tbody tr:last-child td {
+      border-bottom: none;
+    }
   </style>
 </head>
 <body>
@@ -184,6 +351,122 @@
     </div>
 
     <!-- Stats -->
+    <!-- Banner informe sanitario del centro -->
+    {% if not latest_sanitary %}
+    <div class="pending-banner no-report">
+      <span>⚠ Sin informe de control sanitario registrado para el centro.</span>
+      <button class="add-report-toggle" onclick="document.getElementById('add-sanitary-form').style.display=document.getElementById('add-sanitary-form').style.display==='none'?'flex':'none'">+ Agregar informe</button>
+    </div>
+    {% elif sanitary_expiry_warning %}
+    <div class="pending-banner warning">
+      <span>⚠ Informe sanitario <strong>{{ latest_sanitary.report_number }}</strong> vence el {{ sanitary_expiry.strftime('%d/%m/%Y') }} — menos de 2 meses.</span>
+      <button class="add-report-toggle" onclick="document.getElementById('add-sanitary-form').style.display=document.getElementById('add-sanitary-form').style.display==='none'?'flex':'none'">+ Nuevo informe</button>
+    </div>
+    {% else %}
+    <div class="pending-banner ok">
+      <span>✓ Informe sanitario <strong>{{ latest_sanitary.report_number }}</strong> · {{ latest_sanitary.laboratory }} · Vence {{ sanitary_expiry.strftime('%d/%m/%Y') }}</span>
+      <button class="add-report-toggle" onclick="document.getElementById('add-sanitary-form').style.display=document.getElementById('add-sanitary-form').style.display==='none'?'flex':'none'">Actualizar</button>
+    </div>
+    {% endif %}
+    <form id="add-sanitary-form" method="post" action="/views/ui/sanitary-report" style="display:none;flex-wrap:wrap;gap:10px;align-items:flex-end;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin-bottom:10px">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:.82rem;font-weight:600;color:#374151">
+        N° Informe
+        <input name="report_number" required placeholder="Ej: LAB-2026-001" style="border:1px solid #d1d5db;border-radius:7px;padding:7px 10px;font-size:.86rem;min-width:150px" />
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:.82rem;font-weight:600;color:#374151">
+        Laboratorio
+        <input name="laboratory" required placeholder="Nombre del laboratorio" style="border:1px solid #d1d5db;border-radius:7px;padding:7px 10px;font-size:.86rem;min-width:190px" />
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:.82rem;font-weight:600;color:#374151">
+        Fecha
+        <input name="report_date" type="date" required style="border:1px solid #d1d5db;border-radius:7px;padding:7px 10px;font-size:.86rem" />
+      </label>
+      <button type="submit" style="background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:.86rem;font-weight:600;cursor:pointer;height:36px">Guardar</button>
+    </form>
+
+    {% if decl_status %}
+    <div class="decl-status {{ 'ok' if decl_status == 'ok' else ('confirmed' if decl_status == 'confirmed' else 'error') }}">
+      {% if decl_status == 'ok' %}
+        Declaración de cultivo generada correctamente.
+        {% if decl_msg %}<br />{{ decl_msg }}{% endif %}
+      {% elif decl_status == 'confirmed' %}
+        Declaración confirmada por APP-FAENA.
+      {% else %}
+        Error al generar la declaración. {{ decl_msg or '' }}
+      {% endif %}
+      {% if decl_id %}
+      <div class="decl-links">
+          <a href="/views/ui/cultivation-declarations/{{ decl_id }}" target="_blank">Ver tabla</a>
+        <a href="/views/ui/cultivation-declarations/{{ decl_id }}/json" target="_blank">Ver JSON</a>
+        {% if decl_folio %}<span>Folio: {{ decl_folio }}</span>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="decl-panel">
+        <div class="decl-title">Declaración de Cultivo (unidad Jaula)</div>
+      <form class="decl-form" method="post" action="/views/ui/faena/declarations">
+          <label>Alcance
+            <select name="scope" required>
+              <option value="unit" {% if decl_scope_selected == 'unit' %}selected{% endif %}>Toda la Jaula</option>
+              {% for pond in jaula_scope_options %}
+              <option value="pond:{{ pond.id }}" {% if decl_scope_selected == ('pond:' ~ pond.id) %}selected{% endif %}>{{ pond.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        <label>Encargado cultivo
+          <input name="manager_name" required placeholder="Nombre y apellido" />
+        </label>
+        <label>RUT
+          <input name="manager_rut" required placeholder="12.345.678-9" />
+        </label>
+        <label>Teléfono
+          <input name="manager_phone" required placeholder="+56 9 ..." />
+        </label>
+        <label>Fecha declaración
+          <input id="decl-date" name="declaration_date" type="date" required />
+        </label>
+          <label>Rango (días)
+            <input name="window_days" type="number" min="1" value="3" required style="max-width:110px" />
+        </label>
+        <button type="submit">Generar folio</button>
+      </form>
+
+      {% if latest_declarations %}
+      <div class="decl-table-wrap">
+        <table class="decl-table">
+          <thead>
+            <tr>
+              <th>Folio</th>
+              <th>Fecha</th>
+              <th>Estado</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for d in latest_declarations %}
+            <tr>
+              <td>{{ d.folio }}</td>
+              <td>{{ d.declaration_date.strftime('%d/%m/%Y') if d.declaration_date else '—' }}</td>
+              <td>{{ d.status }}</td>
+              <td>
+                  <a href="/views/ui/cultivation-declarations/{{ d.id }}" target="_blank">Tabla</a>
+                <a href="/views/ui/cultivation-declarations/{{ d.id }}/json" target="_blank">JSON</a>
+                {% if d.status != 'confirmed' %}
+                <form class="decl-inline-form" method="post" action="/views/ui/cultivation-declarations/{{ d.id }}/confirm">
+                  <button type="submit">Confirmar</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+
     <div class="stats">
       <div class="card">
         <div class="label">N° Peces en faena</div>
@@ -296,8 +579,8 @@
             </td>
             <td>{{ row.source_pond }}</td>
             <td>
-              {% if row.dispatched_at %}
-                {{ row.dispatched_at.strftime('%d/%m/%Y %H:%M') }}
+              {% if row.dispatched_at_display %}
+                {{ row.dispatched_at_display }}
               {% else %}
                 <span class="nd">—</span>
               {% endif %}
@@ -319,12 +602,84 @@
     </div>
     {% endif %}
 
+    <div class="confirmed-faena-panel">
+      <div class="confirmed-faena-title">Faenas Confirmadas por Fecha</div>
+      <form class="confirmed-faena-filter" method="get" action="/views/ui/faena">
+        <label>
+          Fecha
+          <input type="date" name="confirmed_date" value="{{ confirmed_date }}" required />
+        </label>
+        <button type="submit">Ver confirmadas</button>
+      </form>
+
+      <div class="confirmed-faena-meta">
+        {{ confirmed_faena_rows|length }} confirmada(s) para {{ confirmed_date }}
+      </div>
+
+      <div class="confirmed-faena-table-wrap">
+        <table class="confirmed-faena-table">
+          <thead>
+            <tr>
+              <th>PIT tag</th>
+              <th>Lote</th>
+              <th>Estanque origen</th>
+              <th>Fecha despacho</th>
+              <th>Fecha confirmación</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if confirmed_faena_rows %}
+              {% for row in confirmed_faena_rows %}
+              <tr>
+                <td>
+                  <a class="pit-link" href="/views/ui/fish/{{ row.fish_id }}" title="Ver historial del pez">{{ row.internal_id }}</a>
+                </td>
+                <td>{{ row.lot }}</td>
+                <td>{{ row.source_pond }}</td>
+                <td>
+                  {% if row.dispatched_at_display %}
+                    {{ row.dispatched_at_display }}
+                  {% else %}
+                    <span class="nd">—</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if row.same_dispatch_confirmation %}
+                    <span class="nd">Igual al despacho</span>
+                  {% elif row.confirmed_at_display %}
+                    {{ row.confirmed_at_display }}
+                  {% else %}
+                    <span class="nd">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td colspan="5" class="nd">No hay faenas confirmadas para la fecha seleccionada.</td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
   </div>
 
 </div><!-- /.main-content (from _sidebar.html) -->
 </div><!-- /.app-shell (from _sidebar.html) -->
 
 <script>
+  (function() {
+    var dateInput = document.getElementById('decl-date');
+    if (dateInput && !dateInput.value) {
+      var d = new Date();
+      var m = String(d.getMonth() + 1).padStart(2, '0');
+      var day = String(d.getDate()).padStart(2, '0');
+      dateInput.value = d.getFullYear() + '-' + m + '-' + day;
+    }
+  })();
+
   function filterRows(q) {
     q = q.toLowerCase().trim();
     var rows = document.querySelectorAll('#faena-table tbody tr');

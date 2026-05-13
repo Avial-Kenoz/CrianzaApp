@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pendientes Jaula - Datos de Faena</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+      min-height: 100vh;
+    }
+    header {
+      background: #111827;
+      color: #fff;
+      padding: 16px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 { font-size: 1.1rem; }
+    .meta { font-size: .82rem; opacity: .8; margin-top: 2px; }
+    .back-link {
+      color: #fff;
+      text-decoration: none;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: .85rem;
+    }
+    .container { max-width: 1120px; margin: 0 auto; padding: 20px; }
+    .flash {
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      margin-bottom: 14px;
+      font-weight: 600;
+    }
+    .flash.ok {
+      color: #166534;
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+    }
+    .flash.error {
+      color: #991b1b;
+      background: #fff1f2;
+      border: 1px solid #fca5a5;
+    }
+    .summary {
+      border: 1px solid #fcd34d;
+      background: #fffbeb;
+      color: #92400e;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: .88rem;
+      font-weight: 700;
+      margin-bottom: 14px;
+    }
+    .table-wrap {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 8px rgba(0,0,0,.08);
+      overflow: auto;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      border-bottom: 1px solid #eef2f7;
+      padding: 10px 12px;
+      text-align: left;
+      font-size: .88rem;
+      white-space: nowrap;
+    }
+    th {
+      background: #111827;
+      color: #fff;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      font-size: .74rem;
+    }
+    tr:last-child td { border-bottom: none; }
+    .fish-link {
+      color: #1d4ed8;
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .fish-link:hover { text-decoration: underline; }
+    .empty {
+      text-align: center;
+      color: #9ca3af;
+      font-size: .92rem;
+      padding: 26px;
+    }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: .74rem;
+      font-weight: 700;
+    }
+    .pill.warn {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    .pill.info {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Pendientes de datos para faena</h1>
+      <div class="meta">Peces en Jaula con peso o diametro de ovas faltante</div>
+    </div>
+    <a class="back-link" href="/views/ui/ponds">Volver</a>
+  </header>
+
+  <div class="container">
+    {% if msg %}
+    <div class="flash {{ 'ok' if status == 'ok' else 'error' }}">{{ msg }}</div>
+    {% endif %}
+
+    <div class="summary">Resolver {{ pending_count }} conflicto(s) de datos para faena.</div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>PIT tag</th>
+            <th>Estado</th>
+            <th>Lote</th>
+            <th>Estanque actual</th>
+            <th>Conflicto</th>
+            <th>Accion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if rows %}
+          {% for row in rows %}
+          <tr>
+            <td>{{ row.internal_id }}</td>
+            <td>{{ row.state }}</td>
+            <td>{{ row.lot }}</td>
+            <td>{{ row.current_pond }}</td>
+            <td>
+              {% if row.missing_weight %}
+              <span class="pill warn">Sin peso</span>
+              {% endif %}
+              {% if row.missing_diameter %}
+              <span class="pill info">Sin diametro ovas</span>
+              {% endif %}
+            </td>
+            <td><a class="fish-link" href="/views/ui/fish/{{ row.fish_id }}">Completar datos</a></td>
+          </tr>
+          {% endfor %}
+          {% else %}
+          <tr>
+            <td colspan="6" class="empty">No hay conflictos de datos en Jaula.</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

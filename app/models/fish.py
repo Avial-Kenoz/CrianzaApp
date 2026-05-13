@@ -1,4 +1,5 @@
 from sqlalchemy import Column, BigInteger, String, Text, TIMESTAMP, ForeignKey
+from sqlalchemy.orm import validates
 from app.db.session import Base
 
 class Fish(Base):
@@ -19,3 +20,14 @@ class Fish(Base):
     notes = Column(Text)
     created_at = Column(TIMESTAMP)
     updated_at = Column(TIMESTAMP)
+
+    @staticmethod
+    def _normalize_pit_value(value):
+        if value is None:
+            return None
+        normalized = str(value).strip().upper()
+        return normalized or None
+
+    @validates("internal_id", "secondary_internal_id")
+    def _normalize_pit_fields(self, _key, value):
+        return self._normalize_pit_value(value)
