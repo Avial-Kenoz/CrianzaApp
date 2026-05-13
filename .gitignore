@@ -18,6 +18,12 @@ env/
 *.sqlite
 *.sqlite3
 
+# Large local SQL backups/dumps (root)
+/acuicola_*.sql
+/Copia de acuicola.sql
+/backup_*.sql
+/fastapp_etapa1_*.sql
+
 # Logs and temp
 *.log
 tmp/
