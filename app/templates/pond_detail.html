@@ -138,6 +138,9 @@
       overflow: auto;
       max-height: 65vh;
     }
+    .table-wrap table {
+      min-width: 1180px;
+    }
     .detail-content {
       display: grid;
       grid-template-columns: minmax(0, 1fr) 340px;
@@ -206,6 +209,13 @@
     .table-wrap td:nth-child(7) {
       width: 155px;
       min-width: 140px;
+    }
+    .table-wrap th:nth-child(8),
+    .table-wrap td:nth-child(8),
+    .table-wrap th:nth-child(9),
+    .table-wrap td:nth-child(9) {
+      width: 120px;
+      min-width: 110px;
     }
     tbody tr { border-bottom: 1px solid #eef2f7; }
     tbody tr:last-child { border-bottom: none; }
@@ -286,13 +296,18 @@
     .register-row { background: #eff6ff; }
     .register-row td { border-bottom: 1px solid #dbeafe; }
     .days-badge {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 5.5ch;
       padding: 4px 8px;
       border-radius: 999px;
       background: #eef2ff;
       color: #3730a3;
       font-size: .8rem;
       font-weight: 700;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
     }
 
     /* ── 3 tarjetas de acción ── */
@@ -624,6 +639,7 @@
               <th>Trasladar a</th>
               {% if show_depuration_column %}
               <th>Dias en depuracion</th>
+              <th>Dias desde muestreo</th>
               {% endif %}
               <th>Acciones</th>
             </tr>
@@ -709,6 +725,7 @@
               </td>
               <td><span class="nd">N/A</span></td>
               {% if show_depuration_column %}
+              <td><span class="nd">N/A</span></td>
               <td><span class="nd">N/A</span></td>
               {% endif %}
               <td class="actions-cell">
@@ -803,7 +820,14 @@
               {% if show_depuration_column %}
               <td>
                 {% if row.depuration_days is not none %}
-                <span class="days-badge">{{ row.depuration_days }} dias</span>
+                <span class="days-badge">{{ row.depuration_days|int }} dias</span>
+                {% else %}
+                <span class="nd">N/D</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if row.days_since_last_sample is not none %}
+                <span class="days-badge">{{ row.days_since_last_sample|int }} dias</span>
                 {% else %}
                 <span class="nd">N/D</span>
                 {% endif %}
@@ -834,7 +858,7 @@
             {% endfor %}
             {% else %}
             <tr>
-              <td colspan="{{ 9 if show_depuration_column else 8 }}" class="nd">No hay peces con PIT tag actualmente en esta laguna.</td>
+              <td colspan="{{ 10 if show_depuration_column else 8 }}" class="nd">No hay peces con PIT tag actualmente en esta laguna.</td>
             </tr>
             {% endif %}
           </tbody>

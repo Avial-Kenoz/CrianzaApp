@@ -169,13 +169,13 @@ def _get_current_marked_lot_ids_in_pond(pond_id: int, db: Session) -> list[int]:
 
 
 def _get_pending_drug_log_fish_query(db: Session):
-    """Peces con sufijo _R pero sin registros en fish_drug_uses."""
+    """Peces con sufijo _R, _RNN o _RNN_RNN pero sin registros en fish_drug_uses."""
     return (
         db.query(Fish)
         .outerjoin(FishDrugUse, FishDrugUse.fish_id == Fish.id)
         .filter(
             Fish.internal_id.isnot(None),
-            func.right(func.upper(func.trim(Fish.internal_id)), 2) == "_R",
+            func.upper(func.trim(Fish.internal_id)).op("~")("(_R[0-9]{1,2}){1,2}$|_R$"),
         )
         .group_by(Fish.id)
         .having(func.count(FishDrugUse.id) == 0)
@@ -1864,6 +1864,12 @@ def ui_pond_detail(
             if dep_start:
                 depuration_days = (datetime.utcnow().date() - dep_start.date()).days
 
+        # Calcular días desde último muestreo
+        days_since_last_sample = None
+        if sample and (sample.registry_time or sample.created_at):
+            sample_date = (sample.registry_time or sample.created_at).date()
+            days_since_last_sample = (datetime.utcnow().date() - sample_date).days
+
         fish_rows.append({
             "fish_id": fish.id,
             "internal_id": fish.internal_id or "N/D",
@@ -1882,6 +1888,7 @@ def ui_pond_detail(
                 else ""
             ),
             "depuration_days": depuration_days,
+            "days_since_last_sample": days_since_last_sample,
         })
 
     show_depuration_column = pond.depuration or any(row["depuration_days"] is not None for row in fish_rows)
@@ -2004,6 +2011,19 @@ def _normalize_pit_tag(value: Optional[str]) -> str:
     if value is None:
         return ""
     return str(value).strip().upper()
+
+
+def _canonical_drug_locked_pit_tag(value: Optional[str]) -> str:
+    """Normaliza PIT tag al formato bloqueado por fármaco: sufijo final _R."""
+    normalized = _normalize_pit_tag(value)
+    if not normalized:
+        return ""
+
+    # Corrige casos históricos como _R25, _R24_R25 y _R25_R hacia _R.
+    collapsed = re.sub(r"(?:_R\d{1,2}){1,2}(?:_R)?$", "_R", normalized)
+    if collapsed.endswith("_R"):
+        return collapsed
+    return f"{normalized}_R"
 
 
 def _check_pit_tag_reuse(pit_tag: str, db: Session) -> dict:
@@ -2298,7 +2318,10 @@ def ui_pond_fish_save(
             return go("error", "No se pudo registrar la mortalidad.")
 
     # ── Acción GUARDAR (normal) ───────────────────────────────────────────────
-    if not (sex_changed or weight_changed or diameter_changed or development_state_changed or destination):
+    # Permite: cambios en sex/weight/diameter/development_state/destination O
+    # registrar nuevo muestreo aunque valores sean iguales (si user ingresó weight o diameter)
+    has_sampling_data = new_weight is not None or new_diameter is not None
+    if not (sex_changed or weight_changed or diameter_changed or development_state_changed or destination or has_sampling_data):
         return go("error", "No hay cambios para guardar.")
 
     now = datetime.utcnow()
@@ -2307,7 +2330,8 @@ def ui_pond_fish_save(
         if sex_changed:
             fish.sex = target_sex
 
-        if sex_changed or weight_changed or diameter_changed or development_state_changed:
+        # Crear nuevo muestreo si: hay cambios en datos de muestreo O user proporciona datos de muestreo (incluso si iguales)
+        if sex_changed or weight_changed or diameter_changed or development_state_changed or has_sampling_data:
             sample = FishSampling(
                 fish_id=fish.id,
                 weight=new_weight,
@@ -2986,23 +3010,21 @@ def ui_fish_add_drug_use(
         db.rollback()
         return go("error", "El pez no tiene PIT tag válido para asignar sufijo _R.")
 
-    if not normalized_current.endswith("_R"):
-        candidate_internal_id = f"{normalized_current}_R"
-        if len(candidate_internal_id) > 120:
-            db.rollback()
-            return go("error", "No se pudo asignar _R: PIT tag excede largo máximo.")
+    candidate_internal_id = _canonical_drug_locked_pit_tag(normalized_current)
+    if len(candidate_internal_id) > 120:
+        db.rollback()
+        return go("error", "No se pudo asignar _R: PIT tag excede largo máximo.")
 
-        duplicate = (
-            db.query(Fish.id)
-            .filter(func.upper(func.trim(Fish.internal_id)) == candidate_internal_id, Fish.id != fish_id)
-            .first()
-        )
-        if duplicate:
-            db.rollback()
-            return go("error", f"No se pudo asignar _R: ya existe el PIT tag {candidate_internal_id} en otro pez.")
-        fish.internal_id = candidate_internal_id
-    else:
-        fish.internal_id = normalized_current
+    duplicate = (
+        db.query(Fish.id)
+        .filter(func.upper(func.trim(Fish.internal_id)) == candidate_internal_id, Fish.id != fish_id)
+        .first()
+    )
+    if duplicate:
+        db.rollback()
+        return go("error", f"No se pudo asignar _R: ya existe el PIT tag {candidate_internal_id} en otro pez.")
+
+    fish.internal_id = candidate_internal_id
 
     fish.updated_at = now
     db.commit()
