@@ -1343,6 +1343,51 @@ def ui_feed_reprogramar(
         status_code=303,
     )
 
+@router.get("/api/feed/program/{program_id}/detail")
+def api_feed_program_detail(
+    program_id: int,
+    db: Session = Depends(get_db),
+):
+    """Retorna cabecera + líneas de un programa de alimentación como JSON."""
+    program = db.query(FeedProgram).filter(FeedProgram.id == program_id).first()
+    if not program:
+        return JSONResponse({"error": "Programa no encontrado"}, status_code=404)
+
+    rows = (
+        db.query(FeedProgramLine, Pond, FeedType)
+        .join(Pond, FeedProgramLine.pond_id == Pond.id)
+        .join(FeedType, FeedProgramLine.feed_type_id == FeedType.id)
+        .filter(FeedProgramLine.feed_program_id == program_id)
+        .order_by(Pond.name, FeedType.name)
+        .all()
+    )
+
+    return JSONResponse({
+        "id": program.id,
+        "program_code": program.program_code,
+        "week_start_date": program.week_start_date.strftime("%d/%m/%Y") if program.week_start_date else None,
+        "week_end_date": program.week_end_date.strftime("%d/%m/%Y") if program.week_end_date else None,
+        "status": program.status,
+        "closed_reason": program.closed_reason or "—",
+        "created_by": program.created_by or "—",
+        "created_at": program.created_at.strftime("%d/%m/%Y %H:%M") if program.created_at else None,
+        "closed_at": program.closed_at.strftime("%d/%m/%Y %H:%M") if program.closed_at else None,
+        "lines": [
+            {
+                "pond": pond.name,
+                "feed_type": ft.name,
+                "planned_bags": line.planned_bags,
+                "planned_kg": float(line.planned_kg),
+                "executed_bags": line.executed_bags,
+                "executed_kg": float(line.executed_kg),
+                "remaining_bags": line.remaining_bags,
+                "remaining_kg": float(line.remaining_kg),
+            }
+            for line, pond, ft in rows
+        ],
+    })
+
+
 @router.get("/api/feed/stock/{feed_type_id}")
 def api_feed_stock(
     feed_type_id: int,

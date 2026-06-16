@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Reportes Mensuales - Crianza</title>
+  <title>Reportes Mensuales — Crianza</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -12,11 +12,9 @@
       color: #111827;
       min-height: 100vh;
     }
-    .container {
-      padding: 12px 10px 14px;
-      display: grid;
-      gap: 12px;
-    }
+    .container { padding: 12px 10px 20px; display: grid; gap: 12px; }
+
+    /* ── Header ── */
     .page-header {
       background: #fff;
       border-radius: 12px;
@@ -28,224 +26,500 @@
       gap: 12px;
       flex-wrap: wrap;
     }
-    .title h1 { font-size: 1.2rem; color: #1a1a2e; }
-    .title p { margin-top: 4px; color: #6b7280; font-size: .85rem; }
+    .title h1 { font-size: 1.15rem; color: #1a1a2e; }
+    .title p  { margin-top: 3px; color: #6b7280; font-size: .82rem; }
+    .header-actions { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
 
-    .filter-form {
-      display: flex;
-      align-items: end;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .filter-form label {
-      display: block;
-      font-size: .78rem;
-      color: #4b5563;
-      font-weight: 700;
-      margin-bottom: 4px;
-    }
-    .filter-form input {
-      border: 1px solid #d1d5db;
-      border-radius: 8px;
-      padding: 8px 10px;
-      font-size: .9rem;
-      background: #fff;
-    }
+    .filter-form { display: flex; align-items: end; gap: 8px; }
+    .filter-form label { display: block; font-size: .75rem; color: #4b5563; font-weight: 700; margin-bottom: 4px; }
+    .filter-form input { border: 1px solid #d1d5db; border-radius: 8px; padding: 7px 10px; font-size: .88rem; background: #fff; }
+
     .btn {
-      border: none;
-      border-radius: 8px;
-      padding: 9px 12px;
-      font-size: .86rem;
-      font-weight: 700;
-      cursor: pointer;
-      background: #1d4ed8;
-      color: #fff;
+      border: none; border-radius: 8px; padding: 8px 13px;
+      font-size: .84rem; font-weight: 700; cursor: pointer;
+      background: #1d4ed8; color: #fff; text-decoration: none;
+      display: inline-flex; align-items: center; gap: 5px;
     }
     .btn:hover { background: #1e40af; }
+    .btn-ghost {
+      background: #fff; color: #374151;
+      border: 1px solid #d1d5db;
+    }
+    .btn-ghost:hover { background: #f3f4f6; }
+    .btn-print  { background: #374151; }
+    .btn-print:hover { background: #1f2937; }
+    .btn-pdf    { background: #059669; }
+    .btn-pdf:hover  { background: #047857; }
 
-    .card {
+    /* ── Report selector tabs ── */
+    .report-tabs {
       background: #fff;
       border-radius: 12px;
       box-shadow: 0 1px 6px rgba(0,0,0,.08);
-      overflow: hidden;
+      padding: 6px 8px;
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
     }
-    .card h2 {
-      background: #1f2937;
-      color: #fff;
-      font-size: .95rem;
-      font-weight: 700;
-      padding: 10px 12px;
-      letter-spacing: .02em;
-    }
-    .table-wrap {
-      overflow: auto;
-      max-height: 55vh;
-    }
-    table { width: 100%; border-collapse: collapse; }
-    thead { background: #111827; color: #fff; }
-    th, td {
-      padding: 8px 10px;
+    .tab-link {
+      text-decoration: none;
+      padding: 7px 14px;
+      border-radius: 8px;
       font-size: .84rem;
-      text-align: right;
+      font-weight: 600;
+      color: #4b5563;
+      transition: background .15s, color .15s;
       white-space: nowrap;
-      border-bottom: 1px solid #eef2f7;
     }
-    th:first-child, td:first-child { text-align: left; }
+    .tab-link:hover { background: #f3f4f6; color: #111827; }
+    .tab-link.active {
+      background: #1d4ed8;
+      color: #fff;
+    }
+
+    /* ── Card ── */
+    .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); overflow: hidden; }
+    .card-header {
+      background: #1f2937; color: #fff;
+      font-size: .95rem; font-weight: 700;
+      padding: 10px 14px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .card-header span.sub { font-size: .75rem; font-weight: 400; opacity: .7; }
+
+    /* ── Tables ── */
+    .table-wrap { overflow: auto; max-height: 62vh; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      background: #111827; color: #fff;
+      padding: 8px 10px; font-size: .8rem;
+      text-align: right; white-space: nowrap;
+      position: sticky; top: 0; z-index: 1;
+    }
+    thead th:first-child { text-align: left; min-width: 110px; }
+    td { padding: 7px 10px; font-size: .82rem; text-align: right; white-space: nowrap; border-bottom: 1px solid #eef2f7; }
+    td:first-child { text-align: left; }
     tbody tr:hover { background: #f8fafc; }
-    tfoot tr { background: #eff6ff; font-weight: 700; }
+    tfoot tr { background: #eff6ff; font-weight: 700; border-top: 2px solid #93c5fd; }
+    tfoot td { font-size: .83rem; color: #1e3a8a; }
+
     .delta-pos { color: #047857; font-weight: 700; }
     .delta-neg { color: #b91c1c; font-weight: 700; }
-    .empty {
-      padding: 14px;
-      color: #6b7280;
-      font-size: .88rem;
+    .zero { color: #d1d5db; }
+    td.total-col { background: #f1f5f9; font-weight: 700; border-left: 1px solid #e2e8f0; }
+    tfoot td.total-col { background: #dbeafe; }
+
+    .badge { font-size: .7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+    .badge-legacy    { background: #2563eb; color: #fff; }
+    .badge-operativo { background: #059669; color: #fff; }
+
+    tr.group-header td {
+      background: #1e3a5f; color: #e0f0ff;
+      font-size: .76rem; font-weight: 700;
+      letter-spacing: .04em; text-transform: uppercase;
+      padding: 5px 10px;
+    }
+    tr.group-subtotal td {
+      background: #dbeafe; font-weight: 700;
+      font-size: .79rem; color: #1e3a8a;
+      border-top: 1px solid #93c5fd;
+    }
+    tbody tr:not(.group-header):not(.group-subtotal):hover { background: #f8fafc; }
+
+    tr.unassigned td { background: #fef3c7; color: #92400e; }
+
+    .empty { padding: 20px; color: #6b7280; font-size: .88rem; text-align: center; }
+
+    /* ── Print-only elements (hidden on screen) ── */
+    .print-only { display: none; }
+
+    /* ── Page setup: carta horizontal ── */
+    @page { size: letter landscape; margin: 1.2cm 1.5cm; }
+
+    /* ── Print: normal (colour) ── */
+    @media print {
+      .sidebar, .page-header, .report-tabs, .no-print { display: none !important; }
+      .main-content { margin-left: 0 !important; padding: 0 !important; }
+      body { background: white; }
+      .container { padding: 0; gap: 6px; }
+      .card { box-shadow: none; border: 1px solid #ccc; border-radius: 2px; }
+      .table-wrap { max-height: none !important; overflow: visible !important; }
+
+      /* Print-only header con título y período */
+      .print-only { display: block !important; font-size: 8pt; color: #374151; margin-bottom: 4px; }
+
+      /* Card header */
+      .card-header {
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+        padding: 6px 10px; font-size: 8pt;
+      }
+
+      /* Tabla: reducir fuente y permitir quiebre de texto en encabezados */
+      table { width: 100%; font-size: 7.5pt; border-collapse: collapse; }
+      thead th {
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+        font-size: 7pt; padding: 4px 5px;
+        white-space: normal; word-break: break-word;
+        min-width: 0 !important;
+      }
+      td { font-size: 7.5pt; padding: 4px 5px; white-space: normal; }
+
+      tr.group-header td {
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+        font-size: 7pt; padding: 4px 5px;
+      }
+      tr.group-subtotal td {
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+        font-size: 7pt; padding: 4px 5px;
+      }
+      tfoot tr { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      tfoot td { font-size: 7.5pt; padding: 4px 5px; }
+    }
+
+    /* ── Print: B&W ── */
+    @media print {
+      body.bw-print .card-header { background: #000 !important; }
+      body.bw-print thead th { background: #000 !important; color: #fff !important; }
+      body.bw-print tr.group-header td { background: #555 !important; color: #fff !important; }
+      body.bw-print tr.group-subtotal td { background: #eee !important; color: #000 !important; border-top: 1px solid #000 !important; }
+      body.bw-print tfoot tr { background: #eee !important; color: #000 !important; }
+      body.bw-print tfoot td { color: #000 !important; }
+      body.bw-print .total-col { background: #f5f5f5 !important; }
+      body.bw-print tfoot .total-col { background: #ddd !important; }
+      body.bw-print .delta-pos, body.bw-print .delta-neg { color: #000 !important; }
+      body.bw-print tr.unassigned td { background: #f0f0f0 !important; color: #000 !important; }
+      body.bw-print .badge { background: #555 !important; color: #fff !important; }
     }
   </style>
 </head>
 <body>
 {% include '_sidebar.html' %}
 
-  <div class="container">
-    <section class="page-header">
-      <div class="title">
-        <h1>Reportes Mensuales</h1>
-        <p>Periodo: {{ month_start.strftime('%d/%m/%Y') }} a {{ month_end.strftime('%d/%m/%Y') }}</p>
-      </div>
+<div class="container">
+  <!-- Header -->
+  <section class="page-header no-print-hide">
+    <div class="title">
+      <h1>Reportes Mensuales</h1>
+      <p>{{ month_start.strftime('%B %Y') | capitalize }} — {{ month_start.strftime('%d/%m/%Y') }} a {{ month_end.strftime('%d/%m/%Y') }}</p>
+    </div>
+    <div class="header-actions">
       <form class="filter-form" method="get" action="/views/ui/reports">
+        <input type="hidden" name="report" value="{{ report }}" />
         <div>
           <label for="month">Mes</label>
           <input id="month" type="month" name="month" value="{{ month }}" required />
         </div>
         <button class="btn" type="submit">Aplicar</button>
       </form>
-    </section>
+      <button class="btn btn-pdf" onclick="exportPDF()">↓ PDF</button>
+      <button class="btn btn-print" onclick="printBW()">⎙ Imprimir</button>
+    </div>
+  </section>
 
-    <section class="card">
-      <h2>Existencia por Lotes</h2>
-      {% if lot_rows %}
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Lote</th>
-              <th>Cantidad inicial</th>
-              <th>Biomasa inicial (kg)</th>
-              <th>Mortalidad</th>
-              <th>Biomasa mortalidad (kg)</th>
-              <th>Faenas</th>
-              <th>Biomasa faena (kg)</th>
-              <th>Cantidad final</th>
-              <th>Biomasa final (kg)</th>
-              <th>Ajuste conc. (N)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in lot_rows %}
-            <tr>
-              <td>{{ row.lot_label }}</td>
-              <td>{{ row.initial_qty }}</td>
-              <td>{{ '%.1f'|format(row.initial_biomass_kg) }}</td>
-              <td>{{ row.mortality_qty }}</td>
-              <td>{{ '%.1f'|format(row.mortality_biomass_kg) }}</td>
-              <td>{{ row.faena_qty }}</td>
-              <td>{{ '%.1f'|format(row.faena_biomass_kg) }}</td>
-              <td>{{ row.final_qty }}</td>
-              <td>{{ '%.1f'|format(row.final_biomass_kg) }}</td>
-              <td class="{% if row.reconciliation_qty > 0 %}delta-pos{% elif row.reconciliation_qty < 0 %}delta-neg{% endif %}">{{ row.reconciliation_qty }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td>Total</td>
-              <td>{{ lot_totals.initial_qty }}</td>
-              <td>{{ '%.1f'|format(lot_totals.initial_biomass_kg) }}</td>
-              <td>{{ lot_totals.mortality_qty }}</td>
-              <td>{{ '%.1f'|format(lot_totals.mortality_biomass_kg) }}</td>
-              <td>{{ lot_totals.faena_qty }}</td>
-              <td>{{ '%.1f'|format(lot_totals.faena_biomass_kg) }}</td>
-              <td>{{ lot_totals.final_qty }}</td>
-              <td>{{ '%.1f'|format(lot_totals.final_biomass_kg) }}</td>
-              <td class="{% if lot_totals.reconciliation_qty > 0 %}delta-pos{% elif lot_totals.reconciliation_qty < 0 %}delta-neg{% endif %}">{{ lot_totals.reconciliation_qty }}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      {% else %}
-      <div class="empty">No hay datos de movimientos para este periodo.</div>
-      {% endif %}
-    </section>
+  <!-- Selector de informe -->
+  <nav class="report-tabs no-print-hide">
+    {% for key, label in report_choices %}
+    <a class="tab-link {% if key == report %}active{% endif %}"
+       href="/views/ui/reports?month={{ month }}&report={{ key }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
 
-    <section class="card">
-      <h2>Existencia por Estanque</h2>
-      {% if pond_rows %}
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Estanque</th>
-              <th>Cantidad inicial</th>
-              <th>Biomasa inicial (kg)</th>
-              <th>Mortalidad</th>
-              <th>Biomasa mortalidad (kg)</th>
-              <th>Faenas</th>
-              <th>Biomasa faena (kg)</th>
-              <th>Salidas</th>
-              <th>Biomasa salidas (kg)</th>
-              <th>Llegadas</th>
-              <th>Biomasa llegadas (kg)</th>
-              <th>Cantidad final</th>
-              <th>Biomasa final (kg)</th>
-              <th>Ajuste conc. (N)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in pond_rows %}
-            <tr>
-              <td>{{ row.pond_name }}</td>
-              <td>{{ row.initial_qty }}</td>
-              <td>{{ '%.1f'|format(row.initial_biomass_kg) }}</td>
-              <td>{{ row.mortality_qty }}</td>
-              <td>{{ '%.1f'|format(row.mortality_biomass_kg) }}</td>
-              <td>{{ row.faena_qty }}</td>
-              <td>{{ '%.1f'|format(row.faena_biomass_kg) }}</td>
-              <td>{{ row.salidas_qty }}</td>
-              <td>{{ '%.1f'|format(row.salidas_biomass_kg) }}</td>
-              <td>{{ row.llegadas_qty }}</td>
-              <td>{{ '%.1f'|format(row.llegadas_biomass_kg) }}</td>
-              <td>{{ row.final_qty }}</td>
-              <td>{{ '%.1f'|format(row.final_biomass_kg) }}</td>
-              <td class="{% if row.reconciliation_qty > 0 %}delta-pos{% elif row.reconciliation_qty < 0 %}delta-neg{% endif %}">{{ row.reconciliation_qty }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td>Total</td>
-              <td>{{ pond_totals.initial_qty }}</td>
-              <td>{{ '%.1f'|format(pond_totals.initial_biomass_kg) }}</td>
-              <td>{{ pond_totals.mortality_qty }}</td>
-              <td>{{ '%.1f'|format(pond_totals.mortality_biomass_kg) }}</td>
-              <td>{{ pond_totals.faena_qty }}</td>
-              <td>{{ '%.1f'|format(pond_totals.faena_biomass_kg) }}</td>
-              <td>{{ pond_totals.salidas_qty }}</td>
-              <td>{{ '%.1f'|format(pond_totals.salidas_biomass_kg) }}</td>
-              <td>{{ pond_totals.llegadas_qty }}</td>
-              <td>{{ '%.1f'|format(pond_totals.llegadas_biomass_kg) }}</td>
-              <td>{{ pond_totals.final_qty }}</td>
-              <td>{{ '%.1f'|format(pond_totals.final_biomass_kg) }}</td>
-              <td class="{% if pond_totals.reconciliation_qty > 0 %}delta-pos{% elif pond_totals.reconciliation_qty < 0 %}delta-neg{% endif %}">{{ pond_totals.reconciliation_qty }}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      {% else %}
-      <div class="empty">No hay datos de estanques para este periodo.</div>
-      {% endif %}
-    </section>
+  <!-- Encabezado visible sólo al imprimir / exportar PDF -->
+  <div class="print-only">
+    <strong>Crianza — Reporte Mensual</strong> &nbsp;|&nbsp;
+    {{ month_start.strftime('%B %Y') | capitalize }} ({{ month_start.strftime('%d/%m/%Y') }} – {{ month_end.strftime('%d/%m/%Y') }})
   </div>
 
-</div><!-- /.main-content -->
-</div><!-- /.app-shell -->
+  <!-- ══ Existencia por Lote ══ -->
+  {% if report == 'existencia_lote' %}
+  <section class="card">
+    <div class="card-header">
+      <span>Existencia por Lote</span>
+      <span class="sub">{{ month_start.strftime('%B %Y') }}</span>
+    </div>
+    {% if lot_rows %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Lote</th>
+            <th>Cant. inicial</th>
+            <th>Biomasa inicial (kg)</th>
+            <th>Mortalidad</th>
+            <th>Biomasa mort. (kg)</th>
+            <th>Faenas</th>
+            <th>Biomasa faena (kg)</th>
+            <th>Cant. final</th>
+            <th>Biomasa final (kg)</th>
+            <th>Ajuste conc.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in lot_rows %}
+          <tr>
+            <td>{{ row.lot_label }}</td>
+            <td>{{ row.initial_qty }}</td>
+            <td>{{ '%.1f'|format(row.initial_biomass_kg) }}</td>
+            <td>{{ row.mortality_qty }}</td>
+            <td>{{ '%.1f'|format(row.mortality_biomass_kg) }}</td>
+            <td>{{ row.faena_qty }}</td>
+            <td>{{ '%.1f'|format(row.faena_biomass_kg) }}</td>
+            <td>{{ row.final_qty }}</td>
+            <td>{{ '%.1f'|format(row.final_biomass_kg) }}</td>
+            <td class="{% if row.reconciliation_qty > 0 %}delta-pos{% elif row.reconciliation_qty < 0 %}delta-neg{% endif %}">{{ row.reconciliation_qty }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>Total</td>
+            <td>{{ lot_totals.initial_qty }}</td>
+            <td>{{ '%.1f'|format(lot_totals.initial_biomass_kg) }}</td>
+            <td>{{ lot_totals.mortality_qty }}</td>
+            <td>{{ '%.1f'|format(lot_totals.mortality_biomass_kg) }}</td>
+            <td>{{ lot_totals.faena_qty }}</td>
+            <td>{{ '%.1f'|format(lot_totals.faena_biomass_kg) }}</td>
+            <td>{{ lot_totals.final_qty }}</td>
+            <td>{{ '%.1f'|format(lot_totals.final_biomass_kg) }}</td>
+            <td class="{% if lot_totals.reconciliation_qty > 0 %}delta-pos{% elif lot_totals.reconciliation_qty < 0 %}delta-neg{% endif %}">{{ lot_totals.reconciliation_qty }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">No hay datos de movimientos para este periodo.</div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <!-- ══ Existencia por Estanque ══ -->
+  {% if report == 'existencia_estanque' %}
+  <section class="card">
+    <div class="card-header">
+      <span>Existencia por Estanque</span>
+      <span class="sub">{{ month_start.strftime('%B %Y') }}</span>
+    </div>
+    {% if pond_rows %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Estanque</th>
+            <th>Cant. inicial</th>
+            <th>Biomasa inicial (kg)</th>
+            <th>Mortalidad</th>
+            <th>Biomasa mort. (kg)</th>
+            <th>Faenas</th>
+            <th>Biomasa faena (kg)</th>
+            <th>Salidas</th>
+            <th>Biomasa salidas (kg)</th>
+            <th>Llegadas</th>
+            <th>Biomasa llegadas (kg)</th>
+            <th>Cant. final</th>
+            <th>Biomasa final (kg)</th>
+            <th>Ajuste conc.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in pond_rows %}
+          <tr>
+            <td>{{ row.pond_name }}</td>
+            <td>{{ row.initial_qty }}</td>
+            <td>{{ '%.1f'|format(row.initial_biomass_kg) }}</td>
+            <td>{{ row.mortality_qty }}</td>
+            <td>{{ '%.1f'|format(row.mortality_biomass_kg) }}</td>
+            <td>{{ row.faena_qty }}</td>
+            <td>{{ '%.1f'|format(row.faena_biomass_kg) }}</td>
+            <td>{{ row.salidas_qty }}</td>
+            <td>{{ '%.1f'|format(row.salidas_biomass_kg) }}</td>
+            <td>{{ row.llegadas_qty }}</td>
+            <td>{{ '%.1f'|format(row.llegadas_biomass_kg) }}</td>
+            <td>{{ row.final_qty }}</td>
+            <td>{{ '%.1f'|format(row.final_biomass_kg) }}</td>
+            <td class="{% if row.reconciliation_qty > 0 %}delta-pos{% elif row.reconciliation_qty < 0 %}delta-neg{% endif %}">{{ row.reconciliation_qty }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>Total</td>
+            <td>{{ pond_totals.initial_qty }}</td>
+            <td>{{ '%.1f'|format(pond_totals.initial_biomass_kg) }}</td>
+            <td>{{ pond_totals.mortality_qty }}</td>
+            <td>{{ '%.1f'|format(pond_totals.mortality_biomass_kg) }}</td>
+            <td>{{ pond_totals.faena_qty }}</td>
+            <td>{{ '%.1f'|format(pond_totals.faena_biomass_kg) }}</td>
+            <td>{{ pond_totals.salidas_qty }}</td>
+            <td>{{ '%.1f'|format(pond_totals.salidas_biomass_kg) }}</td>
+            <td>{{ pond_totals.llegadas_qty }}</td>
+            <td>{{ '%.1f'|format(pond_totals.llegadas_biomass_kg) }}</td>
+            <td>{{ pond_totals.final_qty }}</td>
+            <td>{{ '%.1f'|format(pond_totals.final_biomass_kg) }}</td>
+            <td class="{% if pond_totals.reconciliation_qty > 0 %}delta-pos{% elif pond_totals.reconciliation_qty < 0 %}delta-neg{% endif %}">{{ pond_totals.reconciliation_qty }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">No hay datos de estanques para este periodo.</div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <!-- ══ Alertas de biomasa ══ -->
+  {% if biomass_alerts %}
+  <section class="card" style="border-left: 4px solid #f59e0b;">
+    <div class="card-header" style="background:#fffbeb;">
+      <span style="color:#92400e;">⚠ Biomasa incompleta — tareas pendientes de muestreo</span>
+    </div>
+    <ul style="padding: 12px 20px; margin: 0; color: #78350f; font-size: 0.875rem; line-height: 1.8;">
+      {% for msg in biomass_alerts %}<li>{{ msg }}</li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <!-- ══ Alimento por Estanque ══ -->
+  {% if report == 'alimento_estanque' %}
+  <section class="card">
+    <div class="card-header">
+      <span>Alimento por Estanque</span>
+      <span class="sub">{{ month_start.strftime('%B %Y') }}</span>
+      {% if feed_data %}
+        {% for src in feed_data.data_sources %}
+          <span class="badge badge-{{ src }}">{{ src }}</span>
+        {% endfor %}
+      {% endif %}
+    </div>
+    {% if feed_data %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Estanque</th>
+            {% for col in feed_data.columns %}
+            <th>{{ feed_data.column_labels[col] }}</th>
+            {% endfor %}
+            <th class="total-col">Total kg</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for cu_name, pond_codes in feed_data.groups %}
+          <tr class="group-header">
+            <td colspan="{{ feed_data.columns|length + 2 }}">{{ cu_name }}</td>
+          </tr>
+          {% for code in pond_codes %}
+          {% set row = feed_data.matrix[code] %}
+          {% set row_total = row.values()|sum %}
+          <tr>
+            <td>{{ code }}</td>
+            {% for col in feed_data.columns %}
+            {% set val = row.get(col, 0) %}
+            <td {% if val == 0 %}class="zero"{% endif %}>{{ '%.0f'|format(val) if val > 0 else '–' }}</td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(row_total) }}</td>
+          </tr>
+          {% endfor %}
+          {% set gt = feed_data.group_totals[cu_name] %}
+          <tr class="group-subtotal">
+            <td>Subtotal {{ cu_name }}</td>
+            {% for col in feed_data.columns %}
+            <td>{{ '%.0f'|format(gt[col]) if gt[col] > 0 else '–' }}</td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(gt['__total__']) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>TOTAL</td>
+            {% for col in feed_data.columns %}
+            <td>{{ '%.0f'|format(feed_data.col_totals[col]) }}</td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(feed_data.grand_total) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">No hay datos de alimentación para {{ month_start.strftime('%B %Y') }}.</div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <!-- ══ Alimento por Lote ══ -->
+  {% if report == 'alimento_lote' %}
+  <section class="card">
+    <div class="card-header">
+      <span>Alimento por Lote</span>
+      <span class="sub">{{ month_start.strftime('%B %Y') }} — Promedio peces inicio+fin mes, proporcional por estanque</span>
+    </div>
+    {% if feed_lot_data %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Lote</th>
+            {% for col in feed_lot_data.columns %}
+            <th>{{ feed_lot_data.column_labels[col] }}</th>
+            {% endfor %}
+            <th class="total-col">Total kg</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for lot_name, feed_map in feed_lot_data.rows.items() %}
+          <tr>
+            <td>{{ lot_name }}</td>
+            {% for col in feed_lot_data.columns %}
+            {% set val = feed_map.get(col, 0) %}
+            <td {% if val == 0 %}class="zero"{% endif %}>{{ '%.0f'|format(val) if val > 0 else '–' }}</td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(feed_lot_data.lot_totals[lot_name]) }}</td>
+          </tr>
+          {% endfor %}
+          {% if feed_lot_data.unallocated %}
+          <tr class="unassigned">
+            <td><em>Sin asignar</em></td>
+            {% for col in feed_lot_data.columns %}
+            {% set val = feed_lot_data.unallocated.get(col, 0) %}
+            <td>{{ '%.0f'|format(val) if val > 0 else '–' }}</td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(feed_lot_data.unallocated.values()|sum) }}</td>
+          </tr>
+          {% endif %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>TOTAL</td>
+            {% for col in feed_lot_data.columns %}
+            <td>{{ '%.0f'|format(feed_lot_data.col_totals[col]) }}</td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(feed_lot_data.grand_total) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">No hay datos de alimentación para {{ month_start.strftime('%B %Y') }}.</div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+</div><!-- /.container -->
+
+<script>
+  function exportPDF() {
+    window.print();
+  }
+
+  function printBW() {
+    document.body.classList.add('bw-print');
+    window.print();
+    window.addEventListener('afterprint', function handler() {
+      document.body.classList.remove('bw-print');
+      window.removeEventListener('afterprint', handler);
+    });
+  }
+</script>
+
 </body>
 </html>

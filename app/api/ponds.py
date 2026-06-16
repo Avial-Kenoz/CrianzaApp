@@ -43,7 +43,7 @@ def create_pond(pond: PondCreate, db: Session = Depends(get_db)):
 
 @router.get("/", response_model=List[PondRead])
 def list_ponds(db: Session = Depends(get_db)):
-    return db.query(Pond).all()
+    return db.query(Pond).filter(Pond.state != "inactive").all()
 
 @router.get("/{pond_id}", response_model=PondRead)
 def get_pond(pond_id: int, db: Session = Depends(get_db)):

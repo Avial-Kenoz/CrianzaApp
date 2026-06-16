@@ -35,6 +35,9 @@
     .open-badge { background: #dcfce7; color: #166534; }
     .btn-reprog { display: inline-block; background: #7c3aed; color: #fff; border: none; border-radius: 7px; padding: 6px 12px; font-size: .78rem; font-weight: 700; cursor: pointer; text-decoration: none; white-space: nowrap; }
     .btn-reprog:hover { background: #6d28d9; }
+    .btn-detail { display: inline-block; background: #f0f9ff; color: #0369a1; border: 1px solid #bae6fd; border-radius: 7px; padding: 6px 11px; font-size: .78rem; font-weight: 700; cursor: pointer; text-decoration: none; white-space: nowrap; }
+    .btn-detail:hover { background: #e0f2fe; }
+    .actions-cell { display: flex; gap: 6px; align-items: center; }
     .empty-state { text-align: center; padding: 60px 20px; color: #9ca3af; font-size: .95rem; }
     .empty-state h2 { font-size: 1.1rem; margin-bottom: 8px; color: #6b7280; }
     .sidebar-links { background: #fff; border-radius: 12px; box-shadow: 0 1px 5px rgba(0,0,0,.07); padding: 14px 16px; margin-bottom: 18px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
@@ -42,6 +45,37 @@
     .side-link:hover { background: #dbeafe; }
     .side-link.inv { color: #0f766e; background: #f0fdfa; border-color: #99f6e4; }
     .side-link.inv:hover { background: #ccfbf1; }
+
+    /* Modal */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 1000; align-items: center; justify-content: center; padding: 16px; }
+    .modal-overlay.open { display: flex; }
+    .modal-box { background: #fff; border-radius: 16px; box-shadow: 0 8px 40px rgba(0,0,0,.22); width: 100%; max-width: 820px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+    .modal-header { padding: 16px 20px; background: #1a1a2e; color: #fff; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .modal-header h2 { font-size: 1rem; font-weight: 700; }
+    .modal-close { background: none; border: none; color: #9ca3af; font-size: 1.4rem; cursor: pointer; line-height: 1; padding: 0 4px; }
+    .modal-close:hover { color: #fff; }
+    .modal-body { padding: 18px 20px; overflow-y: auto; flex: 1; }
+    .modal-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+    .meta-chip { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 12px; font-size: .82rem; }
+    .meta-chip strong { display: block; font-size: .72rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 2px; }
+    .detail-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid #e2e8f0; }
+    .detail-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    .detail-table thead th { background: #f1f5f9; color: #475569; padding: 9px 12px; font-weight: 700; text-align: left; font-size: .76rem; text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; border-bottom: 1px solid #e2e8f0; }
+    .detail-table thead th.num { text-align: right; }
+    .detail-table tbody tr { border-bottom: 1px solid #f1f5f9; }
+    .detail-table tbody tr:last-child { border-bottom: none; }
+    .detail-table tbody tr:hover { background: #f8fafc; }
+    .detail-table td { padding: 8px 12px; vertical-align: middle; }
+    .detail-table td.num { text-align: right; color: #374151; font-variant-numeric: tabular-nums; }
+    .detail-table td.zero { color: #d1d5db; }
+    .detail-section-title { font-size: .82rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+    .modal-footer { padding: 14px 20px; border-top: 1px solid #f1f5f9; display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0; }
+    .btn-modal-cancel { background: transparent; color: #6b7280; border: 1px solid #d1d5db; border-radius: 8px; padding: 9px 18px; font-size: .88rem; font-weight: 600; cursor: pointer; }
+    .btn-modal-cancel:hover { border-color: #9ca3af; color: #374151; }
+    .btn-modal-reprog { background: #7c3aed; color: #fff; border: none; border-radius: 8px; padding: 9px 20px; font-size: .88rem; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-block; }
+    .btn-modal-reprog:hover { background: #6d28d9; }
+    .modal-loading { text-align: center; padding: 40px; color: #9ca3af; font-size: .95rem; }
+    .totals-row td { font-weight: 700; background: #f8fafc; border-top: 2px solid #e2e8f0; }
   </style>
 </head>
 <body>
@@ -113,7 +147,10 @@
             {% else %}—{% endif %}
           </td>
           <td>
-            <a class="btn-reprog" href="/views/ui/feed/history/{{ prog.id }}/reprogramar">Reprogramar</a>
+            <div class="actions-cell">
+              <button class="btn-detail" onclick="openDetail({{ prog.id }})">Ver detalle</button>
+              <a class="btn-reprog" href="/views/ui/feed/history/{{ prog.id }}/reprogramar">Reprogramar</a>
+            </div>
           </td>
         </tr>
         {% endfor %}
@@ -127,6 +164,118 @@
     {% endif %}
   </div>
 </div>
+
+<!-- Modal de detalle -->
+<div class="modal-overlay" id="detailModal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2 id="modalTitle">Detalle del programa</h2>
+      <button class="modal-close" onclick="closeDetail()">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody">
+      <div class="modal-loading">Cargando...</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeDetail()">Cerrar</button>
+      <a class="btn-modal-reprog" id="modalReprogBtn" href="#">Reprogramar</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentProgramId = null;
+
+  function openDetail(programId) {
+    currentProgramId = programId;
+    document.getElementById('detailModal').classList.add('open');
+    document.getElementById('modalReprogBtn').href = '/views/ui/feed/history/' + programId + '/reprogramar';
+    document.getElementById('modalTitle').textContent = 'Detalle del programa';
+    document.getElementById('modalBody').innerHTML = '<div class="modal-loading">Cargando...</div>';
+
+    fetch('/views/api/feed/program/' + programId + '/detail')
+      .then(r => r.json())
+      .then(data => renderDetail(data))
+      .catch(() => {
+        document.getElementById('modalBody').innerHTML = '<div class="modal-loading">Error al cargar el detalle.</div>';
+      });
+  }
+
+  function closeDetail() {
+    document.getElementById('detailModal').classList.remove('open');
+  }
+
+  document.getElementById('detailModal').addEventListener('click', function(e) {
+    if (e.target === this) closeDetail();
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeDetail();
+  });
+
+  function fmt(n) { return Number(n).toLocaleString('es-CL'); }
+
+  function renderDetail(d) {
+    document.getElementById('modalTitle').textContent = d.program_code;
+    document.getElementById('modalReprogBtn').href = '/views/ui/feed/history/' + d.id + '/reprogramar';
+
+    const statusLabel = d.status === 'open'
+      ? '<span style="background:#dcfce7;color:#166534;border-radius:5px;padding:2px 8px;font-size:.76rem;font-weight:700;">Abierto</span>'
+      : '<span style="background:#f1f5f9;color:#475569;border-radius:5px;padding:2px 8px;font-size:.76rem;font-weight:700;">Cerrado</span>';
+
+    let meta = `
+      <div class="modal-meta">
+        <div class="meta-chip"><strong>Código</strong>${d.program_code}</div>
+        <div class="meta-chip"><strong>Semana</strong>${d.week_start_date || '—'} → ${d.week_end_date || '—'}</div>
+        <div class="meta-chip"><strong>Estado</strong>${statusLabel}</div>
+        ${d.closed_reason && d.closed_reason !== '—' ? `<div class="meta-chip"><strong>Motivo cierre</strong>${d.closed_reason}</div>` : ''}
+        ${d.created_by && d.created_by !== '—' ? `<div class="meta-chip"><strong>Creado por</strong>${d.created_by}</div>` : ''}
+        ${d.created_at ? `<div class="meta-chip"><strong>Creado</strong>${d.created_at}</div>` : ''}
+        ${d.closed_at ? `<div class="meta-chip"><strong>Cerrado</strong>${d.closed_at}</div>` : ''}
+      </div>`;
+
+    if (!d.lines || d.lines.length === 0) {
+      document.getElementById('modalBody').innerHTML = meta + '<p style="color:#9ca3af;font-size:.9rem;">Sin líneas registradas.</p>';
+      return;
+    }
+
+    let totalPlanBags = 0, totalPlanKg = 0;
+
+    let rows = d.lines.map(l => {
+      totalPlanBags += l.planned_bags; totalPlanKg += l.planned_kg;
+
+      return `<tr>
+        <td>${l.pond}</td>
+        <td>${l.feed_type}</td>
+        <td class="num">${fmt(l.planned_bags)}</td>
+        <td class="num">${fmt(l.planned_kg)} kg</td>
+      </tr>`;
+    }).join('');
+
+    const totalsRow = `<tr class="totals-row">
+      <td colspan="2">Total</td>
+      <td class="num">${fmt(totalPlanBags)}</td>
+      <td class="num">${fmt(totalPlanKg)} kg</td>
+    </tr>`;
+
+    const table = `
+      <p class="detail-section-title">Líneas del programa (${d.lines.length})</p>
+      <div class="detail-table-wrap">
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th>Estanque</th>
+              <th>Tipo alimento</th>
+              <th class="num">Sacos</th>
+              <th class="num">Kg</th>
+            </tr>
+          </thead>
+          <tbody>${rows}${totalsRow}</tbody>
+        </table>
+      </div>`;
+
+    document.getElementById('modalBody').innerHTML = meta + table;
+  }
+</script>
 
 </body>
 </html>

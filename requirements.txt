@@ -8,3 +8,4 @@ alembic
 pydantic
 jinja2
 python-multipart
+openpyxl

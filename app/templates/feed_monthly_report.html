@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alimentación Mensual - Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #111827;
+      min-height: 100vh;
+    }
+    .container { padding: 12px 10px 14px; display: grid; gap: 12px; }
+
+    .page-header {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08);
+      padding: 14px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .title h1 { font-size: 1.2rem; color: #1a1a2e; }
+    .title p  { margin-top: 4px; color: #6b7280; font-size: .85rem; }
+
+    .filter-form { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
+    .filter-form label { display: block; font-size: .78rem; color: #4b5563; font-weight: 700; margin-bottom: 4px; }
+    .filter-form input { border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 10px; font-size: .9rem; background: #fff; }
+    .btn { border: none; border-radius: 8px; padding: 9px 12px; font-size: .86rem; font-weight: 700; cursor: pointer; background: #1d4ed8; color: #fff; }
+    .btn:hover { background: #1e40af; }
+    .btn-outline { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+    .btn-outline:hover { background: #f3f4f6; }
+
+    .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); overflow: hidden; }
+    .card-header {
+      background: #1f2937;
+      color: #fff;
+      font-size: .95rem;
+      font-weight: 700;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .badge {
+      font-size: .72rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+    .badge-legacy   { background: #2563eb; color: #fff; }
+    .badge-operativo{ background: #059669; color: #fff; }
+
+    .table-wrap { overflow: auto; max-height: 70vh; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      background: #111827;
+      color: #fff;
+      padding: 8px 10px;
+      font-size: .8rem;
+      text-align: right;
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    thead th:first-child { text-align: left; min-width: 90px; }
+
+    td { padding: 6px 10px; font-size: .82rem; text-align: right; white-space: nowrap; border-bottom: 1px solid #eef2f7; }
+    td:first-child { text-align: left; }
+
+    tr.group-header td {
+      background: #1e3a5f;
+      color: #e0f0ff;
+      font-size: .78rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      padding: 5px 10px;
+    }
+    tr.group-subtotal td {
+      background: #dbeafe;
+      font-weight: 700;
+      font-size: .8rem;
+      color: #1e3a8a;
+      border-top: 1px solid #93c5fd;
+    }
+    tbody tr:not(.group-header):not(.group-subtotal):hover { background: #f8fafc; }
+
+    tfoot tr { background: #eff6ff; font-weight: 700; border-top: 2px solid #3b82f6; }
+    tfoot td { font-size: .84rem; color: #1e3a8a; }
+
+    .zero { color: #d1d5db; }
+    td.total-col { background: #f1f5f9; font-weight: 700; border-left: 1px solid #e2e8f0; }
+    tfoot td.total-col { background: #dbeafe; }
+
+    .empty { padding: 20px; color: #6b7280; font-size: .9rem; text-align: center; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="container">
+  <section class="page-header">
+    <div class="title">
+      <h1>Alimentación Mensual por Estanque</h1>
+      <p>Periodo: {{ month_start.strftime('%d/%m/%Y') }} a {{ month_end.strftime('%d/%m/%Y') }}</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+      <form class="filter-form" method="get" action="/views/ui/reports/feed-monthly">
+        <div>
+          <label for="month">Mes</label>
+          <input id="month" type="month" name="month" value="{{ month }}" required />
+        </div>
+        <button class="btn" type="submit">Aplicar</button>
+      </form>
+      <a href="/views/ui/reports?month={{ month }}" class="btn btn-outline" style="text-decoration:none;display:inline-block;">← Inventario</a>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <span>Consumo de Alimento — {{ month_start.strftime('%B %Y') }}</span>
+      {% if feed_data %}
+        {% for src in feed_data.data_sources %}
+          <span class="badge badge-{{ src }}">{{ src }}</span>
+        {% endfor %}
+      {% endif %}
+    </div>
+
+    {% if feed_data %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Estanque</th>
+            {% for col in feed_data.columns %}
+            <th>{{ feed_data.column_labels[col] }}</th>
+            {% endfor %}
+            <th class="total-col">Total kg</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for cu_name, pond_codes in feed_data.groups %}
+          {# Fila de encabezado del grupo (laguna) #}
+          <tr class="group-header">
+            <td colspan="{{ feed_data.columns|length + 2 }}">{{ cu_name }}</td>
+          </tr>
+          {# Filas de estanques #}
+          {% for code in pond_codes %}
+          {% set row = feed_data.matrix[code] %}
+          {% set row_total = row.values()|sum %}
+          <tr>
+            <td>{{ code }}</td>
+            {% for col in feed_data.columns %}
+            {% set val = row.get(col, 0) %}
+            <td {% if val == 0 %}class="zero"{% endif %}>
+              {{ '%.0f'|format(val) if val > 0 else '–' }}
+            </td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(row_total) }}</td>
+          </tr>
+          {% endfor %}
+          {# Subtotal del grupo #}
+          {% set gt = feed_data.group_totals[cu_name] %}
+          <tr class="group-subtotal">
+            <td>Subtotal {{ cu_name }}</td>
+            {% for col in feed_data.columns %}
+            <td>{{ '%.0f'|format(gt[col]) if gt[col] > 0 else '–' }}</td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(gt['__total__']) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>TOTAL</td>
+            {% for col in feed_data.columns %}
+            <td>{{ '%.0f'|format(feed_data.col_totals[col]) }}</td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(feed_data.grand_total) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">No hay datos de alimentación para {{ month_start.strftime('%B %Y') }}.</div>
+    {% endif %}
+  </section>
+
+  {# ── Tabla de asignación por lote ─────────────────────────────── #}
+  <section class="card">
+    <div class="card-header">
+      <span>Consumo Estimado por Lote — {{ month_start.strftime('%B %Y') }}</span>
+      {% if lot_data %}
+      <span style="font-size:.75rem;font-weight:400;opacity:.75;">Promedio peces inicio+fin mes · proporcional por estanque</span>
+      {% endif %}
+    </div>
+
+    {% if lot_data %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Lote</th>
+            {% for col in lot_data.columns %}
+            <th>{{ lot_data.column_labels[col] }}</th>
+            {% endfor %}
+            <th class="total-col">Total kg</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for lot_name, feed_map in lot_data.rows.items() %}
+          <tr>
+            <td>{{ lot_name }}</td>
+            {% for col in lot_data.columns %}
+            {% set val = feed_map.get(col, 0) %}
+            <td {% if val == 0 %}class="zero"{% endif %}>
+              {{ '%.0f'|format(val) if val > 0 else '–' }}
+            </td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(lot_data.lot_totals[lot_name]) }}</td>
+          </tr>
+          {% endfor %}
+
+          {# Fila de kg sin asignar (estanques sin peces en BD) #}
+          {% if lot_data.unallocated %}
+          <tr style="background:#fef3c7;color:#92400e;">
+            <td><em>Sin asignar</em></td>
+            {% for col in lot_data.columns %}
+            {% set val = lot_data.unallocated.get(col, 0) %}
+            <td>{{ '%.0f'|format(val) if val > 0 else '–' }}</td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(lot_data.unallocated.values()|sum) }}</td>
+          </tr>
+          {% endif %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>TOTAL</td>
+            {% for col in lot_data.columns %}
+            <td>{{ '%.0f'|format(lot_data.col_totals[col]) }}</td>
+            {% endfor %}
+            <td class="total-col">{{ '%.0f'|format(lot_data.grand_total) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">No hay datos de movimientos para calcular la distribución por lote.</div>
+    {% endif %}
+  </section>
+</div>
+
+</body>
+</html>

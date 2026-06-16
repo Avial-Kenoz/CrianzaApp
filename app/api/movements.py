@@ -73,6 +73,19 @@ def list_movements(
 @router.post("/", response_model=PondMovementRead)
 def create_movement(movement: PondMovementCreate, db: Session = Depends(get_db)):
     # Validaciones de negocio
+    from app.models.ponds import Pond
+    for pond_field, pond_id in (
+        ("source_pond_id", movement.source_pond_id),
+        ("destiny_pond_id", movement.destiny_pond_id),
+    ):
+        if pond_id is not None:
+            p = db.query(Pond.state).filter(Pond.id == pond_id).first()
+            if p and p.state == "inactive":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Pond {pond_id} is inactive and cannot be used in movements.",
+                )
+
     allowed_reasons = [
         "mortality", "depuration", "inventory_mismatch", "registration", "devious",
         "first_load", "pond_movement", "unmarked_devious", "missing_number", "faena"
@@ -81,6 +94,34 @@ def create_movement(movement: PondMovementCreate, db: Session = Depends(get_db))
         raise HTTPException(status_code=400, detail="Invalid movement_reason")
     if movement.fish_quantity <= 0:
         raise HTTPException(status_code=400, detail="fish_quantity must be positive")
+
+    # Validación de posición del pez con PIT tag
+    if movement.fish_id is not None and movement.source_pond_id is not None:
+        from app.models.fish import Fish
+        from app.models.ponds_movements import PondMovement as PM2
+        from sqlalchemy import desc
+        last_mov = (
+            db.query(PM2)
+            .filter(PM2.fish_id == movement.fish_id)
+            .order_by(desc(PM2.movement_time), desc(PM2.id))
+            .first()
+        )
+        if last_mov and last_mov.destiny_pond_id != movement.source_pond_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Fish {movement.fish_id} is not in pond {movement.source_pond_id}. "
+                    f"Last movement placed it in pond {last_mov.destiny_pond_id}."
+                ),
+            )
+        if last_mov and movement.movement_time and movement.movement_time < last_mov.movement_time:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Movement time {movement.movement_time} is earlier than fish {movement.fish_id}'s "
+                    f"last movement at {last_mov.movement_time}. Backdated movements must use DB corrections."
+                ),
+            )
 
     # Regla de negocio: no mezclar lotes de peces sin PIT tag en un estanque.
     # Excepcion: peces con PIT tag (movement.fish_id) si pueden coexistir en otro lote.

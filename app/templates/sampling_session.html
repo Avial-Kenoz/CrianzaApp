@@ -205,6 +205,59 @@
       margin-bottom: 16px;
     }
     .date-info span { font-weight: 600; color: #1a1a2e; }
+
+    /* ── Validación de filas ── */
+    .row-warn td { background: #fffbeb !important; }
+    .row-warn.input-row td { background: #fffbeb !important; border-bottom-color: #fbbf24 !important; }
+    .row-alert td { background: #fff1f1 !important; }
+    .row-alert.input-row td { background: #fff1f1 !important; border-bottom-color: #f87171 !important; }
+    .val-hint {
+      font-size: .70rem;
+      margin-top: 3px;
+      padding: 2px 5px;
+      border-radius: 4px;
+      line-height: 1.3;
+    }
+    .val-hint.warn  { color: #92400e; background: #fef3c7; }
+    .val-hint.alert { color: #991b1b; background: #fee2e2; }
+
+    /* ── Modal de confirmación ── */
+    #confirm-modal {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    #confirm-modal.open { display: flex; }
+    .modal-box {
+      background: #fff;
+      border-radius: 14px;
+      padding: 24px;
+      max-width: 700px;
+      width: 95%;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 40px rgba(0,0,0,.22);
+    }
+    .modal-title    { font-size: 1rem; font-weight: 700; margin-bottom: 4px; color: #1a1a2e; }
+    .modal-subtitle { font-size: .82rem; color: #6b7280; margin-bottom: 14px; }
+    .modal-flags-table { width: 100%; border-collapse: collapse; font-size: .82rem; margin-bottom: 16px; }
+    .modal-flags-table th {
+      text-align: left; padding: 6px 8px;
+      background: #f8fafc; font-size: .74rem;
+      text-transform: uppercase; color: #6b7280;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    .modal-flags-table td { padding: 6px 8px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+    .flag-warn  { color: #92400e; font-weight: 600; }
+    .flag-alert { color: #991b1b; font-weight: 600; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
+    .btn-modal-confirm { background: #dc2626; color: #fff; border: none; border-radius: 7px; padding: 8px 18px; font-size: .85rem; font-weight: 700; cursor: pointer; }
+    .btn-modal-confirm:hover { background: #b91c1c; }
+    .btn-modal-cancel  { background: #6b7280; color: #fff; border: none; border-radius: 7px; padding: 8px 18px; font-size: .85rem; font-weight: 700; cursor: pointer; }
+    .btn-modal-cancel:hover  { background: #4b5563; }
   </style>
 </head>
 <body>
@@ -217,7 +270,7 @@
   <div class="header-actions">
     {% if not session.is_closed %}
     <form method="post" action="/views/ui/sampling/{{ session.id }}/close"
-          onsubmit="return confirm('¿Cerrar esta sesión de muestreo? Se recalculará la biomasa del estanque.')">
+          id="close-session-form" onsubmit="beforeCloseSession(event)">
       <button type="submit" class="btn-close-session">✓ Cerrar sesión</button>
     </form>
     {% else %}
@@ -280,7 +333,7 @@
           <th class="th-w130">PIT Tag</th>
           <th class="th-w90">Lote</th>
           <th class="th-w90">Peso (g)</th>
-          <th class="th-w90">Long. (mm)</th>
+          <th class="th-w90">Long. (cm)</th>
           <th class="th-w140">Notas</th>
           <th class="th-w110">Acciones</th>
         </tr>
@@ -331,7 +384,7 @@
               name="length"
               min="0.1"
               step="0.1"
-              placeholder="mm"
+              placeholder="cm"
             />
           </td>
           <td>
@@ -346,7 +399,10 @@
 
         <!-- ── FILAS EXISTENTES ── -->
         {% for r in records %}
-        <tr class="data-row" id="row-{{ r.id }}">
+        <tr class="data-row" id="row-{{ r.id }}"
+            data-lot-id="{{ r.lot_id if r.lot_id is not none else '' }}"
+            data-weight="{{ r.weight if r.weight is not none else '' }}"
+            data-length="{{ r.length if r.length is not none else '' }}">
 
           <!-- Vista normal -->
           <td class="view-mode">{{ r.pit if r.pit else '<span class="pit-muted">sin PIT</span>'|safe }}</td>
@@ -371,7 +427,7 @@
                      min="0.001" step="0.001" placeholder="g"
                      value="{{ '%.3f'|format(r.weight) if r.weight is not none else '' }}" />
               <input class="length-input" type="number" name="length"
-                     min="0.1" step="0.1" placeholder="mm"
+                     min="0.1" step="0.1" placeholder="cm"
                      value="{{ '%.1f'|format(r.length) if r.length is not none else '' }}" />
               <input class="notes-input" type="text" name="notes"
                      placeholder="Notas"
@@ -405,7 +461,7 @@
           <th>Lote</th>
           <th>N muestreado (sin PIT)</th>
           <th>Peso prom (g)</th>
-          <th>Long. prom (mm)</th>
+          <th>Long. prom (cm)</th>
           <th>Factor K</th>
         </tr>
       </thead>
@@ -427,65 +483,264 @@
 </div><!-- /.container -->
 
 <script>
-  const pitInput = document.getElementById('pit-input');
-  const lotDisplay = document.getElementById('lot-display');
-
-  // Mapa PIT → etiqueta de lote para mostrar en UI (solo informativo)
-  const pitToLot = {
-    {% for f in fish_options %}
-    "{{ f.pit }}": "{{ f.pit }}",
-    {% endfor %}
+  // ── Datos de validación (inyectados desde el servidor) ────────────────
+  const pitToLotId = {
+    {% for f in fish_options %}{% if f.pit and f.lot_id %}
+    "{{ f.pit }}": {{ f.lot_id }},
+    {% endif %}{% endfor %}
   };
-  // Lote del estanque (peces sin PIT)
+  const baseLotId    = {{ base_lot_id if base_lot_id is not none else 'null' }};
   const pondLotLabel = "{{ lot_options[0].label if lot_options|length == 1 else ('multi' if lot_options|length > 1 else '—') }}";
+
+  // lot_id → { avgWeight, species }  (solo lotes con pond_lot_stats para este estanque)
+  const lotValidation = {
+    {% for s in lot_stats %}{% if s.avg_weight %}
+    {{ s.lot_id }}: { avgWeight: {{ s.avg_weight }}, species: {% if s.species_name %}"{{ s.species_name }}"{% else %}null{% endif %} },
+    {% endif %}{% endfor %}
+  };
+
+  // K thresholds por especie: media ± 1.5 SD calculados sobre datos corregidos
+  const K_THRESHOLDS = {
+    "Beluga":   { min: 0.5062, max: 1.1397 },
+    "Oscietra": { min: 0.4271, max: 0.9709 },
+    "Sevruga":  { min: 0.2089, max: 0.6724 },
+  };
+  const WEIGHT_WARN  = 3;   // > 3× avg o < avg/3  → amarillo
+  const WEIGHT_ALERT = 10;  // > 10× avg o < avg/10 → rojo
+
+  // ── Función central de verificación ──────────────────────────────────
+  function checkRow(weight, length, lotId) {
+    const msgs = [];
+    let level = null;
+    const vd = lotValidation[lotId];
+
+    if (vd && vd.avgWeight > 0 && weight > 0) {
+      const ratio = weight / vd.avgWeight;
+      if (ratio >= WEIGHT_ALERT || ratio <= 1 / WEIGHT_ALERT) {
+        const desc = ratio >= 1 ? ratio.toFixed(0) + '×' : '1/' + (1 / ratio).toFixed(0) + '×';
+        msgs.push('Peso ' + desc + ' el promedio del lote (ref: ' + vd.avgWeight.toFixed(0) + ' g)');
+        level = 'alert';
+      } else if (ratio >= WEIGHT_WARN || ratio <= 1 / WEIGHT_WARN) {
+        const desc = ratio >= 1 ? ratio.toFixed(1) + '×' : '1/' + (1 / ratio).toFixed(1) + '×';
+        msgs.push('Peso ' + desc + ' el promedio del lote (ref: ' + vd.avgWeight.toFixed(0) + ' g)');
+        level = 'warn';
+      }
+    }
+
+    if (weight > 0 && length > 0 && vd && vd.species) {
+      const k = (weight / Math.pow(length, 3)) * 100;
+      const thr = K_THRESHOLDS[vd.species];
+      if (thr && (k < thr.min || k > thr.max)) {
+        msgs.push('K=' + k.toFixed(3) + ' fuera del rango ' + vd.species + ' [' + thr.min + '–' + thr.max + ']');
+        if (!level) level = 'warn';
+      }
+    }
+
+    return { level, msgs };
+  }
+
+  // ── Fila de ingreso de nuevo registro ─────────────────────────────────
+  const pitInput    = document.getElementById('pit-input');
+  const lotDisplay  = document.getElementById('lot-display');
+  const weightInput = document.getElementById('weight-input');
+  const lengthInput = document.getElementById('length-input');
+  const inputRow    = document.querySelector('tr.input-row');
+
+  function refreshInputRow() {
+    if (!inputRow || !weightInput || !lengthInput) return;
+    const w = parseFloat(weightInput.value) || 0;
+    const l = parseFloat(lengthInput.value)  || 0;
+    const pit = pitInput ? pitInput.value.trim().toUpperCase() : '';
+    const lotId = (pit && pitToLotId[pit] != null) ? pitToLotId[pit] : baseLotId;
+    const { level, msgs } = checkRow(w, l, lotId);
+
+    inputRow.classList.remove('row-warn', 'row-alert');
+    const wTd = weightInput.closest('td');
+    if (wTd) { const h = wTd.querySelector('.val-hint'); if (h) h.remove(); }
+
+    if (level && (w || l)) {
+      inputRow.classList.add(level === 'alert' ? 'row-alert' : 'row-warn');
+      if (msgs.length && wTd) {
+        const hint = document.createElement('div');
+        hint.className = 'val-hint ' + level;
+        hint.textContent = msgs.join(' · ');
+        wTd.appendChild(hint);
+      }
+    }
+  }
 
   if (pitInput) {
     pitInput.addEventListener('input', function () {
       const val = this.value.trim().toUpperCase();
       this.value = val;
-      if (lotDisplay) {
-        lotDisplay.textContent = val ? 'por PIT' : pondLotLabel;
-      }
-    });
-    pitInput.addEventListener('change', function () {
-      this.value = this.value.trim().toUpperCase();
+      if (lotDisplay) lotDisplay.textContent = val ? 'por PIT' : pondLotLabel;
+      refreshInputRow();
     });
   }
-
-  // Al hacer Enter en peso → salta a longitud
-  const weightInput = document.getElementById('weight-input');
-  const lengthInput = document.getElementById('length-input');
-  if (weightInput && lengthInput) {
+  if (weightInput) {
+    weightInput.addEventListener('input', refreshInputRow);
     weightInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); lengthInput.focus(); }
+      if (e.key === 'Enter') { e.preventDefault(); if (lengthInput) lengthInput.focus(); }
     });
+  }
+  if (lengthInput) {
+    lengthInput.addEventListener('input', refreshInputRow);
     lengthInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') {
         e.preventDefault();
-        document.getElementById('add-record-form').submit();
+        var f = document.getElementById('add-record-form');
+        if (f) f.submit();
       }
     });
+  }
+
+  // ── Filas de datos existentes ─────────────────────────────────────────
+  function applyDataRowStyle(row) {
+    const w = parseFloat(row.dataset.weight) || 0;
+    const l = parseFloat(row.dataset.length) || 0;
+    const lotId = row.dataset.lotId ? parseInt(row.dataset.lotId) : null;
+    row.classList.remove('row-warn', 'row-alert');
+    const vTds = Array.from(row.querySelectorAll('td.view-mode'));
+    if (vTds[2]) { const h = vTds[2].querySelector('.val-hint'); if (h) h.remove(); }
+    if (!w && !l) return;
+    const { level, msgs } = checkRow(w, l, lotId);
+    if (!level) return;
+    row.classList.add(level === 'alert' ? 'row-alert' : 'row-warn');
+    if (msgs.length && vTds[2]) {
+      const hint = document.createElement('div');
+      hint.className = 'val-hint ' + level;
+      hint.textContent = msgs.join(' · ');
+      vTds[2].appendChild(hint);
+    }
   }
 
   function startEdit(id) {
     const row = document.getElementById('row-' + id);
-    row.querySelectorAll('.view-mode').forEach(el => el.style.display = 'none');
-    row.querySelectorAll('.edit-mode').forEach(el => el.style.display = '');
+    row.querySelectorAll('.view-mode').forEach(function (el) { el.style.display = 'none'; });
+    row.querySelectorAll('.edit-mode').forEach(function (el) { el.style.display = ''; });
     row.classList.add('editing');
+    row.classList.remove('row-warn', 'row-alert');
+
+    const form  = row.querySelector('.edit-form-inline');
+    const wIn   = form ? form.querySelector('.weight-input') : null;
+    const lIn   = form ? form.querySelector('.length-input') : null;
+    const lotId = row.dataset.lotId ? parseInt(row.dataset.lotId) : null;
+
+    function validateEdit() {
+      const w = parseFloat(wIn ? wIn.value : '') || 0;
+      const l = parseFloat(lIn ? lIn.value : '')  || 0;
+      const { level, msgs } = checkRow(w, l, lotId);
+      row.classList.remove('row-warn', 'row-alert');
+      const old = form ? form.querySelector('.val-hint') : null;
+      if (old) old.remove();
+      if (!level) return;
+      row.classList.add(level === 'alert' ? 'row-alert' : 'row-warn');
+      if (msgs.length && form) {
+        const hint = document.createElement('div');
+        hint.className = 'val-hint ' + level;
+        hint.style.flexBasis = '100%';
+        hint.textContent = msgs.join(' · ');
+        form.appendChild(hint);
+      }
+    }
+
+    if (wIn) wIn.addEventListener('input', validateEdit);
+    if (lIn) lIn.addEventListener('input', validateEdit);
+    validateEdit();
   }
 
   function cancelEdit(id) {
     const row = document.getElementById('row-' + id);
-    row.querySelectorAll('.view-mode').forEach(el => el.style.display = '');
-    row.querySelectorAll('.edit-mode').forEach(el => el.style.display = 'none');
+    row.querySelectorAll('.view-mode').forEach(function (el) { el.style.display = ''; });
+    row.querySelectorAll('.edit-mode').forEach(function (el) { el.style.display = 'none'; });
     row.classList.remove('editing');
+    applyDataRowStyle(row);
   }
 
-  // Foco automático en el campo PIT al cargar
-  window.addEventListener('load', function () {
-    if (pitInput) pitInput.focus();
-  });
+  // Validar filas existentes al cargar la página
+  document.querySelectorAll('tr.data-row').forEach(applyDataRowStyle);
+
+  // ── Modal de confirmación antes de cerrar sesión ───────────────────────
+  var _pendingForm = null;
+
+  function beforeCloseSession(event) {
+    event.preventDefault();
+    var flagged = [];
+    document.querySelectorAll('tr.data-row').forEach(function (row) {
+      var w = parseFloat(row.dataset.weight) || 0;
+      var l = parseFloat(row.dataset.length) || 0;
+      var lotId = row.dataset.lotId ? parseInt(row.dataset.lotId) : null;
+      if (!w && !l) return;
+      var result = checkRow(w, l, lotId);
+      if (!result.level) return;
+      var vTds = Array.from(row.querySelectorAll('td.view-mode'));
+      flagged.push({
+        pit:    vTds[0] ? vTds[0].textContent.trim() : '—',
+        lot:    vTds[1] ? vTds[1].textContent.trim() : '—',
+        weight: w,
+        length: l,
+        level:  result.level,
+        msgs:   result.msgs,
+      });
+    });
+
+    if (flagged.length === 0) { event.target.submit(); return; }
+
+    var tbody = document.getElementById('modal-flags-body');
+    tbody.innerHTML = '';
+    flagged.forEach(function (f) {
+      var tr = document.createElement('tr');
+      var pitCell = f.pit || '<em style="color:#9ca3af">sin PIT</em>';
+      tr.innerHTML =
+        '<td>' + pitCell + '</td>' +
+        '<td>' + f.lot + '</td>' +
+        '<td>' + (f.weight > 0 ? f.weight.toFixed(1) : '—') + '</td>' +
+        '<td>' + (f.length > 0 ? f.length.toFixed(1) : '—') + '</td>' +
+        '<td class="flag-' + f.level + '">' + f.msgs.join('<br>') + '</td>';
+      tbody.appendChild(tr);
+    });
+
+    _pendingForm = event.target;
+    document.getElementById('confirm-modal').classList.add('open');
+  }
+
+  function modalConfirm() {
+    document.getElementById('confirm-modal').classList.remove('open');
+    if (_pendingForm) _pendingForm.submit();
+    _pendingForm = null;
+  }
+
+  function modalCancel() {
+    document.getElementById('confirm-modal').classList.remove('open');
+    _pendingForm = null;
+  }
+
+  window.addEventListener('load', function () { if (pitInput) pitInput.focus(); });
 </script>
+
+<!-- Modal de confirmación de cierre con alertas -->
+<div id="confirm-modal">
+  <div class="modal-box">
+    <div class="modal-title">⚠ Hay registros con alertas de validación</div>
+    <div class="modal-subtitle">Revisa los casos marcados antes de cerrar la sesión. Puedes cerrar igual o volver a revisar.</div>
+    <table class="modal-flags-table">
+      <thead>
+        <tr>
+          <th>PIT Tag</th>
+          <th>Lote</th>
+          <th>Peso (g)</th>
+          <th>Long. (cm)</th>
+          <th>Problema</th>
+        </tr>
+      </thead>
+      <tbody id="modal-flags-body"></tbody>
+    </table>
+    <div class="modal-actions">
+      <button class="btn-modal-cancel"  onclick="modalCancel()">← Revisar</button>
+      <button class="btn-modal-confirm" onclick="modalConfirm()">Cerrar igual →</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>

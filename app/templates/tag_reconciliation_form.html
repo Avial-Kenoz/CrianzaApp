@@ -192,9 +192,14 @@
         {% endif %}
 
         <div class="resolution-options">
+          <div class="resolution-option" style="border: 2px solid #10b981; background: #f0fdf4;">
+            <input type="radio" id="res_{{ ev.id }}_retagged" name="resolution_{{ ev.id }}"
+                   value="retagged_and_transferred" checked />
+            <label for="res_{{ ev.id }}_retagged" style="border-color: #10b981; color: #047857; font-weight: 700;">✓ Re-tagueado y trasladado<br><small class="resolution-note">Pez recibió nuevo PIT y fue movido a otra laguna</small></label>
+          </div>
           <div class="resolution-option">
             <input type="radio" id="res_{{ ev.id }}_left" name="resolution_{{ ev.id }}"
-                   value="left_unregistered" checked />
+                   value="left_unregistered" />
             <label for="res_{{ ev.id }}_left">Salió sin registrar<br><small class="resolution-note">Con el pool de peces sin tag</small></label>
           </div>
           <div class="resolution-option danger">

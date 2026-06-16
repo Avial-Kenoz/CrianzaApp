@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Integer, Numeric, TIMESTAMP, ForeignKey, DateTime, Text, Enum as SQLEnum
+from sqlalchemy import Column, BigInteger, String, Integer, Numeric, Float, TIMESTAMP, ForeignKey, DateTime, Text, Enum as SQLEnum, UniqueConstraint
 from app.db.session import Base
 import enum
 
@@ -189,3 +189,48 @@ class AccountingOutboxEvent(Base):
     created_at = Column(TIMESTAMP, nullable=True)
     sent_at = Column(TIMESTAMP, nullable=True)
     last_error = Column(Text, nullable=True)
+
+
+# ============================================================================
+# LEGACY IMPORT — consumo historico desde planillas Excel 2023-2026
+# ============================================================================
+
+class FeedMonthlyConsumptionLegacy(Base):
+    """Consumo mensual por estanque importado desde planillas Excel historicas."""
+    __tablename__ = "feed_monthly_consumption_legacy"
+
+    id             = Column(BigInteger, primary_key=True, autoincrement=True)
+    year           = Column(Integer, nullable=False)
+    month          = Column(Integer, nullable=False)
+    pond_code      = Column(String(10), nullable=False)
+    pond_id        = Column(BigInteger, ForeignKey("ponds.id"), nullable=True, index=True)
+    feed_type_raw  = Column(String(120), nullable=False)
+    feed_type_key  = Column(String(60), nullable=False)
+    consumed_kg    = Column(Float, nullable=False)
+    source_file    = Column(String(200), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("year", "month", "pond_code", "feed_type_key",
+                         name="uq_feed_monthly_legacy"),
+    )
+
+
+class FeedMonthlyStockLegacy(Base):
+    """Resumen mensual de stock (inicial, ingresos, consumido, final) por tipo de alimento."""
+    __tablename__ = "feed_monthly_stock_legacy"
+
+    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    year          = Column(Integer, nullable=False)
+    month         = Column(Integer, nullable=False)
+    feed_type_key = Column(String(60), nullable=False)
+    feed_type_raw = Column(String(120), nullable=False)
+    initial_kg    = Column(Float, nullable=True)
+    receipts_kg   = Column(Float, nullable=True)
+    consumed_kg   = Column(Float, nullable=True)
+    final_kg      = Column(Float, nullable=True)
+    source_file   = Column(String(200), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("year", "month", "feed_type_key",
+                         name="uq_feed_monthly_stock_legacy"),
+    )
