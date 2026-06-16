@@ -5495,11 +5495,12 @@ def ui_tag_reconciliation_form(
         TagDetachmentEvent.resolved_at.is_(None),
     ).order_by(TagDetachmentEvent.event_date.asc()).all()
 
-    if not pending:
-        return RedirectResponse(
-            url=f"/views/ui/ponds/{pond_id}?status=ok&msg=No+hay+eventos+pendientes+de+reconciliaci%C3%B3n.",
-            status_code=303,
-        )
+    # Eventos ya resueltos (para mostrar como información)
+    resolved = db.query(TagDetachmentEvent).filter(
+        TagDetachmentEvent.pond_id == pond_id,
+        TagDetachmentEvent.status == "written_off",
+        TagDetachmentEvent.resolved_at.isnot(None),
+    ).all()
 
     # Validación: contar eventos re-tagueados vs peces actuales en laguna
     unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
@@ -5535,6 +5536,29 @@ def ui_tag_reconciliation_form(
         for e in events_retagged
     ]
 
+    # Si no hay eventos pendientes pero sí hay eventos resueltos, mostrar un estado de finalizado
+    if not pending and resolved:
+        return RedirectResponse(
+            url=f"/views/ui/ponds/{pond_id}?status=ok&msg=%E2%9C%93+Todos+los+eventos+de+p%C3%A9rdida+de+tag+han+sido+reconciliados.",
+            status_code=303,
+        )
+
+    # Si no hay eventos pendientes ni resueltos, no hay nada que hacer
+    if not pending and not resolved:
+        return RedirectResponse(
+            url=f"/views/ui/ponds/{pond_id}?status=ok&msg=No+hay+eventos+pendientes+de+reconciliaci%C3%B3n.",
+            status_code=303,
+        )
+
+    # Obtener lotes disponibles (los que tienen peces en esta laguna)
+    current_fish = _get_current_tagged_fish_in_pond(pond_id, db)
+    lot_ids = set(f.lot_id for f in current_fish if f.lot_id)
+    lots = db.query(Lot).filter(Lot.id.in_(lot_ids)).all() if lot_ids else []
+    lot_options = [
+        {"id": lot.id, "label": lot.internal_id or lot.name}
+        for lot in sorted(lots, key=lambda l: l.internal_id or l.name)
+    ]
+
     template = jinja_env.get_template("tag_reconciliation_form.html")
     html = template.render({
         "request": request,
@@ -5543,8 +5567,12 @@ def ui_tag_reconciliation_form(
         "events_retagged": events_data_retagged,
         "events_retagged_count": events_retagged_count,
         "current_fish_count": current_fish_count,
+        "tagged_total": tagged_total,
+        "unregistered_total": unregistered_total,
         "numbers_match": numbers_match,
         "allow_bulk_reconciliation": allow_bulk_reconciliation,
+        "resolved_count": len(resolved),
+        "lot_options": lot_options,
     })
     return HTMLResponse(content=html)
 
@@ -5596,6 +5624,9 @@ async def ui_tag_reconciliation_bulk_save(
             event.resolution = "retagged_and_transferred"
             event.resolved_at = now
 
+        # Registrar fecha de última reconciliación de tags en el estanque
+        pond.last_tag_reconciliation_at = now
+
         db.commit()
         return go("ok", f"✓ {len(pending)} evento(s) reconciliados masivamente como re-tagueados y trasladados.")
     except Exception:
@@ -5645,21 +5676,67 @@ async def ui_tag_reconciliation_save(
 
         # Procesar peces faltantes (si existen)
         missing_resolution = form.get("resolution_missing_peces")
+        missing_lot_id_str = form.get("missing_peces_lot_id", "").strip()
         missing_count = current_fish_count - len([e for e in pending if e.status == "retagged"])
 
         if missing_count > 0 and missing_resolution:
-            # Crear eventos virtuales para los peces faltantes
-            for i in range(missing_count):
-                missing_event = TagDetachmentEvent(
-                    pond_id=pond_id,
-                    fish_id=None,
-                    event_date=datetime.utcnow().date(),
-                    notes="[Pez sin evento de pérdida]",
-                    status="written_off",
-                    resolution=missing_resolution,
-                    resolved_at=now,
-                )
-                db.add(missing_event)
+            # Si hay error de inventario y se requiere crear peces, obtener el lote
+            missing_lot_id = None
+            if missing_resolution == "other" and missing_lot_id_str:
+                try:
+                    missing_lot_id = int(missing_lot_id_str)
+                except (ValueError, TypeError):
+                    pass
+
+            if missing_resolution == "other" and not missing_lot_id:
+                db.rollback()
+                return go("error", "Se debe seleccionar un lote para asignar los peces del error de inventario.")
+
+            # Crear peces reales si es error de inventario con lote válido
+            if missing_lot_id:
+                # Generar internal_ids automáticos para los peces nuevos
+                existing_count = db.query(func.count(Fish.id)).filter(Fish.lot_id == missing_lot_id).scalar() or 0
+                new_fish = []
+                for i in range(missing_count):
+                    fish = Fish(
+                        lot_id=missing_lot_id,
+                        internal_id=f"INVEN-ERR-{pond_id}-{existing_count + i + 1}",
+                        state="alive",
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    db.add(fish)
+                    new_fish.append(fish)
+                db.flush()  # Asegurar que los IDs se generen
+
+                # Crear eventos para los peces nuevos
+                for fish in new_fish:
+                    missing_event = TagDetachmentEvent(
+                        pond_id=pond_id,
+                        fish_id=fish.id,
+                        event_date=datetime.utcnow().date(),
+                        notes=f"[Pez sin evento de pérdida - Error de inventario] Lote {missing_lot_id}",
+                        status="written_off",
+                        resolution=missing_resolution,
+                        resolved_at=now,
+                    )
+                    db.add(missing_event)
+            else:
+                # Sin lote: crear solo eventos virtuales
+                for i in range(missing_count):
+                    missing_event = TagDetachmentEvent(
+                        pond_id=pond_id,
+                        fish_id=None,
+                        event_date=datetime.utcnow().date(),
+                        notes="[Pez sin evento de pérdida]",
+                        status="written_off",
+                        resolution=missing_resolution,
+                        resolved_at=now,
+                    )
+                    db.add(missing_event)
+
+        # Registrar fecha de última reconciliación de tags en el estanque
+        pond.last_tag_reconciliation_at = now
 
         db.commit()
         events_processed = len(pending) + (missing_count if missing_count > 0 else 0)
