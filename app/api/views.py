@@ -2400,10 +2400,11 @@ def ui_pond_detail(
 
     all_ponds = db.query(Pond).filter(Pond.state != "inactive").order_by(Pond.name).all()
 
-    # Eventos de pérdida de tag pendientes (sin re-tagear) en este estanque
+    # Eventos de pérdida de tag pendientes (sin re-tagear O re-tagueados sin reconciliar) en este estanque
     pending_detachment_events = db.query(TagDetachmentEvent).filter(
         TagDetachmentEvent.pond_id == pond_id,
-        TagDetachmentEvent.status == "unidentified",
+        TagDetachmentEvent.status.in_(["unidentified", "retagged"]),
+        TagDetachmentEvent.resolved_at.is_(None),
     ).order_by(TagDetachmentEvent.event_date.asc()).all()
 
     unregistered_lot_ids = list(unregistered_balances.keys())
