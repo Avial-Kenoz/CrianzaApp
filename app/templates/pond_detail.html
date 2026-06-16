@@ -1007,36 +1007,31 @@
         </button>
         <div class="action-card__body">
           {% if pending_detachment_events %}
+          {% set unidentified_count = pending_detachment_events|selectattr('status', 'equalto', 'unidentified')|list|length %}
+          {% set retagged_count = pending_detachment_events|selectattr('status', 'equalto', 'retagged')|list|length %}
           <div class="tagloss-pending-wrap">
             <p class="tagloss-pending-title">
-              {{ pending_detachment_events|length }} pez(ces) sin tag pendiente(s) de re-tag:
+              Pérdida de PIT tag:
             </p>
-            {% for ev in pending_detachment_events %}
-            <div class="tagloss-pending-row">
-              <span>
-                #{{ ev.id }}
-                {% if ev.event_date %} — {{ ev.event_date.strftime('%d/%m/%Y') }}{% endif %}
-                {% if ev.notes %} · {{ ev.notes[:40] }}{% if ev.notes|length > 40 %}…{% endif %}{% endif %}
-                {% if ev.status == 'retagged' %}<span style="color: #10b981; font-weight: 600; margin-left: 8px;">✓ Re-tagueado</span>{% endif %}
-              </span>
-              {% if ev.status == 'unidentified' %}
-              <a href="/views/ui/ponds/{{ pond.id }}/retag/{{ ev.id }}"
-                 class="tagloss-retag-link">
-                Re-tag
-              </a>
+            <div style="display: flex; gap: 12px; margin-bottom: 12px;">
+              {% if unidentified_count > 0 %}
+              <div style="flex: 1; padding: 8px 12px; background: #fef3c7; border-radius: 6px; border-left: 3px solid #f59e0b;">
+                <div style="font-size: 0.75rem; color: #92400e; font-weight: 600; margin-bottom: 2px;">Sin re-tag</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: #92400e;">{{ unidentified_count }}</div>
+              </div>
+              {% endif %}
+              {% if retagged_count > 0 %}
+              <div style="flex: 1; padding: 8px 12px; background: #dcfce7; border-radius: 6px; border-left: 3px solid #10b981;">
+                <div style="font-size: 0.75rem; color: #047857; font-weight: 600; margin-bottom: 2px;">Re-tagueados</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: #047857;">{{ retagged_count }}</div>
+              </div>
               {% endif %}
             </div>
-            {% endfor %}
-            <div style="margin-top: 14px; padding-top: 14px; border-top: 1px solid #e5e7eb;">
-              <a href="/views/ui/ponds/{{ pond.id }}/tag-reconciliation"
-                 class="action-btn action-btn--tagloss"
-                 style="display: inline-block; width: auto;">
-                ✓ Reconciliar al vaciar estanque
-              </a>
-              <p style="margin-top: 6px; font-size: 0.78rem; color: #6b7280; line-height: 1.3;">
-                Usa esta opción al final cuando hayas re-taggeado o descartado todos los peces. Cierra los eventos definitivamente.
-              </p>
-            </div>
+            <a href="/views/ui/ponds/{{ pond.id }}/tag-reconciliation"
+               class="action-btn action-btn--tagloss"
+               style="display: inline-block; width: auto;">
+              → Vaciar Estanque
+            </a>
           </div>
           {% else %}
           <p class="action-card__empty action-card__empty--mb">Sin peces pendientes de re-tag.</p>
