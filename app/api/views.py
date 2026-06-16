@@ -5487,9 +5487,11 @@ def ui_tag_reconciliation_form(
     if not pond:
         raise HTTPException(status_code=404, detail="Pond not found")
 
+    # Eventos pendientes de reconciliación: unidentified O retagged sin resolver aún
     pending = db.query(TagDetachmentEvent).filter(
         TagDetachmentEvent.pond_id == pond_id,
-        TagDetachmentEvent.status == "unidentified",
+        TagDetachmentEvent.status.in_(["unidentified", "retagged"]),
+        TagDetachmentEvent.resolved_at.is_(None),
     ).order_by(TagDetachmentEvent.event_date.asc()).all()
 
     if not pending:
@@ -5549,9 +5551,11 @@ async def ui_tag_reconciliation_bulk_save(
             status_code=303,
         )
 
+    # Eventos pendientes de reconciliación: unidentified O retagged sin resolver aún
     pending = db.query(TagDetachmentEvent).filter(
         TagDetachmentEvent.pond_id == pond_id,
-        TagDetachmentEvent.status == "unidentified",
+        TagDetachmentEvent.status.in_(["unidentified", "retagged"]),
+        TagDetachmentEvent.resolved_at.is_(None),
     ).all()
 
     if not pending:
@@ -5605,9 +5609,11 @@ async def ui_tag_reconciliation_save(
     form = await request.form()
     now = datetime.utcnow()
 
+    # Eventos pendientes de reconciliación: unidentified O retagged sin resolver aún
     pending = db.query(TagDetachmentEvent).filter(
         TagDetachmentEvent.pond_id == pond_id,
-        TagDetachmentEvent.status == "unidentified",
+        TagDetachmentEvent.status.in_(["unidentified", "retagged"]),
+        TagDetachmentEvent.resolved_at.is_(None),
     ).all()
 
     if not pending:
