@@ -244,63 +244,66 @@ def _calculate_current_fish_count_by_movements(pond_id: int, db: Session) -> int
     Nota: puede resultar en inconsistencia útil: COUNT puede ser < peces visibles en listado,
     indicando que el exceso son peces "virtuales" (re-tagged sin resolver aún).
     """
-    # 1. Peces entrada (con tag o sin tag)
-    in_tagged = (
-        db.query(func.count(PondMovement.id))
-        .filter(
-            PondMovement.destiny_pond_id == pond_id,
-            PondMovement.fish_id.isnot(None),
+    try:
+        # 1. Peces entrada (con tag o sin tag)
+        in_tagged = (
+            db.query(func.count(PondMovement.id))
+            .filter(
+                PondMovement.destiny_pond_id == pond_id,
+                PondMovement.fish_id.isnot(None),
+            )
+            .scalar() or 0
         )
-        .scalar() or 0
-    )
 
-    in_untagged = (
-        db.query(func.coalesce(func.sum(PondMovement.fish_quantity), 0))
-        .filter(
-            PondMovement.destiny_pond_id == pond_id,
-            PondMovement.fish_id.is_(None),
+        in_untagged = (
+            db.query(func.coalesce(func.sum(PondMovement.fish_quantity), 0))
+            .filter(
+                PondMovement.destiny_pond_id == pond_id,
+                PondMovement.fish_id.is_(None),
+            )
+            .scalar() or 0
         )
-        .scalar() or 0
-    )
 
-    in_total = in_tagged + in_untagged
+        in_total = in_tagged + in_untagged
 
-    # 2. Peces salida (con tag o sin tag)
-    out_tagged = (
-        db.query(func.count(PondMovement.id))
-        .filter(
-            PondMovement.source_pond_id == pond_id,
-            PondMovement.fish_id.isnot(None),
+        # 2. Peces salida (con tag o sin tag)
+        out_tagged = (
+            db.query(func.count(PondMovement.id))
+            .filter(
+                PondMovement.source_pond_id == pond_id,
+                PondMovement.fish_id.isnot(None),
+            )
+            .scalar() or 0
         )
-        .scalar() or 0
-    )
 
-    out_untagged = (
-        db.query(func.coalesce(func.sum(PondMovement.fish_quantity), 0))
-        .filter(
-            PondMovement.source_pond_id == pond_id,
-            PondMovement.fish_id.is_(None),
+        out_untagged = (
+            db.query(func.coalesce(func.sum(PondMovement.fish_quantity), 0))
+            .filter(
+                PondMovement.source_pond_id == pond_id,
+                PondMovement.fish_id.is_(None),
+            )
+            .scalar() or 0
         )
-        .scalar() or 0
-    )
 
-    out_total = out_tagged + out_untagged
+        out_total = out_tagged + out_untagged
 
-    # 3. Re-tags desde última reconciliación (no duplicar)
-    pond = db.query(Pond).filter(Pond.id == pond_id).first()
-    last_recon = pond.last_tag_reconciliation_at if pond else None
+        # 3. Re-tags sin resolver (restar para no duplicar)
+        retagged_since = (
+            db.query(func.count(TagDetachmentEvent.id))
+            .filter(
+                TagDetachmentEvent.pond_id == pond_id,
+                TagDetachmentEvent.status == "retagged",
+                TagDetachmentEvent.resolved_at.is_(None),
+            )
+            .scalar() or 0
+        )
 
-    q = db.query(func.count(TagDetachmentEvent.id)).filter(
-        TagDetachmentEvent.pond_id == pond_id,
-        TagDetachmentEvent.status == "retagged",
-        TagDetachmentEvent.resolved_at.is_(None),
-    )
-    if last_recon:
-        q = q.filter(TagDetachmentEvent.event_date > last_recon)
-
-    retagged_since = q.scalar() or 0
-
-    return int(in_total - out_total - retagged_since)
+        return int(in_total - out_total - retagged_since)
+    except Exception:
+        # Fallback: usar el método antiguo si hay error
+        unregistered_total = sum(_get_unregistered_balances_by_lot(pond_id, db).values())
+        tagged_total = len(_get_current_tagged_fish_in_pond(pond_id, db))
+        return tagged_total + unregistered_total
 
 
 def _as_int_dict(raw_value) -> dict[int, int]:
