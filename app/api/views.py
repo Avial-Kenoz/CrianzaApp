@@ -5503,6 +5503,12 @@ def ui_tag_reconciliation_form(
     unregistered_total = sum(unregistered_balances.values())
     tagged_total = len(_get_current_tagged_fish_in_pond(pond_id, db))
 
+    # Validación: contar eventos declarados vs peces en laguna
+    declared_events_count = len(pending)
+    current_fish_count = tagged_total + unregistered_total
+    numbers_match = declared_events_count == current_fish_count
+    allow_bulk_reconciliation = numbers_match and current_fish_count > 0
+
     events_data = [
         {
             "id": e.id,
@@ -5519,8 +5525,64 @@ def ui_tag_reconciliation_form(
         "events": events_data,
         "unregistered_total": unregistered_total,
         "tagged_total": tagged_total,
+        "declared_events_count": declared_events_count,
+        "current_fish_count": current_fish_count,
+        "numbers_match": numbers_match,
+        "allow_bulk_reconciliation": allow_bulk_reconciliation,
     })
     return HTMLResponse(content=html)
+
+
+@router.post("/ui/ponds/{pond_id}/tag-reconciliation/bulk")
+async def ui_tag_reconciliation_bulk_save(
+    pond_id: int,
+    db: Session = Depends(get_db),
+):
+    """Reconciliación masiva: marca todos los eventos como 'retagged_and_transferred'."""
+    pond = db.query(Pond).filter(Pond.id == pond_id).first()
+    if not pond:
+        raise HTTPException(status_code=404, detail="Pond not found")
+
+    def go(s, m):
+        return RedirectResponse(
+            url=f"/views/ui/ponds/{pond_id}?status={s}&msg={quote_plus(m)}",
+            status_code=303,
+        )
+
+    pending = db.query(TagDetachmentEvent).filter(
+        TagDetachmentEvent.pond_id == pond_id,
+        TagDetachmentEvent.status == "unidentified",
+    ).all()
+
+    if not pending:
+        return go("ok", "No había eventos pendientes.")
+
+    # Re-validar que los números sigan coincidiendo
+    unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
+    unregistered_total = sum(unregistered_balances.values())
+    tagged_total = len(_get_current_tagged_fish_in_pond(pond_id, db))
+    current_fish_count = tagged_total + unregistered_total
+    declared_events_count = len(pending)
+
+    if declared_events_count != current_fish_count:
+        return go(
+            "error",
+            f"Los números no coinciden: {declared_events_count} eventos vs {current_fish_count} peces. "
+            f"Reconcilia manualmente para revisar cada evento."
+        )
+
+    try:
+        now = datetime.utcnow()
+        for event in pending:
+            event.status = "written_off"
+            event.resolution = "retagged_and_transferred"
+            event.resolved_at = now
+
+        db.commit()
+        return go("ok", f"✓ {len(pending)} evento(s) reconciliados masivamente como re-tagueados y trasladados.")
+    except Exception:
+        db.rollback()
+        return go("error", "No se pudo completar la reconciliación masiva.")
 
 
 @router.post("/ui/ponds/{pond_id}/tag-reconciliation")
@@ -5529,6 +5591,7 @@ async def ui_tag_reconciliation_save(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    """Reconciliación manual: permite resolver cada evento individualmente."""
     pond = db.query(Pond).filter(Pond.id == pond_id).first()
     if not pond:
         raise HTTPException(status_code=404, detail="Pond not found")

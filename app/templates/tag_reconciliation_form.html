@@ -166,18 +166,69 @@
     </div>
   </div>
 
-  <div class="card">
-    <h2>Declarar destino de cada pez sin tag</h2>
+  <!-- Validación de números -->
+  <div class="card" style="{% if numbers_match %}background: #f0fdf4; border: 2px solid #10b981;{% else %}background: #fef2f2; border: 2px solid #dc2626;{% endif %}">
+    <h2 style="{% if numbers_match %}color: #047857;{% else %}color: #991b1b;{% endif %}">
+      {% if numbers_match %}✓ Validación exitosa{% else %}⚠️ Inconsistencia detectada{% endif %}
+    </h2>
     <p class="subtitle">
-      Para cada evento de pérdida de tag pendiente, indique cómo fue resuelto al vaciar el estanque.
+      <strong>Peces declarados con pit-tag caído:</strong> {{ declared_events_count }}<br>
+      <strong>Peces actualmente en laguna:</strong> {{ current_fish_count }}<br>
+      {% if numbers_match %}
+      <strong style="color: #047857;">Los números coinciden → Reconciliación masiva disponible</strong>
+      {% else %}
+      <strong style="color: #991b1b;">Los números NO coinciden (diferencia: {{ declared_events_count - current_fish_count|abs }}) → Debes reconciliar manualmente</strong>
+      {% endif %}
+    </p>
+  </div>
+
+  {% if allow_bulk_reconciliation %}
+  <!-- Opción 1: Reconciliación masiva (cuando los números coinciden) -->
+  <div class="card" style="background: #f0fdf4; border: 2px solid #10b981;">
+    <h2 style="color: #047857;">✓ Reconciliación masiva</h2>
+    <p class="subtitle">
+      Todos los {{ declared_events_count }} peces fueron re-tagueados y trasladados a otras lagunas.
+      Marca todos los eventos como resueltos de una sola vez.
+    </p>
+
+    <div class="alert-box" style="background: #dcfce7; border-color: #10b981; color: #047857;">
+      <strong>Operación segura.</strong> Se marcarán todos los {{ declared_events_count }} eventos
+      como "Re-tagueado y trasladado". Esta es la operación estándar al vaciar una laguna.
+    </div>
+
+    <div class="btn-row">
+      <form method="post" action="/views/ui/ponds/{{ pond.id }}/tag-reconciliation/bulk" style="margin: 0;">
+        <button type="submit" class="btn btn-primary" style="background: #10b981; font-size: 1rem;">
+          ✓ Reconciliar masivamente ({{ declared_events_count }} peces)
+        </button>
+      </form>
+    </div>
+
+    <p style="margin-top: 16px; font-size: 0.85rem; color: #6b7280; border-top: 1px solid #d1fae5; padding-top: 12px;">
+      ¿Prefieres revisar cada evento individualmente?
+      <a href="#manual-reconciliation" style="color: #0891b2; text-decoration: underline;">Ir a reconciliación manual</a>
+    </p>
+  </div>
+  {% endif %}
+
+  <!-- Opción 2: Reconciliación manual -->
+  <div class="card" id="manual-reconciliation">
+    <h2>{% if allow_bulk_reconciliation %}Reconciliación manual (opcional){% else %}Declarar destino de cada pez sin tag{% endif %}</h2>
+    <p class="subtitle">
+      {% if allow_bulk_reconciliation %}
+      Para cada evento de pérdida de tag pendiente, indique cómo fue resuelto al vaciar el estanque (opcional).
+      {% else %}
+      Los números no coinciden. Para cada evento de pérdida de tag pendiente, indique cómo fue resuelto.
+      {% endif %}
       Esta acción cierra los eventos definitivamente y no puede deshacerse.
     </p>
 
-    <div class="alert-box">
-      <strong>Acción de superusuario.</strong> Al confirmar, todos los eventos seleccionados
-      quedan marcados como <em>cerrados</em>. Los contadores del estanque no cambian aquí —
-      asegúrese de haber vaciado ya los peces sin registrar antes de reconciliar.
+    {% if not allow_bulk_reconciliation %}
+    <div class="alert-box" style="background: #fef2f2; border-color: #dc2626; color: #991b1b;">
+      <strong>Revisión requerida.</strong> Los números no coinciden ({{ declared_events_count }} eventos vs {{ current_fish_count }} peces).
+      Debes reconciliar manualmente para revisar qué sucedió con cada pez.
     </div>
+    {% endif %}
 
     <form method="post" action="/views/ui/ponds/{{ pond.id }}/tag-reconciliation">
 
@@ -217,13 +268,32 @@
       {% endfor %}
 
       <div class="btn-row">
-        <button type="submit" class="btn btn-primary">Confirmar reconciliación ({{ events|length }} eventos)</button>
+        <button type="submit" class="btn btn-primary">Confirmar reconciliación manual ({{ events|length }} eventos)</button>
         <a href="/views/ui/ponds/{{ pond.id }}" class="btn btn-cancel">Cancelar</a>
       </div>
     </form>
   </div>
 
 </div>
+
+<style>
+  .btn-row { display: flex; gap: 10px; margin-top: 24px; }
+  .btn {
+    padding: 11px 24px;
+    border-radius: 8px;
+    font-size: .9rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+  }
+  .btn-primary { background: #6366f1; color: #fff; }
+  .btn-cancel  { background: #f3f4f6; color: #374151; }
+  .btn-primary:hover { background: #4338ca; }
+  .btn-cancel:hover  { background: #e5e7eb; }
+</style>
 
 </body>
 </html>
