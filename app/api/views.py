@@ -5511,20 +5511,36 @@ def ui_tag_reconciliation_form(
     numbers_match = events_retagged_count == current_fish_count
     allow_bulk_reconciliation = numbers_match
 
-    events_data = [
+    # Separar eventos: sin resolver primero, luego re-tagueados
+    events_unidentified = [e for e in pending if e.status == "unidentified"]
+    events_retagged = [e for e in pending if e.status == "retagged"]
+
+    events_data_unidentified = [
         {
             "id": e.id,
             "event_date": e.event_date,
             "notes": e.notes or "",
+            "status": e.status,
         }
-        for e in pending
+        for e in events_unidentified
+    ]
+
+    events_data_retagged = [
+        {
+            "id": e.id,
+            "event_date": e.event_date,
+            "notes": e.notes or "",
+            "status": e.status,
+        }
+        for e in events_retagged
     ]
 
     template = jinja_env.get_template("tag_reconciliation_form.html")
     html = template.render({
         "request": request,
         "pond": pond,
-        "events": events_data,
+        "events_unidentified": events_data_unidentified,
+        "events_retagged": events_data_retagged,
         "events_retagged_count": events_retagged_count,
         "current_fish_count": current_fish_count,
         "numbers_match": numbers_match,

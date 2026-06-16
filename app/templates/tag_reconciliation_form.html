@@ -232,7 +232,8 @@
 
     <form method="post" action="/views/ui/ponds/{{ pond.id }}/tag-reconciliation">
 
-      {% for ev in events %}
+      <!-- Primero: Eventos sin resolución (necesitan decisión) -->
+      {% for ev in events_unidentified %}
       <div class="event-row">
         <div class="ev-header">
           <span class="ev-id">Evento #{{ ev.id }}</span>
@@ -267,8 +268,34 @@
       </div>
       {% endfor %}
 
+      <!-- Segundo: Eventos ya re-tagueados (con resolución pre-seleccionada) -->
+      {% if events_retagged|length > 0 %}
+      <div style="margin-top: 24px; padding-top: 24px; border-top: 2px solid #e5e7eb;">
+        <h3 style="color: #047857; margin-bottom: 16px;">✓ Eventos ya re-tagueados ({{ events_retagged|length }})</h3>
+        {% for ev in events_retagged %}
+        <div class="event-row" style="background: #f0fdf4; border-color: #10b981;">
+          <div class="ev-header">
+            <span class="ev-id">Evento #{{ ev.id }}</span>
+            <span class="ev-date">{{ ev.event_date.strftime('%d/%m/%Y') if ev.event_date else '—' }}</span>
+          </div>
+          {% if ev.notes %}
+          <p class="ev-notes">{{ ev.notes }}</p>
+          {% endif %}
+
+          <div class="resolution-options">
+            <div class="resolution-option" style="border: 2px solid #10b981; background: #dcfce7;">
+              <input type="radio" id="res_{{ ev.id }}_retagged" name="resolution_{{ ev.id }}"
+                     value="retagged_and_transferred" checked disabled />
+              <label for="res_{{ ev.id }}_retagged" style="border-color: #10b981; color: #047857; font-weight: 700; cursor: default;">✓ Re-tagueado y trasladado<br><small class="resolution-note">Confirmado</small></label>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
       <div class="btn-row">
-        <button type="submit" class="btn btn-primary">Confirmar reconciliación manual ({{ events|length }} eventos)</button>
+        <button type="submit" class="btn btn-primary">Confirmar reconciliación ({{ events_unidentified|length + events_retagged|length }} eventos)</button>
         <a href="/views/ui/ponds/{{ pond.id }}" class="btn btn-cancel">Cancelar</a>
       </div>
     </form>
