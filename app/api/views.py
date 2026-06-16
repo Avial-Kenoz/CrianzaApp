@@ -237,10 +237,12 @@ def _get_unregistered_balances_by_lot(pond_id: int, db: Session) -> dict[int, in
 
 def _calculate_current_fish_count_by_movements(pond_id: int, db: Session) -> int:
     """
-    Calcula recuento actual de peces en estanque usando movimientos + re-tags.
-    Fórmula: IN - OUT + RETAGGED_SINCE_LAST_RECONCILIATION
+    Calcula recuento actual de peces en estanque usando movimientos - re-tags.
+    Fórmula: IN - OUT - RETAGGED_UNRESOLVED
 
-    Evita duplicación de biomasa al no contar peces re-taggeados dos veces.
+    Los re-taggeados se restan porque generan duplicación en la BD (se crean como peces nuevos).
+    Nota: puede resultar en inconsistencia útil: COUNT puede ser < peces visibles en listado,
+    indicando que el exceso son peces "virtuales" (re-tagged sin resolver aún).
     """
     # 1. Peces entrada (con tag o sin tag)
     in_tagged = (
@@ -298,7 +300,7 @@ def _calculate_current_fish_count_by_movements(pond_id: int, db: Session) -> int
 
     retagged_since = q.scalar() or 0
 
-    return int(in_total - out_total + retagged_since)
+    return int(in_total - out_total - retagged_since)
 
 
 def _as_int_dict(raw_value) -> dict[int, int]:
