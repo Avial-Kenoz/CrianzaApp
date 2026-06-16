@@ -63,6 +63,12 @@
       font-size: .8rem;
       line-height: 1.25;
     }
+    .card-wide { grid-column: span 2; }
+    .card-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+    .card-table thead { background: transparent !important; color: inherit !important; }
+    .card-table thead th { background: transparent !important; color: #9ca3af !important; font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; padding: 4px 10px; text-align: center; border-bottom: 1px solid #f3f4f6; white-space: nowrap; position: static !important; }
+    .card-table tbody td { font-size: 1.1rem; font-weight: 700; text-align: center; padding: 4px 10px; }
+    .card-table-wrap { overflow-x: auto; margin-top: 2px; }
     .female-destination-select {
       width: 100%;
       border: 1px solid #d1d5db;
@@ -573,16 +579,67 @@
 
   <div class="container">
     <div class="stats">
+
+      <!-- 1. Peces total -->
       <div class="card">
         <div class="label">Peces (con / sin PIT)</div>
         <div class="value">{{ tagged_count }} / {{ unregistered_count }}</div>
       </div>
-      <div class="card">
-        <div class="label">Hembras estado 4 (Caviar)</div>
-        <div class="value">{{ female_state_4_count }}</div>
-        <div class="subline">Biomasa estado 4: {{ '%.1f'|format(female_state_4_biomass_kg) }} kg</div>
-        <div class="subline">Caviar estimado (12,5%): {{ '%.1f'|format(caviar_estimated_kg) }} kg</div>
+
+      <!-- 2. Recuento por lote -->
+      <div class="card card-wide">
+        <div class="label">Peces por lote</div>
+        {% if fish_by_lot %}
+        <div class="card-table-wrap">
+          <table class="card-table">
+            <thead style="background:transparent;color:#9ca3af;"><tr>
+              {% for abbr in fish_by_lot.keys() %}<th>{{ abbr }}</th>{% endfor %}
+            </tr></thead>
+            <tbody><tr>
+              {% for count in fish_by_lot.values() %}<td>{{ count }}</td>{% endfor %}
+            </tr></tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="subline">Sin datos</div>
+        {% endif %}
       </div>
+
+      <!-- 3. Recuento por sexo -->
+      <div class="card">
+        <div class="label">Peces por sexo</div>
+        <div class="card-table-wrap">
+          <table class="card-table">
+            <thead style="background:transparent;color:#9ca3af;"><tr><th>Hembras</th><th>Machos</th><th>Sin info</th></tr></thead>
+            <tbody><tr>
+              <td>{{ sex_count_f }}</td>
+              <td>{{ sex_count_m }}</td>
+              <td>{{ sex_count_u }}</td>
+            </tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 4. Hembras por estado de desarrollo -->
+      <div class="card card-wide">
+        <div class="label">Hembras por estado</div>
+        {% if females_by_state %}
+        <div class="card-table-wrap">
+          <table class="card-table">
+            <thead style="background:transparent;color:#9ca3af;"><tr>
+              {% for state in females_by_state.keys() %}<th>{{ state }}</th>{% endfor %}
+            </tr></thead>
+            <tbody><tr>
+              {% for count in females_by_state.values() %}<td>{{ count }}</td>{% endfor %}
+            </tr></tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="subline">Sin hembras registradas</div>
+        {% endif %}
+      </div>
+
+      <!-- 5. Destino movimiento peces -->
       <div class="card">
         <div class="label">Destino hembras marcadas</div>
         <select id="femaleDestPondSelect" class="female-destination-select" aria-label="Destino de hembras marcadas">
@@ -593,6 +650,7 @@
         </select>
         <div class="female-destination-hint">Se aplicará automáticamente al registrar un pez con sexo Hembra.</div>
       </div>
+
     </div>
 
     {% if msg %}
@@ -966,6 +1024,16 @@
               </a>
             </div>
             {% endfor %}
+            <div style="margin-top: 14px; padding-top: 14px; border-top: 1px solid #e5e7eb;">
+              <a href="/views/ui/ponds/{{ pond.id }}/tag-reconciliation"
+                 class="action-btn action-btn--tagloss"
+                 style="display: inline-block; width: auto;">
+                ✓ Reconciliar al vaciar estanque
+              </a>
+              <p style="margin-top: 6px; font-size: 0.78rem; color: #6b7280; line-height: 1.3;">
+                Usa esta opción al final cuando hayas re-taggeado o descartado todos los peces. Cierra los eventos definitivamente.
+              </p>
+            </div>
           </div>
           {% else %}
           <p class="action-card__empty action-card__empty--mb">Sin peces pendientes de re-tag.</p>
@@ -999,12 +1067,6 @@
           </form>
           {% else %}
           <p class="action-card__empty action-card__empty--mb">No hay lotes disponibles para registrar pérdida de tag.</p>
-          {% endif %}
-          {% if pending_detachment_events %}
-          <a href="/views/ui/ponds/{{ pond.id }}/tag-reconciliation"
-             class="tagloss-reconcile-link">
-            Reconciliar al vaciar estanque →
-          </a>
           {% endif %}
         </div>
       </div>
