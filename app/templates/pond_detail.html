@@ -1017,11 +1017,14 @@
                 #{{ ev.id }}
                 {% if ev.event_date %} — {{ ev.event_date.strftime('%d/%m/%Y') }}{% endif %}
                 {% if ev.notes %} · {{ ev.notes[:40] }}{% if ev.notes|length > 40 %}…{% endif %}{% endif %}
+                {% if ev.status == 'retagged' %}<span style="color: #10b981; font-weight: 600; margin-left: 8px;">✓ Re-tagueado</span>{% endif %}
               </span>
+              {% if ev.status == 'unidentified' %}
               <a href="/views/ui/ponds/{{ pond.id }}/retag/{{ ev.id }}"
                  class="tagloss-retag-link">
                 Re-tag
               </a>
+              {% endif %}
             </div>
             {% endfor %}
             <div style="margin-top: 14px; padding-top: 14px; border-top: 1px solid #e5e7eb;">

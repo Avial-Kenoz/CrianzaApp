@@ -2503,7 +2503,7 @@ def ui_pond_detail(
         "unregistered_lot_options": unregistered_lot_options,
         "tag_detachment_lot_options": tag_detachment_lot_options,
         "pending_detachment_events": [
-            {"id": e.id, "event_date": e.event_date, "notes": e.notes}
+            {"id": e.id, "event_date": e.event_date, "notes": e.notes, "status": e.status}
             for e in pending_detachment_events
         ],
         "status": status,
