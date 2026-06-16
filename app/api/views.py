@@ -288,6 +288,7 @@ def _calculate_current_fish_count_by_movements(pond_id: int, db: Session) -> int
         out_total = out_tagged + out_untagged
 
         # 3. Re-tags sin resolver (restar para no duplicar)
+        # Nota: no filtramos por last_tag_reconciliation_at porque el campo aún no existe en BD
         retagged_since = (
             db.query(func.count(TagDetachmentEvent.id))
             .filter(

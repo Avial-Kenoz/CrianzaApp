@@ -31,4 +31,3 @@ class Pond(Base):
     parent_pond_id = Column(BigInteger, ForeignKey("ponds.id"), nullable=True)
     created_at = Column(TIMESTAMP)
     updated_at = Column(TIMESTAMP)
-    last_tag_reconciliation_at = Column(TIMESTAMP, nullable=True)
