@@ -235,6 +235,72 @@ def _get_unregistered_balances_by_lot(pond_id: int, db: Session) -> dict[int, in
     return {lot_id: qty for lot_id, qty in balances.items() if qty > 0}
 
 
+def _calculate_current_fish_count_by_movements(pond_id: int, db: Session) -> int:
+    """
+    Calcula recuento actual de peces en estanque usando movimientos + re-tags.
+    Fórmula: IN - OUT + RETAGGED_SINCE_LAST_RECONCILIATION
+
+    Evita duplicación de biomasa al no contar peces re-taggeados dos veces.
+    """
+    # 1. Peces entrada (con tag o sin tag)
+    in_tagged = (
+        db.query(func.count(PondMovement.id))
+        .filter(
+            PondMovement.destiny_pond_id == pond_id,
+            PondMovement.fish_id.isnot(None),
+        )
+        .scalar() or 0
+    )
+
+    in_untagged = (
+        db.query(func.coalesce(func.sum(PondMovement.fish_quantity), 0))
+        .filter(
+            PondMovement.destiny_pond_id == pond_id,
+            PondMovement.fish_id.is_(None),
+        )
+        .scalar() or 0
+    )
+
+    in_total = in_tagged + in_untagged
+
+    # 2. Peces salida (con tag o sin tag)
+    out_tagged = (
+        db.query(func.count(PondMovement.id))
+        .filter(
+            PondMovement.source_pond_id == pond_id,
+            PondMovement.fish_id.isnot(None),
+        )
+        .scalar() or 0
+    )
+
+    out_untagged = (
+        db.query(func.coalesce(func.sum(PondMovement.fish_quantity), 0))
+        .filter(
+            PondMovement.source_pond_id == pond_id,
+            PondMovement.fish_id.is_(None),
+        )
+        .scalar() or 0
+    )
+
+    out_total = out_tagged + out_untagged
+
+    # 3. Re-tags desde última reconciliación (no duplicar)
+    pond = db.query(Pond).filter(Pond.id == pond_id).first()
+    last_recon = pond.last_tag_reconciliation_at if pond else None
+
+    q = db.query(func.count(TagDetachmentEvent.id)).filter(
+        TagDetachmentEvent.pond_id == pond_id,
+        TagDetachmentEvent.status == "retagged",
+        TagDetachmentEvent.resolved_at.is_(None),
+    )
+    if last_recon:
+        q = q.filter(TagDetachmentEvent.event_date > last_recon)
+
+    retagged_since = q.scalar() or 0
+
+    return int(in_total - out_total + retagged_since)
+
+
 def _as_int_dict(raw_value) -> dict[int, int]:
     if not raw_value or not isinstance(raw_value, dict):
         return {}
@@ -5502,11 +5568,13 @@ def ui_tag_reconciliation_form(
         TagDetachmentEvent.resolved_at.isnot(None),
     ).all()
 
-    # Validación: contar eventos re-tagueados vs peces actuales en laguna
+    # Validación: calcular recuento actual usando movimientos (evita duplicación por re-tags)
+    current_fish_count = _calculate_current_fish_count_by_movements(pond_id, db)
+
+    # Obtener totales por categoría (solo para display/debugging)
     unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
     unregistered_total = sum(unregistered_balances.values())
-    tagged_total = len(_get_current_tagged_fish_in_pond(pond_id, db))
-    current_fish_count = tagged_total + unregistered_total
+    tagged_total = current_fish_count - unregistered_total
 
     events_retagged_count = len([e for e in pending if e.status == "retagged"])
     numbers_match = events_retagged_count == current_fish_count
@@ -5604,10 +5672,7 @@ async def ui_tag_reconciliation_bulk_save(
         return go("ok", "No había eventos pendientes.")
 
     # Re-validar que los números sigan coincidiendo (protección contra cambios concurrentes)
-    unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
-    unregistered_total = sum(unregistered_balances.values())
-    tagged_total = len(_get_current_tagged_fish_in_pond(pond_id, db))
-    current_fish_count = tagged_total + unregistered_total
+    current_fish_count = _calculate_current_fish_count_by_movements(pond_id, db)
     events_retagged_count = len([e for e in pending if e.status == "retagged"])
 
     if events_retagged_count != current_fish_count:
@@ -5653,6 +5718,9 @@ async def ui_tag_reconciliation_save(
 
     form = await request.form()
     now = datetime.utcnow()
+
+    # Calcular recuento actual usando movimientos
+    current_fish_count = _calculate_current_fish_count_by_movements(pond_id, db)
 
     # Eventos pendientes de reconciliación: unidentified O retagged sin resolver aún
     pending = db.query(TagDetachmentEvent).filter(
