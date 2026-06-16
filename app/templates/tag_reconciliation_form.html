@@ -232,6 +232,37 @@
 
     <form method="post" action="/views/ui/ponds/{{ pond.id }}/tag-reconciliation">
 
+      <!-- ESPECIAL: Peces faltantes (sin evento TagDetachmentEvent) -->
+      {% if current_fish_count > events_retagged_count %}
+      <div style="margin-bottom: 24px; padding: 16px; background: #fef2f2; border: 2px solid #dc2626; border-radius: 10px;">
+        <h3 style="color: #991b1b; margin-bottom: 12px;">⚠️ Peces sin evento de pérdida ({{ current_fish_count - events_retagged_count }})</h3>
+        <p style="color: #6b7280; margin-bottom: 12px; font-size: 0.9rem;">
+          Hay {{ current_fish_count - events_retagged_count }} peces en la laguna sin evento de pérdida de tag asociado.
+          Define qué pasó con ellos:
+        </p>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 140px;">
+            <input type="radio" id="missing_salieron" name="resolution_missing_peces" value="left_unregistered" checked />
+            <label for="missing_salieron" style="display: block; padding: 9px 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: .82rem; font-weight: 600; cursor: pointer; text-align: center;">
+              Salieron sin declarar<br><small style="color: #6b7280; font-weight: 400;">Sin registrar pérdida</small>
+            </label>
+          </div>
+          <div style="flex: 1; min-width: 140px;">
+            <input type="radio" id="missing_muerte" name="resolution_missing_peces" value="mortality" />
+            <label for="missing_muerte" style="display: block; padding: 9px 12px; border: 2px solid #dc2626; border-radius: 8px; font-size: .82rem; font-weight: 600; cursor: pointer; text-align: center; color: #991b1b;">
+              Murieron<br><small style="color: #6b7280; font-weight: 400;">Sin registrar</small>
+            </label>
+          </div>
+          <div style="flex: 1; min-width: 140px;">
+            <input type="radio" id="missing_otro" name="resolution_missing_peces" value="other" />
+            <label for="missing_otro" style="display: block; padding: 9px 12px; border: 2px solid #d97706; border-radius: 8px; font-size: .82rem; font-weight: 600; cursor: pointer; text-align: center; color: #92400e;">
+              Otro<br><small style="color: #6b7280; font-weight: 400;">Error de inventario</small>
+            </label>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
       <!-- Primero: Eventos sin resolución (necesitan decisión) -->
       {% for ev in events_unidentified %}
       <div class="event-row">

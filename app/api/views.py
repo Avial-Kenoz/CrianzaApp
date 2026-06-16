@@ -5634,6 +5634,7 @@ async def ui_tag_reconciliation_save(
         return go("ok", "No había eventos pendientes.")
 
     try:
+        # Procesar eventos normales
         for event in pending:
             resolution = form.get(f"resolution_{event.id}", "retagged_and_transferred")
             if resolution not in ("retagged_and_transferred", "left_unregistered", "mortality", "other"):
@@ -5642,8 +5643,27 @@ async def ui_tag_reconciliation_save(
             event.resolution = resolution
             event.resolved_at = now
 
+        # Procesar peces faltantes (si existen)
+        missing_resolution = form.get("resolution_missing_peces")
+        missing_count = current_fish_count - len([e for e in pending if e.status == "retagged"])
+
+        if missing_count > 0 and missing_resolution:
+            # Crear eventos virtuales para los peces faltantes
+            for i in range(missing_count):
+                missing_event = TagDetachmentEvent(
+                    pond_id=pond_id,
+                    fish_id=None,
+                    event_date=datetime.utcnow().date(),
+                    notes="[Pez sin evento de pérdida]",
+                    status="written_off",
+                    resolution=missing_resolution,
+                    resolved_at=now,
+                )
+                db.add(missing_event)
+
         db.commit()
-        return go("ok", f"{len(pending)} evento(s) de tag perdido reconciliados y cerrados.")
+        events_processed = len(pending) + (missing_count if missing_count > 0 else 0)
+        return go("ok", f"{events_processed} evento(s) de tag perdido reconciliados y cerrados.")
     except Exception:
         db.rollback()
         return go("error", "No se pudo completar la reconciliación.")
