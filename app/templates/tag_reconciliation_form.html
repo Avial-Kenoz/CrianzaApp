@@ -166,40 +166,46 @@
     </div>
   </div>
 
-  <!-- Validación de números -->
+  <!-- Validación: eventos vs peces en laguna -->
   <div class="card" style="{% if numbers_match %}background: #f0fdf4; border: 2px solid #10b981;{% else %}background: #fef2f2; border: 2px solid #dc2626;{% endif %}">
     <h2 style="{% if numbers_match %}color: #047857;{% else %}color: #991b1b;{% endif %}">
-      {% if numbers_match %}✓ Validación exitosa{% else %}⚠️ Inconsistencia detectada{% endif %}
+      {% if numbers_match %}✓ Cuadre perfecto{% else %}⚠️ Error detectado{% endif %}
     </h2>
     <p class="subtitle">
-      <strong>Peces declarados con pit-tag caído:</strong> {{ declared_events_count }}<br>
-      <strong>Peces actualmente en laguna:</strong> {{ current_fish_count }}<br>
+      <strong>Eventos re-tagueados:</strong> {{ events_retagged_count }}<br>
+      <strong>Peces en laguna:</strong> {{ current_fish_count }}<br>
       {% if numbers_match %}
       <strong style="color: #047857;">Los números coinciden → Reconciliación masiva disponible</strong>
       {% else %}
-      <strong style="color: #991b1b;">Los números NO coinciden (diferencia: {{ declared_events_count - current_fish_count|abs }}) → Debes reconciliar manualmente</strong>
+      <strong style="color: #991b1b;">Diferencia: {{ events_retagged_count - current_fish_count|abs }} peces</strong><br>
+      {% if events_retagged_count > current_fish_count %}
+      Hay {{ events_retagged_count - current_fish_count }} peces que salieron SIN declarar pérdida de tag.
+      {% else %}
+      Faltan {{ current_fish_count - events_retagged_count }} peces en el inventario.
+      {% endif %}
+      <br><strong>Debes reconciliar manualmente.</strong>
       {% endif %}
     </p>
   </div>
 
   {% if allow_bulk_reconciliation %}
-  <!-- Opción 1: Reconciliación masiva (cuando los números coinciden) -->
+  <!-- Opción 1: Reconciliación masiva (disponible solo si cuadre es perfecto) -->
   <div class="card" style="background: #f0fdf4; border: 2px solid #10b981;">
-    <h2 style="color: #047857;">✓ Reconciliación masiva</h2>
+    <h2 style="color: #047857;">✓ Reconciliación masiva (Recomendado)</h2>
     <p class="subtitle">
-      Todos los {{ declared_events_count }} peces fueron re-tagueados y trasladados a otras lagunas.
-      Marca todos los eventos como resueltos de una sola vez.
+      Marca todos los {{ events_retagged_count }} eventos como "Re-tagueado y trasladado" de una sola vez.
+      Esta es la operación estándar para peces que perdieron tag y fueron re-tagueados.
     </p>
 
     <div class="alert-box" style="background: #dcfce7; border-color: #10b981; color: #047857;">
-      <strong>Operación segura.</strong> Se marcarán todos los {{ declared_events_count }} eventos
-      como "Re-tagueado y trasladado". Esta es la operación estándar al vaciar una laguna.
+      <strong>Operación segura.</strong> Se marcarán todos los {{ events_retagged_count }} eventos
+      como "Re-tagueado y trasladado". Los números coinciden perfectamente.
     </div>
 
     <div class="btn-row">
       <form method="post" action="/views/ui/ponds/{{ pond.id }}/tag-reconciliation/bulk" style="margin: 0;">
         <button type="submit" class="btn btn-primary" style="background: #10b981; font-size: 1rem;">
-          ✓ Reconciliar masivamente ({{ declared_events_count }} peces)
+          ✓ Reconciliar masivamente ({{ events_retagged_count }} peces)
         </button>
       </form>
     </div>
@@ -213,22 +219,16 @@
 
   <!-- Opción 2: Reconciliación manual -->
   <div class="card" id="manual-reconciliation">
-    <h2>{% if allow_bulk_reconciliation %}Reconciliación manual (opcional){% else %}Declarar destino de cada pez sin tag{% endif %}</h2>
+    <h2>Reconciliación manual{% if allow_bulk_reconciliation %} (Opcional){% endif %}</h2>
     <p class="subtitle">
       {% if allow_bulk_reconciliation %}
-      Para cada evento de pérdida de tag pendiente, indique cómo fue resuelto al vaciar el estanque (opcional).
+      Para cada evento de pérdida de tag pendiente, selecciona una resolución diferente.
+      Úsalo solo si algunos eventos no fueron re-tagueados y trasladados.
       {% else %}
-      Los números no coinciden. Para cada evento de pérdida de tag pendiente, indique cómo fue resuelto.
+      Los números no coinciden. Para cada evento, revisa y selecciona la resolución correcta.
       {% endif %}
       Esta acción cierra los eventos definitivamente y no puede deshacerse.
     </p>
-
-    {% if not allow_bulk_reconciliation %}
-    <div class="alert-box" style="background: #fef2f2; border-color: #dc2626; color: #991b1b;">
-      <strong>Revisión requerida.</strong> Los números no coinciden ({{ declared_events_count }} eventos vs {{ current_fish_count }} peces).
-      Debes reconciliar manualmente para revisar qué sucedió con cada pez.
-    </div>
-    {% endif %}
 
     <form method="post" action="/views/ui/ponds/{{ pond.id }}/tag-reconciliation">
 

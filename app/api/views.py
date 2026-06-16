@@ -5500,16 +5500,15 @@ def ui_tag_reconciliation_form(
             status_code=303,
         )
 
-    # Estado actual del estanque
+    # Validación: contar eventos re-tagueados vs peces actuales en laguna
     unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
     unregistered_total = sum(unregistered_balances.values())
     tagged_total = len(_get_current_tagged_fish_in_pond(pond_id, db))
-
-    # Validación: contar eventos declarados vs peces en laguna
-    declared_events_count = len(pending)
     current_fish_count = tagged_total + unregistered_total
-    numbers_match = declared_events_count == current_fish_count
-    allow_bulk_reconciliation = numbers_match and current_fish_count > 0
+
+    events_retagged_count = len([e for e in pending if e.status == "retagged"])
+    numbers_match = events_retagged_count == current_fish_count
+    allow_bulk_reconciliation = numbers_match
 
     events_data = [
         {
@@ -5525,9 +5524,7 @@ def ui_tag_reconciliation_form(
         "request": request,
         "pond": pond,
         "events": events_data,
-        "unregistered_total": unregistered_total,
-        "tagged_total": tagged_total,
-        "declared_events_count": declared_events_count,
+        "events_retagged_count": events_retagged_count,
         "current_fish_count": current_fish_count,
         "numbers_match": numbers_match,
         "allow_bulk_reconciliation": allow_bulk_reconciliation,
@@ -5561,18 +5558,18 @@ async def ui_tag_reconciliation_bulk_save(
     if not pending:
         return go("ok", "No había eventos pendientes.")
 
-    # Re-validar que los números sigan coincidiendo
+    # Re-validar que los números sigan coincidiendo (protección contra cambios concurrentes)
     unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
     unregistered_total = sum(unregistered_balances.values())
     tagged_total = len(_get_current_tagged_fish_in_pond(pond_id, db))
     current_fish_count = tagged_total + unregistered_total
-    declared_events_count = len(pending)
+    events_retagged_count = len([e for e in pending if e.status == "retagged"])
 
-    if declared_events_count != current_fish_count:
+    if events_retagged_count != current_fish_count:
         return go(
             "error",
-            f"Los números no coinciden: {declared_events_count} eventos vs {current_fish_count} peces. "
-            f"Reconcilia manualmente para revisar cada evento."
+            f"Validación fallida: {events_retagged_count} eventos re-tagueados ≠ {current_fish_count} peces en laguna. "
+            f"Diferencia: {abs(events_retagged_count - current_fish_count)}. Reconcilia manualmente para revisar."
         )
 
     try:
