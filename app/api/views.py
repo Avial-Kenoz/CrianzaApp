@@ -428,7 +428,8 @@ def _refresh_pond_runtime_cache(pond_id: Optional[int], db: Session) -> None:
 
     pond.tagged_count = tagged_count
     pond.unregistered_count = unregistered_count
-    pond.n_fish_cached = tagged_count + unregistered_count
+    # Recuento usando fórmula de movimientos: IN - OUT - RETAGGED (evita duplicación de re-tags)
+    pond.n_fish_cached = _calculate_current_fish_count_by_movements(pond_id, db)
     pond.active_lots_count = len(active_lot_ids)
     pond.active_lot_ids = active_lot_ids
     pond.unregistered_lot_ids = unregistered_lot_ids_sorted
