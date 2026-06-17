@@ -428,8 +428,20 @@ def _refresh_pond_runtime_cache(pond_id: Optional[int], db: Session) -> None:
 
     pond.tagged_count = tagged_count
     pond.unregistered_count = unregistered_count
-    # Recuento: tagged + unregistered (nota: incluye peces re-tagged duplicados)
-    pond.n_fish_cached = tagged_count + unregistered_count
+
+    # Recuento usando fórmula de movimientos: IN - OUT - RETAGGED_UNRESOLVED
+    # Esto refleja la realidad del estanque (evita duplicación de peces re-taggeados)
+    try:
+        retagged_count = db.query(func.count(TagDetachmentEvent.id)).filter(
+            TagDetachmentEvent.pond_id == pond_id,
+            TagDetachmentEvent.status == "retagged",
+            TagDetachmentEvent.resolved_at.is_(None),
+        ).scalar() or 0
+        pond.n_fish_cached = tagged_count + unregistered_count - retagged_count
+    except Exception:
+        # Fallback a método antiguo si hay error
+        pond.n_fish_cached = tagged_count + unregistered_count
+
     pond.active_lots_count = len(active_lot_ids)
     pond.active_lot_ids = active_lot_ids
     pond.unregistered_lot_ids = unregistered_lot_ids_sorted
