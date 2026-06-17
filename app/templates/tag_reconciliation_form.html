@@ -150,6 +150,9 @@
 
 <div class="container">
 
+  {% set events_total = events_unidentified|length + events_retagged|length %}
+  {% set surplus = current_fish_count - events_retagged_count if current_fish_count > events_retagged_count else 0 %}
+
   <!-- Resumen del estado del estanque -->
   <div class="summary-grid">
     <div class="summary-card">
@@ -161,167 +164,38 @@
       <div class="s-value">{{ unregistered_total }}</div>
     </div>
     <div class="summary-card warn">
-      <div class="s-label">Tags pendientes</div>
-      <div class="s-value">{{ events|length }}</div>
+      <div class="s-label">Eventos pendientes</div>
+      <div class="s-value">{{ events_total }}</div>
     </div>
   </div>
 
-  <!-- Validación: eventos vs peces en laguna -->
-  <div class="card" style="{% if numbers_match %}background: #f0fdf4; border: 2px solid #10b981;{% else %}background: #fef2f2; border: 2px solid #dc2626;{% endif %}">
-    <h2 style="{% if numbers_match %}color: #047857;{% else %}color: #991b1b;{% endif %}">
-      {% if numbers_match %}✓ Cuadre perfecto{% else %}⚠️ Error detectado{% endif %}
-    </h2>
-    <p class="subtitle">
-      <strong>Eventos re-tagueados:</strong> {{ events_retagged_count }}<br>
-      <strong>Peces en laguna:</strong> {{ current_fish_count }}<br>
-      {% if numbers_match %}
-      <strong style="color: #047857;">Los números coinciden → Reconciliación masiva disponible</strong>
-      {% else %}
-      <strong style="color: #991b1b;">Diferencia: {{ events_retagged_count - current_fish_count|abs }} peces</strong><br>
-      {% if events_retagged_count > current_fish_count %}
-      Hay {{ events_retagged_count - current_fish_count }} peces que salieron SIN declarar pérdida de tag.
-      {% else %}
-      Faltan {{ current_fish_count - events_retagged_count }} peces en el inventario.
-      {% endif %}
-      <br><strong>Debes reconciliar manualmente.</strong>
-      {% endif %}
+  <!-- Qué pasará al vaciar -->
+  <div class="card" style="background: #fffbeb; border: 2px solid #f59e0b;">
+    <h2 style="color: #92400e;">Vaciar estanque — ¿qué pasará?</h2>
+    <p class="subtitle" style="margin-bottom: 16px;">
+      El estanque está físicamente vacío. Esta acción egresa del sistema todos los registros que
+      quedan (motivo <strong>reconciliación</strong>), cierra los eventos de pérdida de tag y deja
+      el estanque en <strong>0</strong>. Los peces reales ya debieron salir antes por faena, traslado
+      o mortalidad. <strong>Acción irreversible.</strong>
     </p>
-  </div>
-
-  {% if allow_bulk_reconciliation %}
-  <!-- Opción 1: Reconciliación masiva (disponible solo si cuadre es perfecto) -->
-  <div class="card" style="background: #f0fdf4; border: 2px solid #10b981;">
-    <h2 style="color: #047857;">✓ Reconciliación masiva (Recomendado)</h2>
-    <p class="subtitle">
-      Marca todos los {{ events_retagged_count }} eventos como "Re-tagueado y trasladado" de una sola vez.
-      Esta es la operación estándar para peces que perdieron tag y fueron re-tagueados.
-    </p>
-
-    <div class="alert-box" style="background: #dcfce7; border-color: #10b981; color: #047857;">
-      <strong>Operación segura.</strong> Se marcarán todos los {{ events_retagged_count }} eventos
-      como "Re-tagueado y trasladado". Los números coinciden perfectamente.
-    </div>
-
-    <div class="btn-row">
-      <form method="post" action="/views/ui/ponds/{{ pond.id }}/tag-reconciliation/bulk" style="margin: 0;">
-        <button type="submit" class="btn btn-primary" style="background: #10b981; font-size: 1rem;">
-          ✓ Reconciliar masivamente ({{ events_retagged_count }} peces)
-        </button>
-      </form>
-    </div>
-
-    <p style="margin-top: 16px; font-size: 0.85rem; color: #6b7280; border-top: 1px solid #d1fae5; padding-top: 12px;">
-      ¿Prefieres revisar cada evento individualmente?
-      <a href="#manual-reconciliation" style="color: #0891b2; text-decoration: underline;">Ir a reconciliación manual</a>
-    </p>
-  </div>
-  {% endif %}
-
-  <!-- Opción 2: Reconciliación manual -->
-  <div class="card" id="manual-reconciliation">
-    <h2>Reconciliación manual{% if allow_bulk_reconciliation %} (Opcional){% endif %}</h2>
-    <p class="subtitle">
-      {% if allow_bulk_reconciliation %}
-      Para cada evento de pérdida de tag pendiente, selecciona una resolución diferente.
-      Úsalo solo si algunos eventos no fueron re-tagueados y trasladados.
-      {% else %}
-      Los números no coinciden. Para cada evento, revisa y selecciona la resolución correcta.
-      {% endif %}
-      Esta acción cierra los eventos definitivamente y no puede deshacerse.
-    </p>
-
-    <form method="post" action="/views/ui/ponds/{{ pond.id }}/tag-reconciliation">
-
-      <!-- ESPECIAL: Peces sin evento de pérdida (siempre error de inventario) -->
-      {% if current_fish_count > events_retagged_count %}
-      <div style="margin-bottom: 24px; padding: 16px; background: #fef2f2; border: 2px solid #dc2626; border-radius: 10px;">
-        <h3 style="color: #991b1b; margin-bottom: 12px;">⚠️ Error de inventario: {{ current_fish_count - events_retagged_count }} peces sin evento</h3>
-        <p style="color: #6b7280; font-size: 0.9rem; line-height: 1.5; margin-bottom: 12px;">
-          Hay {{ current_fish_count - events_retagged_count }} peces en la laguna sin evento de pérdida de tag asociado.
-          Se crearán registros para estos peces como error de inventario.
-        </p>
-        {% if lot_options %}
-        <div style="margin-bottom: 12px;">
-          <label style="display: block; font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; color: #374151;">
-            Asignar a lote:
-          </label>
-          <select name="missing_peces_lot_id" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem;">
-            <option value="">-- Selecciona un lote --</option>
-            {% for lot in lot_options %}
-            <option value="{{ lot.id }}">{{ lot.label }}</option>
-            {% endfor %}
-          </select>
-        </div>
+    <div class="alert-box" style="background: #fff; border-color: #f59e0b; color: #1a1a2e;">
+      <ul style="margin: 0; padding-left: 18px; line-height: 1.7;">
+        <li><strong>{{ tagged_total }}</strong> pez(ces) con tag → salida por reconciliación (estado: baja/reconciled).</li>
+        <li><strong>{{ unregistered_total }}</strong> pez(ces) sin tag → salida del pool por reconciliación.</li>
+        <li><strong>{{ events_total }}</strong> evento(s) de pérdida de tag → cerrados (written_off).
+          {% if events_retagged_count %}({{ events_retagged_count }} re-tagueado/s){% endif %}</li>
+        {% if surplus > 0 %}
+        <li><strong>{{ surplus }}</strong> pez(ces) sin evento → registrados como ajuste de inventario.</li>
         {% endif %}
-        <input type="hidden" name="resolution_missing_peces" value="other" />
-      </div>
-      {% endif %}
+      </ul>
+    </div>
 
-      <!-- Primero: Eventos sin resolución (necesitan decisión) -->
-      {% for ev in events_unidentified %}
-      <div class="event-row">
-        <div class="ev-header">
-          <span class="ev-id">Evento #{{ ev.id }}</span>
-          <span class="ev-date">{{ ev.event_date.strftime('%d/%m/%Y') if ev.event_date else '—' }}</span>
-        </div>
-        {% if ev.notes %}
-        <p class="ev-notes">{{ ev.notes }}</p>
-        {% endif %}
-
-        <div class="resolution-options">
-          <div class="resolution-option" style="border: 2px solid #10b981; background: #f0fdf4;">
-            <input type="radio" id="res_{{ ev.id }}_retagged" name="resolution_{{ ev.id }}"
-                   value="retagged_and_transferred" checked />
-            <label for="res_{{ ev.id }}_retagged" style="border-color: #10b981; color: #047857; font-weight: 700;">✓ Re-tagueado y trasladado<br><small class="resolution-note">Pez recibió nuevo PIT y fue movido a otra laguna</small></label>
-          </div>
-          <div class="resolution-option">
-            <input type="radio" id="res_{{ ev.id }}_left" name="resolution_{{ ev.id }}"
-                   value="left_unregistered" />
-            <label for="res_{{ ev.id }}_left">Salió sin registrar<br><small class="resolution-note">Con el pool de peces sin tag</small></label>
-          </div>
-          <div class="resolution-option danger">
-            <input type="radio" id="res_{{ ev.id }}_mort" name="resolution_{{ ev.id }}"
-                   value="mortality" />
-            <label for="res_{{ ev.id }}_mort">Mortalidad<br><small class="resolution-note">Murió sin re-taggearse</small></label>
-          </div>
-          <div class="resolution-option warn">
-            <input type="radio" id="res_{{ ev.id }}_other" name="resolution_{{ ev.id }}"
-                   value="other" />
-            <label for="res_{{ ev.id }}_other">Otro<br><small class="resolution-note">Ver notas del evento</small></label>
-          </div>
-        </div>
-      </div>
-      {% endfor %}
-
-      <!-- Segundo: Eventos ya re-tagueados (con resolución pre-seleccionada) -->
-      {% if events_retagged|length > 0 %}
-      <div style="margin-top: 24px; padding-top: 24px; border-top: 2px solid #e5e7eb;">
-        <h3 style="color: #047857; margin-bottom: 16px;">✓ Eventos ya re-tagueados ({{ events_retagged|length }})</h3>
-        {% for ev in events_retagged %}
-        <div class="event-row" style="background: #f0fdf4; border-color: #10b981;">
-          <div class="ev-header">
-            <span class="ev-id">Evento #{{ ev.id }}</span>
-            <span class="ev-date">{{ ev.event_date.strftime('%d/%m/%Y') if ev.event_date else '—' }}</span>
-          </div>
-          {% if ev.notes %}
-          <p class="ev-notes">{{ ev.notes }}</p>
-          {% endif %}
-
-          <div class="resolution-options">
-            <div class="resolution-option" style="border: 2px solid #10b981; background: #dcfce7;">
-              <input type="radio" id="res_{{ ev.id }}_retagged" name="resolution_{{ ev.id }}"
-                     value="retagged_and_transferred" checked disabled />
-              <label for="res_{{ ev.id }}_retagged" style="border-color: #10b981; color: #047857; font-weight: 700; cursor: default;">✓ Re-tagueado y trasladado<br><small class="resolution-note">Confirmado</small></label>
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
-
+    <form method="post" action="/views/ui/ponds/{{ pond.id }}/tag-reconciliation"
+          onsubmit="return confirm('¿Confirmas vaciar el estanque? Se egresarán {{ tagged_total + unregistered_total }} pez(ces) y se cerrarán {{ events_total }} evento(s). Esta acción no se puede deshacer.');">
       <div class="btn-row">
-        {% set missing_count = current_fish_count - events_retagged_count if current_fish_count > events_retagged_count else 0 %}
-        <button type="submit" class="btn btn-primary">Confirmar reconciliación ({{ events_unidentified|length + events_retagged|length + missing_count }} registros)</button>
+        <button type="submit" class="btn btn-primary" style="background: #d97706; font-size: 1rem;">
+          → Vaciar estanque ({{ tagged_total + unregistered_total }} peces)
+        </button>
         <a href="/views/ui/ponds/{{ pond.id }}" class="btn btn-cancel">Cancelar</a>
       </div>
     </form>

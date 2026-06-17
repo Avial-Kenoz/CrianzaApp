@@ -88,7 +88,8 @@ def create_movement(movement: PondMovementCreate, db: Session = Depends(get_db))
 
     allowed_reasons = [
         "mortality", "depuration", "inventory_mismatch", "registration", "devious",
-        "first_load", "pond_movement", "unmarked_devious", "missing_number", "faena"
+        "first_load", "pond_movement", "unmarked_devious", "missing_number", "faena",
+        "reconciliation"
     ]
     if movement.movement_reason not in allowed_reasons:
         raise HTTPException(status_code=400, detail="Invalid movement_reason")

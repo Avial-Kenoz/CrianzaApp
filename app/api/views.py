@@ -235,78 +235,6 @@ def _get_unregistered_balances_by_lot(pond_id: int, db: Session) -> dict[int, in
     return {lot_id: qty for lot_id, qty in balances.items() if qty > 0}
 
 
-def _calculate_current_fish_count_by_movements(pond_id: int, db: Session) -> int:
-    """
-    Calcula recuento actual de peces en estanque usando movimientos - re-tags.
-    Fórmula: IN - OUT - RETAGGED_UNRESOLVED
-
-    Los re-taggeados se restan porque generan duplicación en la BD (se crean como peces nuevos).
-    Nota: puede resultar en inconsistencia útil: COUNT puede ser < peces visibles en listado,
-    indicando que el exceso son peces "virtuales" (re-tagged sin resolver aún).
-    """
-    try:
-        # 1. Peces entrada (con tag o sin tag)
-        in_tagged = (
-            db.query(func.count(PondMovement.id))
-            .filter(
-                PondMovement.destiny_pond_id == pond_id,
-                PondMovement.fish_id.isnot(None),
-            )
-            .scalar() or 0
-        )
-
-        in_untagged = (
-            db.query(func.coalesce(func.sum(PondMovement.fish_quantity), 0))
-            .filter(
-                PondMovement.destiny_pond_id == pond_id,
-                PondMovement.fish_id.is_(None),
-            )
-            .scalar() or 0
-        )
-
-        in_total = in_tagged + in_untagged
-
-        # 2. Peces salida (con tag o sin tag)
-        out_tagged = (
-            db.query(func.count(PondMovement.id))
-            .filter(
-                PondMovement.source_pond_id == pond_id,
-                PondMovement.fish_id.isnot(None),
-            )
-            .scalar() or 0
-        )
-
-        out_untagged = (
-            db.query(func.coalesce(func.sum(PondMovement.fish_quantity), 0))
-            .filter(
-                PondMovement.source_pond_id == pond_id,
-                PondMovement.fish_id.is_(None),
-            )
-            .scalar() or 0
-        )
-
-        out_total = out_tagged + out_untagged
-
-        # 3. Re-tags sin resolver (restar para no duplicar)
-        # Nota: no filtramos por last_tag_reconciliation_at porque el campo aún no existe en BD
-        retagged_since = (
-            db.query(func.count(TagDetachmentEvent.id))
-            .filter(
-                TagDetachmentEvent.pond_id == pond_id,
-                TagDetachmentEvent.status == "retagged",
-                TagDetachmentEvent.resolved_at.is_(None),
-            )
-            .scalar() or 0
-        )
-
-        return int(in_total - out_total - retagged_since)
-    except Exception:
-        # Fallback: usar el método antiguo si hay error
-        unregistered_total = sum(_get_unregistered_balances_by_lot(pond_id, db).values())
-        tagged_total = len(_get_current_tagged_fish_in_pond(pond_id, db))
-        return tagged_total + unregistered_total
-
-
 def _as_int_dict(raw_value) -> dict[int, int]:
     if not raw_value or not isinstance(raw_value, dict):
         return {}
@@ -3813,6 +3741,7 @@ def ui_movement_new(
 ALLOWED_REASONS = [
     "mortality", "depuration", "inventory_mismatch", "registration", "devious",
     "first_load", "pond_movement", "unmarked_devious", "missing_number",
+    "reconciliation",
 ]
 
 @router.post("/ui/movements", response_class=HTMLResponse)
@@ -4213,7 +4142,12 @@ def _adjust_biomass_on_movement(mov: PondMovement, db: Session) -> None:
       - Biomasa nunca queda negativa
     """
     # ── Razones que implican egreso definitivo (sin destiny esperado) ──
-    EXIT_REASONS = {"mortality", "devious", "missing_number", "unmarked_devious"}
+    EXIT_REASONS = {"mortality", "devious", "missing_number", "unmarked_devious", "reconciliation"}
+
+    # El vaciado por reconciliación elimina registros duplicados/residuales: descuenta
+    # biomasa del estanque (para dejarlo en 0) pero NO de la biomasa del lote, porque
+    # los peces reales ya salieron por sus flujos normales (faena/traslado/mortalidad).
+    skip_lot_biomass = mov.movement_reason == "reconciliation"
 
     if mov.fish_id:
         # ── TAGGED ──
@@ -4238,7 +4172,7 @@ def _adjust_biomass_on_movement(mov: PondMovement, db: Session) -> None:
                 cur = Decimal(str(dst.biomass_current)) if dst.biomass_current is not None else Decimal("0")
                 dst.biomass_current = cur + delta_kg
                 dst.updated_at = datetime.utcnow()
-        else:
+        elif not skip_lot_biomass:
             # Egreso definitivo (mortalidad, faena, etc.) → descuenta biomasa del lote
             if lot_id:
                 lot_obj = db.query(Lot).filter(Lot.id == lot_id).first()
@@ -4308,7 +4242,7 @@ def _adjust_biomass_on_movement(mov: PondMovement, db: Session) -> None:
                             updated_at=datetime.utcnow(),
                         )
                     )
-        else:
+        elif not skip_lot_biomass:
             # Egreso definitivo (mortalidad, faena, etc.) → descuenta biomasa del lote
             if mov.lot_id:
                 lot_obj = db.query(Lot).filter(Lot.id == mov.lot_id).first()
@@ -5572,6 +5506,118 @@ def ui_retag_save(
 # Reconciliación de tags perdidos al cierre del estanque (fase 3)
 # ---------------------------------------------------------------------------
 
+def _empty_pond_by_reconciliation(pond_id: int, db: Session, now: datetime) -> dict:
+    """
+    Vacía el estanque al cierre: crea movimientos de salida (destino NULL, motivo
+    'reconciliation') para TODOS los peces que quedan en el registro y cierra los
+    eventos de pérdida de tag pendientes. Deja el estanque en 0.
+
+    Premisa (decisión de negocio): los peces reales ya salieron por sus flujos
+    normales (faena/traslado/mortalidad). Lo que queda en el registro es residuo
+    contable: huérfanos de re-tag + errores de inventario. Por eso se egresan con
+    estado terminal no-mortalidad ('reconciled') y sin descontar biomasa de lote.
+
+    Devuelve un resumen: {tagged_out, untagged_out, events_closed, surplus_audited}.
+    """
+    pending = db.query(TagDetachmentEvent).filter(
+        TagDetachmentEvent.pond_id == pond_id,
+        TagDetachmentEvent.status.in_(["unidentified", "retagged"]),
+        TagDetachmentEvent.resolved_at.is_(None),
+    ).all()
+
+    tagged_fish = _get_current_tagged_fish_in_pond(pond_id, db)
+    unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
+
+    retagged_count = len([e for e in pending if e.status == "retagged"])
+    tagged_total = len(tagged_fish)
+
+    # 1) Salida de cada pez taggeado (destino NULL, motivo reconciliation)
+    movements: list[PondMovement] = []
+    for fish in tagged_fish:
+        mov = PondMovement(
+            fish_id=fish.id,
+            lot_id=fish.lot_id,
+            source_pond_id=pond_id,
+            destiny_pond_id=None,
+            fish_quantity=1,
+            movement_reason="reconciliation",
+            movement_time=now,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(mov)
+        movements.append(mov)
+        fish.state = "reconciled"
+        fish.devious_time = now
+        fish.updated_at = now
+
+    # 2) Vaciar el pool sin tag por lote
+    untagged_out = 0
+    for lot_id, balance in unregistered_balances.items():
+        if balance <= 0:
+            continue
+        mov = PondMovement(
+            fish_id=None,
+            lot_id=lot_id,
+            source_pond_id=pond_id,
+            destiny_pond_id=None,
+            fish_quantity=balance,
+            movement_reason="reconciliation",
+            movement_time=now,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(mov)
+        movements.append(mov)
+        untagged_out += balance
+
+    # 3) Cerrar eventos pendientes con su resolución
+    for event in pending:
+        event.status = "written_off"
+        event.resolved_at = now
+        event.resolution = (
+            "retagged_and_transferred" if event.status == "retagged"
+            else "left_unregistered"
+        )
+
+    # 4) Auditar excedente (Caso B): peces taggeados que exceden a los eventos
+    #    retagged → dejar traza como ajuste de inventario.
+    surplus = max(0, tagged_total - retagged_count)
+    surplus_audited = 0
+    if surplus > 0:
+        for _ in range(surplus):
+            db.add(TagDetachmentEvent(
+                pond_id=pond_id,
+                fish_id=None,
+                event_date=now,
+                notes="[Ajuste de inventario por vaciado de estanque]",
+                status="written_off",
+                resolution="other",
+                resolved_at=now,
+            ))
+        surplus_audited = surplus
+
+    # 5) Marca temporal de reconciliación
+    pond = db.query(Pond).filter(Pond.id == pond_id).first()
+    if pond is not None:
+        pond.last_tag_reconciliation_at = now
+
+    # 6) Ajustar biomasa (no descuenta biomasa de lote por motivo reconciliation)
+    db.flush()
+    for mov in movements:
+        _adjust_biomass_on_movement(mov, db)
+
+    # 7) Refrescar cache → tagged=0, unregistered=0, n_fish_cached=0
+    _refresh_pond_runtime_cache(pond_id, db)
+
+    return {
+        "tagged_out": tagged_total,
+        "untagged_out": untagged_out,
+        "events_closed": len(pending),
+        "surplus_audited": surplus_audited,
+    }
+
+
 @router.get("/ui/ponds/{pond_id}/tag-reconciliation", response_class=HTMLResponse)
 def ui_tag_reconciliation_form(
     pond_id: int,
@@ -5671,61 +5717,55 @@ def ui_tag_reconciliation_form(
     return HTMLResponse(content=html)
 
 
-@router.post("/ui/ponds/{pond_id}/tag-reconciliation/bulk")
-async def ui_tag_reconciliation_bulk_save(
-    pond_id: int,
-    db: Session = Depends(get_db),
-):
-    """Reconciliación masiva: marca todos los eventos como 'retagged_and_transferred'."""
-    pond = db.query(Pond).filter(Pond.id == pond_id).first()
-    if not pond:
-        raise HTTPException(status_code=404, detail="Pond not found")
-
+def _do_empty_pond(pond_id: int, db: Session):
+    """Ejecuta el vaciado del estanque y redirige al detalle con un resumen."""
     def go(s, m):
         return RedirectResponse(
             url=f"/views/ui/ponds/{pond_id}?status={s}&msg={quote_plus(m)}",
             status_code=303,
         )
 
-    # Eventos pendientes de reconciliación: unidentified O retagged sin resolver aún
-    pending = db.query(TagDetachmentEvent).filter(
+    pond = db.query(Pond).filter(Pond.id == pond_id).first()
+    if not pond:
+        raise HTTPException(status_code=404, detail="Pond not found")
+
+    # Guarda: si no hay nada pendiente ni peces, no-op
+    pending_count = db.query(func.count(TagDetachmentEvent.id)).filter(
         TagDetachmentEvent.pond_id == pond_id,
         TagDetachmentEvent.status.in_(["unidentified", "retagged"]),
         TagDetachmentEvent.resolved_at.is_(None),
-    ).all()
+    ).scalar() or 0
+    tagged_present = len(_get_current_tagged_fish_in_pond(pond_id, db))
+    untagged_present = sum(_get_unregistered_balances_by_lot(pond_id, db).values())
 
-    if not pending:
-        return go("ok", "No había eventos pendientes.")
-
-    # Re-validar que los números sigan coincidiendo (protección contra cambios concurrentes)
-    unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
-    unregistered_total = sum(unregistered_balances.values())
-    tagged_total = len(_get_current_tagged_fish_in_pond(pond_id, db))
-    current_fish_count = tagged_total + unregistered_total
-    events_retagged_count = len([e for e in pending if e.status == "retagged"])
-
-    if events_retagged_count != current_fish_count:
-        return go(
-            "error",
-            f"Validación fallida: {events_retagged_count} eventos re-tagueados ≠ {current_fish_count} peces en laguna. "
-            f"Diferencia: {abs(events_retagged_count - current_fish_count)}. Reconcilia manualmente para revisar."
-        )
+    if pending_count == 0 and tagged_present == 0 and untagged_present == 0:
+        return go("ok", "El estanque ya está vacío. No había nada que reconciliar.")
 
     try:
         now = datetime.utcnow()
-        for event in pending:
-            event.status = "written_off"
-            event.resolution = "retagged_and_transferred"
-            event.resolved_at = now
-
-        # Registrar fecha de última reconciliación de tags en el estanque
-        pond.last_tag_reconciliation_at = now
-
+        summary = _empty_pond_by_reconciliation(pond_id, db, now)
         db.commit()
-        return go("ok", f"✓ {len(pending)} evento(s) reconciliados masivamente como re-tagueados y trasladados.")
-    except Exception:
+        return go(
+            "ok",
+            f"✓ Estanque vaciado: {summary['tagged_out']} pez(ces) taggeado(s) y "
+            f"{summary['untagged_out']} sin tag egresados por reconciliación; "
+            f"{summary['events_closed']} evento(s) cerrado(s). El estanque quedó en 0.",
+        )
+    except Exception as e:
         db.rollback()
-        return go("error", "No se pudo completar la reconciliación masiva.")
+        import traceback
+        print(f"Error al vaciar estanque {pond_id}: {e}")
+        print(traceback.format_exc())
+        return go("error", f"No se pudo vaciar el estanque: {e}")
+
+
+@router.post("/ui/ponds/{pond_id}/tag-reconciliation/bulk")
+async def ui_tag_reconciliation_bulk_save(
+    pond_id: int,
+    db: Session = Depends(get_db),
+):
+    """Vaciado masivo (cuadre perfecto): egresa todo y deja el estanque en 0."""
+    return _do_empty_pond(pond_id, db)
 
 
 @router.post("/ui/ponds/{pond_id}/tag-reconciliation")
@@ -5734,116 +5774,9 @@ async def ui_tag_reconciliation_save(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Reconciliación manual: permite resolver cada evento individualmente."""
-    pond = db.query(Pond).filter(Pond.id == pond_id).first()
-    if not pond:
-        raise HTTPException(status_code=404, detail="Pond not found")
-
-    def go(s, m):
-        return RedirectResponse(
-            url=f"/views/ui/ponds/{pond_id}?status={s}&msg={quote_plus(m)}",
-            status_code=303,
-        )
-
-    form = await request.form()
-    now = datetime.utcnow()
-
-    # Calcular recuento actual de peces
-    unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
-    unregistered_total = sum(unregistered_balances.values())
-    tagged_total = len(_get_current_tagged_fish_in_pond(pond_id, db))
-    current_fish_count = tagged_total + unregistered_total
-
-    # Eventos pendientes de reconciliación: unidentified O retagged sin resolver aún
-    pending = db.query(TagDetachmentEvent).filter(
-        TagDetachmentEvent.pond_id == pond_id,
-        TagDetachmentEvent.status.in_(["unidentified", "retagged"]),
-        TagDetachmentEvent.resolved_at.is_(None),
-    ).all()
-
-    if not pending:
-        return go("ok", "No había eventos pendientes.")
-
-    try:
-        # Procesar eventos normales
-        for event in pending:
-            resolution = form.get(f"resolution_{event.id}", "retagged_and_transferred")
-            if resolution not in ("retagged_and_transferred", "left_unregistered", "mortality", "other"):
-                resolution = "retagged_and_transferred"
-            event.status = "written_off"
-            event.resolution = resolution
-            event.resolved_at = now
-
-        # Procesar peces faltantes (si existen)
-        missing_resolution = form.get("resolution_missing_peces")
-        missing_lot_id_str = form.get("missing_peces_lot_id", "").strip()
-        missing_count = current_fish_count - len([e for e in pending if e.status == "retagged"])
-
-        if missing_count > 0 and missing_resolution:
-            # Si hay error de inventario y se requiere crear peces, obtener el lote
-            missing_lot_id = None
-            if missing_resolution == "other" and missing_lot_id_str:
-                try:
-                    missing_lot_id = int(missing_lot_id_str)
-                except (ValueError, TypeError):
-                    pass
-
-            if missing_resolution == "other" and not missing_lot_id:
-                db.rollback()
-                return go("error", "Se debe seleccionar un lote para asignar los peces del error de inventario.")
-
-            # Crear peces reales si es error de inventario con lote válido
-            if missing_lot_id:
-                # Generar internal_ids automáticos para los peces nuevos
-                existing_count = db.query(func.count(Fish.id)).filter(Fish.lot_id == missing_lot_id).scalar() or 0
-                new_fish = []
-                for i in range(missing_count):
-                    fish = Fish(
-                        lot_id=missing_lot_id,
-                        internal_id=f"INVEN-ERR-{pond_id}-{existing_count + i + 1}",
-                        state="alive",
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    db.add(fish)
-                    new_fish.append(fish)
-                db.flush()  # Asegurar que los IDs se generen
-
-                # Crear eventos para los peces nuevos
-                for fish in new_fish:
-                    missing_event = TagDetachmentEvent(
-                        pond_id=pond_id,
-                        fish_id=fish.id,
-                        event_date=datetime.utcnow().date(),
-                        notes=f"[Pez sin evento de pérdida - Error de inventario] Lote {missing_lot_id}",
-                        status="written_off",
-                        resolution=missing_resolution,
-                        resolved_at=now,
-                    )
-                    db.add(missing_event)
-            else:
-                # Sin lote: crear solo eventos virtuales
-                for i in range(missing_count):
-                    missing_event = TagDetachmentEvent(
-                        pond_id=pond_id,
-                        fish_id=None,
-                        event_date=datetime.utcnow().date(),
-                        notes="[Pez sin evento de pérdida]",
-                        status="written_off",
-                        resolution=missing_resolution,
-                        resolved_at=now,
-                    )
-                    db.add(missing_event)
-
-        # Registrar fecha de última reconciliación de tags en el estanque
-        pond.last_tag_reconciliation_at = now
-
-        db.commit()
-        events_processed = len(pending) + (missing_count if missing_count > 0 else 0)
-        return go("ok", f"{events_processed} evento(s) de tag perdido reconciliados y cerrados.")
-    except Exception:
-        db.rollback()
-        return go("error", "No se pudo completar la reconciliación.")
+    """Vaciado del estanque: egresa todos los peces restantes (taggeados + sin tag)
+    con motivo 'reconciliation', cierra los eventos pendientes y deja el estanque en 0."""
+    return _do_empty_pond(pond_id, db)
 
 
 # ---------------------------------------------------------------------------
