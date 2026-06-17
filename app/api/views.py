@@ -5558,9 +5558,12 @@ def ui_retag_save(
         if moved_female:
             return go("ok", f"PIT tag {pit_tag} asignado y enviado a {female_destination.name}. Pez re-taggeado correctamente.")
         return go("ok", f"PIT tag {pit_tag} asignado. Pez re-taggeado correctamente.")
-    except Exception:
+    except Exception as e:
         db.rollback()
-        return go("error", "No se pudo registrar el re-tag.")
+        import traceback
+        print(f"Error en re-tag: {str(e)}")
+        print(traceback.format_exc())
+        return go("error", f"No se pudo registrar el re-tag: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
