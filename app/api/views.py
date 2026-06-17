@@ -5375,7 +5375,8 @@ def ui_retag_save(
     event = db.query(TagDetachmentEvent).filter(
         TagDetachmentEvent.id == event_id,
         TagDetachmentEvent.pond_id == pond_id,
-        TagDetachmentEvent.status == "unidentified",
+        TagDetachmentEvent.status.in_(["unidentified", "retagged"]),
+        TagDetachmentEvent.resolved_at.is_(None),
     ).first()
 
     def go(s, m):
@@ -5384,8 +5385,11 @@ def ui_retag_save(
             status_code=303,
         )
 
-    if not pond or not event:
-        return go("error", "Evento no encontrado o ya procesado.")
+    if not pond:
+        return go("error", "Estanque no encontrado.")
+
+    if not event:
+        return go("error", "Evento no encontrado o ya fue reconciliado. Regresa al detalle del estanque.")
 
     pit_tag = _normalize_pit_tag(internal_id)
     if not pit_tag:
