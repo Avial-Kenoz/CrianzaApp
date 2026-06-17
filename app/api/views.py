@@ -5541,6 +5541,8 @@ def ui_retag_save(
                 fish.depuration_start_time = None
 
         # Cerrar el evento de pérdida de tag
+        # IMPORTANTE: refrescar event para que SQLAlchemy lo rastree correctamente después de múltiples operaciones
+        db.refresh(event)
         event.retag_fish_id = fish.id
         event.status = "retagged"
 
