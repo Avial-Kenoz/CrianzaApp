@@ -36,6 +36,12 @@ from app.models.cultivation_declaration_items import CultivationDeclarationItem
 from app.schemas.views import CultivationUnitWithPonds, PondSummary, LotSummary
 from app.models.feed import (FeedMonthlyConsumptionLegacy, FeedExecutionEvent,
                              FeedType, FeedReceiptHeader, FeedReceiptLine)
+from app.services.planta_yield import get_caviar_yield_factor
+from app.services import ovulation_cycle as _ovc
+
+# Estados de desarrollo maduros: solo estas hembras tienen ova lista y se les
+# estima caviar. Las inmaduras muestran biomasa pero sin estimado.
+CAVIAR_MATURE_STATES = {"3", "4"}
 
 router = APIRouter(prefix="/views", tags=["views"])
 template_dir = Path(__file__).parent.parent / "templates"
@@ -2362,6 +2368,13 @@ def ui_pond_detail(
 
         depuration_start_map = cycle_start_by_fish
 
+    # Parámetros del modelo de ciclo ovárico (cacheados; no re-ajusta en caliente).
+    # Si no hay caché o falla, simplemente no se muestran predicciones.
+    try:
+        _ovc_params = _ovc.get_params()
+    except Exception:
+        _ovc_params = None
+
     fish_rows = []
     for fish in current_fish:
         lot = lots_map.get(fish.lot_id)
@@ -2384,9 +2397,30 @@ def ui_pond_detail(
 
         # Calcular días desde último muestreo
         days_since_last_sample = None
+        sample_date = None
         if sample and (sample.registry_time or sample.created_at):
             sample_date = (sample.registry_time or sample.created_at).date()
             days_since_last_sample = (datetime.utcnow().date() - sample_date).days
+
+        # Predicción de entrada a etapa 4 (solo hembras con estado ≥2).
+        # e4_label: fecha probable de E4 (línea bajo el estado, sin año).
+        # next_days_label: días hasta el próximo muestreo sugerido (columna propia).
+        e4_label = None
+        next_days_label = None
+        _dev = (str(sample.development_state).strip().upper()
+                if sample and sample.development_state else "")
+        if is_female and _dev in ("2", "3", "4"):
+            if _dev == "4":
+                e4_label = "🎯 lista"
+            elif _ovc_params and sample_date:
+                _today = datetime.utcnow().date()
+                _e4d, _nxd = _ovc.predict_for(int(_dev), sample_date, _ovc_params)
+                # fecha en el pasado (muestreo antiguo) -> evitar mes ambiguo sin año
+                e4_label = ("E4 ¿revisar?" if (_e4d and _e4d < _today)
+                            else "E4 " + _ovc.fmt_daymon(_e4d))
+                if _nxd:
+                    _dd = (_nxd - _today).days
+                    next_days_label = "ya" if _dd <= 0 else str(_dd)
 
         fish_rows.append({
             "fish_id": fish.id,
@@ -2407,6 +2441,8 @@ def ui_pond_detail(
             ),
             "depuration_days": depuration_days,
             "days_since_last_sample": days_since_last_sample,
+            "e4_label": e4_label,
+            "next_days_label": next_days_label,
         })
 
     show_depuration_column = pond.depuration or any(row["depuration_days"] is not None for row in fish_rows)
@@ -2462,12 +2498,6 @@ def ui_pond_detail(
         for row in fish_rows
         if row.get("sex_value") == "f" and row.get("development_state") == "4"
     )
-    females_state_4_biomass_kg = sum(
-        float(row.get("last_weight") or 0) / 1000.0
-        for row in fish_rows
-        if row.get("sex_value") == "f" and row.get("development_state") == "4"
-    )
-    caviar_estimated_kg = females_state_4_biomass_kg * 0.125
 
     # Recuento por lote (peces con PIT)
     _lot_counts: dict = defaultdict(int)
@@ -2482,12 +2512,36 @@ def ui_pond_detail(
     sex_count_m = sum(1 for r in fish_rows if r.get("sex_value") == "m")
     sex_count_u = len(fish_rows) - sex_count_f - sex_count_m
 
-    # Recuento hembras por estado de desarrollo
+    # Hembras por estado de desarrollo: conteo + biomasa + caviar estimado.
+    # El caviar se estima solo en estados maduros (CAVIAR_MATURE_STATES) porque
+    # las inmaduras aún no tienen la ova; el factor biomasa→caviar envasado sale
+    # de los rendimientos reales de PlantaApp (cacheado, con fallback al último bueno).
     _state_counts: dict = defaultdict(int)
+    _state_biomass_kg: dict = defaultdict(float)
     for _r in fish_rows:
         if _r.get("sex_value") == "f":
-            _state_counts[_r.get("development_state") or "—"] += 1
-    females_by_state = dict(sorted(_state_counts.items()))
+            _state = _r.get("development_state") or "—"
+            _state_counts[_state] += 1
+            _state_biomass_kg[_state] += float(_r.get("last_weight") or 0) / 1000.0
+
+    caviar_yield = get_caviar_yield_factor()
+    caviar_factor = float(caviar_yield.get("factor") or 0.0)
+
+    females_by_state = {}
+    for _state in sorted(_state_counts.keys()):
+        _biomass = round(_state_biomass_kg[_state], 1)
+        _is_mature = _state in CAVIAR_MATURE_STATES
+        females_by_state[_state] = {
+            "count": _state_counts[_state],
+            "biomass_kg": _biomass,
+            "caviar_kg": round(_state_biomass_kg[_state] * caviar_factor, 1) if _is_mature else None,
+            "mature": _is_mature,
+        }
+
+    mature_biomass_kg = sum(
+        _state_biomass_kg[_state] for _state in _state_biomass_kg if _state in CAVIAR_MATURE_STATES
+    )
+    caviar_estimated_kg = mature_biomass_kg * caviar_factor
 
     template = jinja_env.get_template("pond_detail.html")
     html = template.render({
@@ -2505,8 +2559,10 @@ def ui_pond_detail(
         "tagged_count": len(fish_rows),
         "unregistered_count": unregistered_count,
         "female_state_4_count": females_state_4_count,
-        "female_state_4_biomass_kg": round(females_state_4_biomass_kg, 1),
         "caviar_estimated_kg": round(caviar_estimated_kg, 1),
+        "caviar_factor_pct": round(caviar_factor * 100.0, 1),
+        "caviar_yield_window": caviar_yield.get("window_days"),
+        "caviar_yield_stale": bool(caviar_yield.get("stale")),
         "fish_by_lot": fish_by_lot,
         "sex_count_f": sex_count_f,
         "sex_count_m": sex_count_m,
@@ -3687,10 +3743,11 @@ def fish_search(q: str, db: Session = Depends(get_db)):
 
 @router.get("/ui/ponds/{pond_id}/pit-tags")
 def ui_pond_pit_tags(pond_id: int, db: Session = Depends(get_db)):
-    """Retorna PIT tags actuales del estanque para autocompletar en UI."""
+    """Retorna PIT tags actuales del estanque para autocompletar y carga masiva en UI."""
     fish_list = _get_current_tagged_fish_in_pond(pond_id, db)
     pit_tags = [f.internal_id for f in fish_list if f.internal_id]
-    return JSONResponse({"pit_tags": pit_tags})
+    fish = [{"id": f.id, "pit": f.internal_id} for f in fish_list if f.internal_id]
+    return JSONResponse({"pit_tags": pit_tags, "fish": fish})
 
 
 # ── Formulario de nuevo movimiento ─────────────────────────────────────────

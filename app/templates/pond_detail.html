@@ -627,12 +627,28 @@
         <div class="card-table-wrap">
           <table class="card-table">
             <thead style="background:transparent;color:#9ca3af;"><tr>
+              <th style="text-align:left;">Estado</th>
               {% for state in females_by_state.keys() %}<th>{{ state }}</th>{% endfor %}
             </tr></thead>
-            <tbody><tr>
-              {% for count in females_by_state.values() %}<td>{{ count }}</td>{% endfor %}
-            </tr></tbody>
+            <tbody>
+              <tr>
+                <td style="text-align:left;color:#9ca3af;">N°</td>
+                {% for v in females_by_state.values() %}<td>{{ v.count }}</td>{% endfor %}
+              </tr>
+              <tr>
+                <td style="text-align:left;color:#9ca3af;">Biomasa</td>
+                {% for v in females_by_state.values() %}<td>{{ v.biomass_kg }} kg</td>{% endfor %}
+              </tr>
+              <tr>
+                <td style="text-align:left;color:#9ca3af;">Caviar est.</td>
+                {% for v in females_by_state.values() %}<td>{% if v.caviar_kg is not none %}{{ v.caviar_kg }} kg{% else %}—{% endif %}</td>{% endfor %}
+              </tr>
+            </tbody>
           </table>
+        </div>
+        <div class="subline">
+          Caviar est. ≈ biomasa × {{ caviar_factor_pct }}% (envasado, últimos {{ caviar_yield_window }} días{% if caviar_yield_stale %} · dato en caché{% endif %}); solo estados maduros (3-4).
+          Total estimado ≈ <strong>{{ caviar_estimated_kg }} kg</strong>.
         </div>
         {% else %}
         <div class="subline">Sin hembras registradas</div>
@@ -699,6 +715,7 @@
               <th>Dias en depuracion</th>
               <th>Dias desde muestreo</th>
               {% endif %}
+              <th>Dias prox. muestreo</th>
               <th>Acciones</th>
             </tr>
           </thead>
@@ -786,6 +803,7 @@
               <td><span class="nd">N/A</span></td>
               <td><span class="nd">N/A</span></td>
               {% endif %}
+              <td><span class="nd">N/A</span></td>
               <td class="actions-cell">
                 <button
                   type="submit"
@@ -863,6 +881,11 @@
                   <option value="{{ dev }}" selected>Actual (legacy): {{ dev }}</option>
                   {% endif %}
                 </select>
+                {% if row.e4_label %}
+                <div style="font-size:.68rem;color:#6b7280;margin-top:3px;white-space:nowrap;" title="Fecha probable de entrada a etapa 4 (modelo de ciclo ovárico)">
+                  {{ row.e4_label }}
+                </div>
+                {% endif %}
               </td>
               <td>
                 <input
@@ -891,6 +914,15 @@
                 {% endif %}
               </td>
               {% endif %}
+              <td>
+                {% if row.next_days_label == 'ya' %}
+                <span class="days-badge" style="background:#fee2e2;color:#991b1b;">ya</span>
+                {% elif row.next_days_label %}
+                <span class="days-badge">{{ row.next_days_label }} dias</span>
+                {% else %}
+                <span class="nd">—</span>
+                {% endif %}
+              </td>
               <td class="actions-cell">
                 <button type="submit" name="action" value="save" class="save-btn" form="save-fish-{{ row.fish_id }}">Guardar</button>
                 {% if pond.depuration %}
@@ -916,7 +948,7 @@
             {% endfor %}
             {% else %}
             <tr>
-              <td colspan="{{ 10 if show_depuration_column else 8 }}" class="nd">No hay peces con PIT tag actualmente en esta laguna.</td>
+              <td colspan="{{ 11 if show_depuration_column else 9 }}" class="nd">No hay peces con PIT tag actualmente en esta laguna.</td>
             </tr>
             {% endif %}
           </tbody>

@@ -14,6 +14,7 @@ from app.api.catalogs import router as catalogs_router
 from app.api.views import router as views_router
 from app.api.cultivation_declarations import router as cultivation_declarations_router
 from app.api.feed_endpoints import router as feed_router
+from app.api.ovulation import router as ovulation_router
 
 app = FastAPI(title="FastApp Etapa 1", version="0.1.0")
 
@@ -31,6 +32,7 @@ app.include_router(catalogs_router)
 app.include_router(feed_router)
 app.include_router(views_router)
 app.include_router(cultivation_declarations_router)
+app.include_router(ovulation_router)
 
 @app.get("/")
 def root():
