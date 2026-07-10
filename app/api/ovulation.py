@@ -35,5 +35,12 @@ def ciclo_ovarico(request: Request, db: Session = Depends(get_db)):
 @router.post("/ui/ovulacion/ciclo-ovarico/actualizar")
 def actualizar_ciclo_ovarico(db: Session = Depends(get_db)):
     ovulation_cycle.compute_and_cache(db)
+    # el modelo de crecimiento de ova usa el ρ estacional del de ovulación:
+    # se re-estima después, alimentándose de los muestreos nuevos.
+    try:
+        from app.services import oocyte_growth
+        oocyte_growth.estimate_and_cache(db)
+    except Exception:
+        pass
     return RedirectResponse(url="/views/ui/ovulacion/ciclo-ovarico",
                             status_code=303)

@@ -38,6 +38,7 @@ from app.models.feed import (FeedMonthlyConsumptionLegacy, FeedExecutionEvent,
                              FeedType, FeedReceiptHeader, FeedReceiptLine)
 from app.services.planta_yield import get_caviar_yield_factor
 from app.services import ovulation_cycle as _ovc
+from app.services import oocyte_growth as _og
 
 # Estados de desarrollo maduros: solo estas hembras tienen ova lista y se les
 # estima caviar. Las inmaduras muestran biomasa pero sin estimado.
@@ -2368,12 +2369,16 @@ def ui_pond_detail(
 
         depuration_start_map = cycle_start_by_fish
 
-    # Parámetros del modelo de ciclo ovárico (cacheados; no re-ajusta en caliente).
+    # Parámetros de los modelos (cacheados; no re-ajustan en caliente).
     # Si no hay caché o falla, simplemente no se muestran predicciones.
     try:
         _ovc_params = _ovc.get_params()
     except Exception:
         _ovc_params = None
+    try:
+        _growth_params = _og.load_params()
+    except Exception:
+        _growth_params = None
 
     fish_rows = []
     for fish in current_fish:
@@ -2402,18 +2407,37 @@ def ui_pond_detail(
             sample_date = (sample.registry_time or sample.created_at).date()
             days_since_last_sample = (datetime.utcnow().date() - sample_date).days
 
-        # Predicción de entrada a etapa 4 (solo hembras con estado ≥2).
-        # e4_label: fecha probable de E4 (línea bajo el estado, sin año).
-        # next_days_label: días hasta el próximo muestreo sugerido (columna propia).
+        # Predicción por hembra (estado ≥2).
+        #  - Etapa 2/3: e4_label = fecha probable de E4; columna = días a próximo
+        #    muestreo (modelo de ciclo ovárico).
+        #  - Etapa 4: la decisión es por diámetro de ova (umbral cosecha 2,8 mm);
+        #    e4_label = estado ø; columna = días estimados a 2,8 (modelo crecimiento).
         e4_label = None
         next_days_label = None
         _dev = (str(sample.development_state).strip().upper()
                 if sample and sample.development_state else "")
+        _diam = None
+        if sample and sample.diameter is not None:
+            try:
+                _d = float(sample.diameter)
+                _diam = _d if 1.5 <= _d <= 5.0 else None
+            except (TypeError, ValueError):
+                _diam = None
         if is_female and _dev in ("2", "3", "4"):
+            _today = datetime.utcnow().date()
             if _dev == "4":
-                e4_label = "🎯 lista"
+                if _diam is not None and _diam >= _og.THRESHOLD_MM:
+                    e4_label = f"🎯 lista (ø{_diam:.1f})"
+                    next_days_label = "ya"
+                elif _diam is not None:
+                    e4_label = f"ø{_diam:.1f} → 2,8"
+                    _nd = (_og.days_to_threshold(_diam, sample_date, _growth_params)
+                           if _growth_params and sample_date else None)
+                    if _nd is not None:
+                        next_days_label = "ya" if _nd <= 0 else str(_nd)
+                else:
+                    e4_label = "🎯 en 4"
             elif _ovc_params and sample_date:
-                _today = datetime.utcnow().date()
                 _e4d, _nxd = _ovc.predict_for(int(_dev), sample_date, _ovc_params)
                 # fecha en el pasado (muestreo antiguo) -> evitar mes ambiguo sin año
                 e4_label = ("E4 ¿revisar?" if (_e4d and _e4d < _today)
