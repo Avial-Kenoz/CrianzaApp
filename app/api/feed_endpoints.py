@@ -43,40 +43,52 @@ def get_db():
 # ════════════════════════════════════════════════════════════════════════════════
 
 def calculate_feed_stock(feed_type_id: int, db: Session):
-    """Calcula el stock actual para un tipo de alimento"""
+    """Stock fisico de un tipo de alimento.
+
+    Modelo simple y auditable:
+        disponible = (ingresos + ajustes) - ejecutado
+
+    La planificacion (movimientos reserve/release) es informativa y NO mueve
+    el stock fisico: confirmar una ejecucion descuenta del disponible
+    exactamente los sacos consumidos (movimiento execute). Los movimientos
+    historicos reserve/release quedan inertes para el calculo del disponible.
+
+    'planned_bags' refleja el plan pendiente del programa vigente (no el ledger).
+    """
     ledger_rows = db.query(FeedStockLedger).filter(
         FeedStockLedger.feed_type_id == feed_type_id
     ).all()
 
     total_bags = 0
     total_kg = Decimal("0")
-    available_bags = 0
-    planned_bags = 0
     executed_bags = 0
 
     for entry in ledger_rows:
         delta_bags = entry.bags_delta or 0
         delta_kg = entry.kg_delta or Decimal("0")
-        
-        # total_bags only counts physical stock entries and adjustments (not internal transfers)
+
+        # total_bags = ingresos fisicos + ajustes (no movimientos internos)
         if entry.movement_type in (FeedMovementType.entry, FeedMovementType.adjustment):
             total_bags += delta_bags
             total_kg += delta_kg
-
-        if entry.movement_type == FeedMovementType.entry:
-            available_bags += delta_bags
-        elif entry.movement_type == FeedMovementType.reserve:
-            planned_bags += delta_bags
-            available_bags -= delta_bags
         elif entry.movement_type == FeedMovementType.execute:
-            # bags_delta is negative for execute (-N consumed from available)
+            # bags_delta es negativo en execute (-N consumidos)
             executed_bags += abs(delta_bags)
-            available_bags += delta_bags
-        elif entry.movement_type == FeedMovementType.release:
-            available_bags += delta_bags
-            planned_bags -= delta_bags
-        elif entry.movement_type == FeedMovementType.adjustment:
-            available_bags += delta_bags
+        # reserve / release: planificacion -> no afectan el stock fisico
+
+    available_bags = total_bags - executed_bags
+
+    # Plan pendiente del programa vigente (informativo, no afecta el disponible)
+    planned_bags = int(
+        db.query(func.coalesce(func.sum(FeedProgramLine.remaining_bags), 0))
+        .join(FeedProgram, FeedProgram.id == FeedProgramLine.feed_program_id)
+        .filter(
+            FeedProgram.status == "open",
+            FeedProgramLine.feed_type_id == feed_type_id,
+        )
+        .scalar()
+        or 0
+    )
 
     return {
         "total_bags": total_bags,
@@ -431,6 +443,36 @@ def ui_feed_inventory(
         if feed_id not in latest_adjustment_by_feed:
             latest_adjustment_by_feed[feed_id] = row
 
+    # Programa vigente (ultimo cargado): "ejecutado" y "programado" se miden
+    # contra este programa, no contra el historico.
+    open_program = (
+        db.query(FeedProgram)
+        .filter(FeedProgram.status == "open")
+        .order_by(FeedProgram.created_at.desc(), FeedProgram.id.desc())
+        .first()
+    )
+    planned_by_ft = {}   # feed_type_id -> sacos planificados en el programa vigente
+    executed_by_ft = {}  # feed_type_id -> sacos confirmados en el programa vigente
+    if open_program:
+        planned_by_ft = dict(
+            db.query(
+                FeedProgramLine.feed_type_id,
+                func.coalesce(func.sum(FeedProgramLine.planned_bags), 0),
+            )
+            .filter(FeedProgramLine.feed_program_id == open_program.id)
+            .group_by(FeedProgramLine.feed_type_id)
+            .all()
+        )
+        executed_by_ft = dict(
+            db.query(
+                FeedExecutionEvent.feed_type_id,
+                func.coalesce(func.sum(FeedExecutionEvent.confirmed_bags), 0),
+            )
+            .filter(FeedExecutionEvent.feed_program_id == open_program.id)
+            .group_by(FeedExecutionEvent.feed_type_id)
+            .all()
+        )
+
     inventory_rows = []
     total_bags = 0
     total_available = 0
@@ -439,21 +481,30 @@ def ui_feed_inventory(
 
     for feed_type in feed_types:
         stock = calculate_feed_stock(feed_type.id, db)
+        # Sacos Totales = stock fisico de bodega = ingresos + ajustes - ejecutado(historico)
+        sacos_totales = int(stock["available_bags"])
+        # Ejecutado / Programado referidos al programa vigente
+        ejecutado = int(executed_by_ft.get(feed_type.id, 0))
+        plan_vigente = int(planned_by_ft.get(feed_type.id, 0))
+        programado = max(plan_vigente - ejecutado, 0)
+        # Disponibles para programar = stock fisico - lo aun comprometido por el plan
+        disponibles = sacos_totales - programado
+
         latest_adjustment = latest_adjustment_by_feed.get(int(feed_type.id))
         inventory_rows.append({
             "feed_type_id": feed_type.id,
             "feed_name": feed_type.name,
-            "total_bags": int(stock["total_bags"]),
-            "available_bags": int(stock["available_bags"]),
-            "planned_bags": int(stock["planned_bags"]),
-            "executed_bags": int(stock["executed_bags"]),
+            "total_bags": sacos_totales,
+            "available_bags": disponibles,
+            "planned_bags": programado,
+            "executed_bags": ejecutado,
             "latest_comment": latest_adjustment.comment if latest_adjustment else "",
             "latest_adjustment_at": latest_adjustment.created_at if latest_adjustment else None,
         })
-        total_bags += int(stock["total_bags"])
-        total_available += int(stock["available_bags"])
-        total_planned += int(stock["planned_bags"])
-        total_executed += int(stock["executed_bags"])
+        total_bags += sacos_totales
+        total_available += disponibles
+        total_planned += programado
+        total_executed += ejecutado
 
     context = {
         "request": request,
@@ -555,20 +606,8 @@ async def ui_feed_confirm_row(
             db.add(event)
             db.flush()
 
-            if not is_unplanned:
-                # Release: libera sacos de planificado → disponible
-                db.add(FeedStockLedger(
-                    feed_type_id=feed_type_id,
-                    movement_type=FeedMovementType.release,
-                    bags_delta=bags,
-                    kg_delta=Decimal("0"),
-                    source_table="feed_execution_events",
-                    source_id=event.id,
-                    created_at=now,
-                    created_by="system",
-                ))
-
-            # Execute: descuenta de disponible (delta negativo)
+            # Execute: descuenta del disponible los sacos realmente consumidos
+            # (delta negativo). La planificacion no mueve stock fisico.
             db.add(FeedStockLedger(
                 feed_type_id=feed_type_id,
                 movement_type=FeedMovementType.execute,
@@ -703,18 +742,7 @@ async def ui_feed_confirm_all(
                 db.add(event)
                 db.flush()
 
-                if not is_unplanned:
-                    db.add(FeedStockLedger(
-                        feed_type_id=feed_type_id,
-                        movement_type=FeedMovementType.release,
-                        bags_delta=bags,
-                        kg_delta=Decimal("0"),
-                        source_table="feed_execution_events",
-                        source_id=event.id,
-                        created_at=now,
-                        created_by="system",
-                    ))
-
+                # Execute: descuenta del disponible los sacos consumidos.
                 db.add(FeedStockLedger(
                     feed_type_id=feed_type_id,
                     movement_type=FeedMovementType.execute,
@@ -1173,22 +1201,8 @@ async def ui_feed_new_program_save(
     old_program = db.query(FeedProgram).filter(FeedProgram.status == "open").first()
     try:
         if old_program:
-            old_lines = db.query(FeedProgramLine).filter(
-                FeedProgramLine.feed_program_id == old_program.id
-            ).all()
-            for old_line in old_lines:
-                remaining = int(old_line.remaining_bags or 0)
-                if remaining > 0:
-                    db.add(FeedStockLedger(
-                        feed_type_id=old_line.feed_type_id,
-                        movement_type=FeedMovementType.release,
-                        bags_delta=remaining,
-                        kg_delta=Decimal("0"),
-                        source_table="feed_programs",
-                        source_id=old_program.id,
-                        created_at=now,
-                        created_by="system",
-                    ))
+            # La planificacion no mueve stock fisico, asi que cerrar el
+            # programa anterior no requiere liberar reservas en el ledger.
             old_program.status = "closed"
             old_program.closed_reason = "superseded"
             old_program.closed_at = now
@@ -1267,18 +1281,7 @@ async def ui_feed_new_program_save(
             )
             db.add(line)
             db.flush()
-
-            if bags > 0:
-                db.add(FeedStockLedger(
-                    feed_type_id=ft_id,
-                    movement_type=FeedMovementType.reserve,
-                    bags_delta=bags,
-                    kg_delta=Decimal("0"),
-                    source_table="feed_programs",
-                    source_id=new_program.id,
-                    created_at=now,
-                    created_by="system",
-                ))
+            # Planificar no consume stock fisico: no se emite movimiento reserve.
 
         db.commit()
         return RedirectResponse(
@@ -1398,56 +1401,17 @@ def api_feed_stock(
     if not feed_type:
         return JSONResponse({"success": False, "error": "Tipo de alimento no encontrado"}, status_code=404)
 
-    # Calcular stock desde ledger
-    ledger_rows = db.query(FeedStockLedger).filter(
-        FeedStockLedger.feed_type_id == feed_type_id
-    ).all()
-
-    total_bags = 0
-    total_kg = Decimal("0")
-    available_bags = 0  # entry - reserved - executed
-    planned_bags = 0    # reserved
-    executed_bags = 0   # executed
-    adjustment_bags = 0 # adjustment deltas
-
-    for entry in ledger_rows:
-        delta_bags = entry.bags_delta or 0
-        delta_kg = entry.kg_delta or Decimal("0")
-        
-        # total_bags only counts physical stock entries and adjustments (not internal transfers)
-        if entry.movement_type in (FeedMovementType.entry, FeedMovementType.adjustment):
-            total_bags += delta_bags
-            total_kg += delta_kg
-
-        if entry.movement_type == FeedMovementType.entry:
-            available_bags += delta_bags
-        elif entry.movement_type == FeedMovementType.reserve:
-            planned_bags += delta_bags
-            available_bags -= delta_bags
-        elif entry.movement_type == FeedMovementType.execute:
-            executed_bags += delta_bags
-            if entry.kg_delta > 0:  # Si fue liberado después de ejecución
-                available_bags += delta_bags
-        elif entry.movement_type == FeedMovementType.release:
-            available_bags += delta_bags
-            planned_bags -= delta_bags
-        elif entry.movement_type == FeedMovementType.adjustment:
-            adjustment_bags += delta_bags
-            available_bags += delta_bags
-
-    # Aplicar ajustes manuales al disponible
-    # (Los ajustes son diferencias entre calculado y real)
+    stock = calculate_feed_stock(feed_type_id, db)
 
     return JSONResponse({
         "success": True,
         "data": {
             "feed_type_id": feed_type_id,
             "feed_type_name": feed_type.name,
-            "calculated_total_bags": available_bags,
-            "available_bags": available_bags,
-            "planned_bags": planned_bags,
-            "executed_bags": executed_bags,
-            "adjustment_bags": adjustment_bags,
-            "total_kg": str(total_kg),
+            "calculated_total_bags": int(stock["available_bags"]),
+            "available_bags": int(stock["available_bags"]),
+            "planned_bags": int(stock["planned_bags"]),
+            "executed_bags": int(stock["executed_bags"]),
+            "total_kg": str(stock["total_kg"]),
         }
     })

@@ -38,6 +38,7 @@ from app.models.feed import (FeedMonthlyConsumptionLegacy, FeedExecutionEvent,
                              FeedType, FeedReceiptHeader, FeedReceiptLine)
 from app.services.planta_yield import get_caviar_yield_factor
 from app.services import ovulation_cycle as _ovc
+from app.services import reproduccion as _repro
 from app.services import oocyte_growth as _og
 
 # Estados de desarrollo maduros: solo estas hembras tienen ova lista y se les
@@ -389,6 +390,19 @@ def _refresh_pond_runtime_cache_many(pond_ids, db: Session) -> None:
     unique_ids = sorted({int(pid) for pid in pond_ids if pid})
     for pid in unique_ids:
         _refresh_pond_runtime_cache(pid, db)
+
+
+def rebuild_all_pond_runtime_cache(db: Session) -> int:
+    """Recalcula y persiste el cache operativo de todos los estanques.
+
+    Fuente de verdad única para el script `rebuild_pond_runtime_cache.py` y el
+    job agendado. Hace commit y devuelve la cantidad de estanques procesados.
+    """
+    ponds = db.query(Pond).order_by(Pond.id).all()
+    for pond in ponds:
+        _refresh_pond_runtime_cache(pond.id, db)
+    db.commit()
+    return len(ponds)
 
 
 def _build_cached_pond_rows(
@@ -2480,6 +2494,14 @@ def ui_pond_detail(
         TagDetachmentEvent.resolved_at.is_(None),
     ).order_by(TagDetachmentEvent.event_date.asc()).all()
 
+    # Retags sin resolver: se restan del total (evitan doble conteo del pez
+    # re-tagueado). La lista /ui/ponds ya los descuenta en n_fish_cached; aquí lo
+    # exponemos para que el total del detalle cuadre con el de la lista.
+    retagged_unresolved_count = sum(
+        1 for e in pending_detachment_events if e.status == "retagged"
+    )
+    net_fish_count = len(fish_rows) + unregistered_count - retagged_unresolved_count
+
     unregistered_lot_ids = list(unregistered_balances.keys())
     unregistered_lots = (
         db.query(Lot).filter(Lot.id.in_(unregistered_lot_ids)).all()
@@ -2582,6 +2604,8 @@ def ui_pond_detail(
         "all_ponds": [{"id": p.id, "name": p.name} for p in all_ponds if p.id != pond.id],
         "tagged_count": len(fish_rows),
         "unregistered_count": unregistered_count,
+        "retagged_unresolved_count": retagged_unresolved_count,
+        "net_fish_count": net_fish_count,
         "female_state_4_count": females_state_4_count,
         "caviar_estimated_kg": round(caviar_estimated_kg, 1),
         "caviar_factor_pct": round(caviar_factor * 100.0, 1),
@@ -3533,11 +3557,22 @@ def ui_fish_history(
     events = [e for e in events if e["time"] is not None]
     events.sort(key=lambda e: e["time"])
 
+    repro_sel = _repro.active_selection_for(db, fish_id)
+    repro_sex_char = (fish.sex or "").strip().upper()[:1]
+    repro_ctx = {
+        "active": repro_sel is not None,
+        "selection_id": repro_sel.id if repro_sel else None,
+        "needs_sex": repro_sex_char not in ("F", "M"),
+        "sex_char": repro_sex_char if repro_sex_char in ("F", "M") else "",
+        "can_select": fish.state == "alive",
+    }
+
     template = jinja_env.get_template("fish_history.html")
     html = template.render({
         "request": request,
         "status": status,
         "msg": msg,
+        "repro": repro_ctx,
         "fish": {
             "id": fish.id,
             "internal_id": fish.internal_id,
@@ -3759,6 +3794,7 @@ def fish_search(q: str, db: Session = Depends(get_db)):
         "id": fish.id,
         "internal_id": fish.internal_id,
         "state": fish.state,
+        "sex": _normalize_sex_value(fish.sex),
         "lot": (lot.name or lot.internal_id) if lot else "N/D",
         "lot_id": fish.lot_id,
         "current_pond": current_pond,
@@ -3770,7 +3806,11 @@ def ui_pond_pit_tags(pond_id: int, db: Session = Depends(get_db)):
     """Retorna PIT tags actuales del estanque para autocompletar y carga masiva en UI."""
     fish_list = _get_current_tagged_fish_in_pond(pond_id, db)
     pit_tags = [f.internal_id for f in fish_list if f.internal_id]
-    fish = [{"id": f.id, "pit": f.internal_id} for f in fish_list if f.internal_id]
+    fish = [
+        {"id": f.id, "pit": f.internal_id, "sex": _normalize_sex_value(f.sex)}
+        for f in fish_list
+        if f.internal_id
+    ]
     return JSONResponse({"pit_tags": pit_tags, "fish": fish})
 
 
@@ -3822,7 +3862,7 @@ def ui_movement_new(
 ALLOWED_REASONS = [
     "mortality", "depuration", "inventory_mismatch", "registration", "devious",
     "first_load", "pond_movement", "unmarked_devious", "missing_number",
-    "reconciliation",
+    "reconciliation", "faena",
 ]
 
 @router.post("/ui/movements", response_class=HTMLResponse)
@@ -3835,6 +3875,7 @@ def ui_movement_create(
     destiny_pond_id: Optional[str] = Form(None),
     fish_id: Optional[str] = Form(None),
     tagged_batch_ids: Optional[str] = Form(None),
+    batch_development_state: Optional[str] = Form(None),
     lot_id: Optional[str] = Form(None),
     fish_quantity_tagged: int = Form(1),
     fish_quantity_untagged: Optional[int] = Form(None),
@@ -3909,6 +3950,19 @@ def ui_movement_create(
     if src_id and dst_id and src_id == dst_id:
         return render_form(error="El estanque origen y destino no pueden ser el mismo.")
 
+    # Faena solo para peces sin marca desde este formulario. Los peces con PIT tag
+    # se envían a faena desde el estanque de depuración (requiere sexo/peso/diámetro).
+    if movement_reason == "faena":
+        if mode != "untagged":
+            return render_form(
+                error="La faena de peces con PIT tag se registra desde el estanque de "
+                      "depuración, no desde este formulario."
+            )
+        if dst_id:
+            return render_form(error="La faena es un egreso: no debe tener estanque destino.")
+        if not src_id:
+            return render_form(error="Debe indicar el estanque origen para enviar peces a faena.")
+
     if mode == "tagged":
         # Movimiento masivo de peces con PIT tag
         batch_ids: list[int] = []
@@ -3972,6 +4026,25 @@ def ui_movement_create(
                     detail += f" ... (+{len(failed_pits)-20})"
                 return render_form(error=f"No se movieron peces con PIT. Fallidos: {detail}")
 
+            # Estado de desarrollo masivo (opcional): se registra un muestreo por
+            # cada pez efectivamente movido. Solo es válido si todos los peces
+            # movibles comparten el mismo sexo registrado (autoritativo en servidor).
+            batch_dev_state = _normalize_development_state(batch_development_state)
+            if batch_dev_state:
+                sexes = {_normalize_sex_value(f.sex) for f in movable_fish}
+                if None in sexes or len(sexes) != 1:
+                    return render_form(
+                        error="Para registrar estado de desarrollo masivo, todos los peces "
+                              "movidos deben tener el mismo sexo registrado."
+                    )
+                common_sex = next(iter(sexes))
+                if not _is_valid_development_state_for_sex(batch_dev_state, common_sex):
+                    if common_sex == "f":
+                        return render_form(error="Estado de desarrollo inválido para hembra. Use: 0, 1, 2, 3, 4 o R.")
+                    if common_sex == "m":
+                        return render_form(error="Estado de desarrollo inválido para macho. Use: 0 o L.")
+                    return render_form(error="Estado de desarrollo inválido.")
+
             try:
                 for fish in movable_fish:
                     new_mov = PondMovement(
@@ -3996,6 +4069,17 @@ def ui_movement_create(
                         fish.depuration_start_time = None
 
                     _adjust_biomass_on_movement(new_mov, db)
+
+                    # Registro masivo de estado de desarrollo (nuevo muestreo por pez).
+                    if batch_dev_state:
+                        db.add(FishSampling(
+                            fish_id=fish.id,
+                            development_state=batch_dev_state,
+                            registry_time=mov_time,
+                            created_at=datetime.utcnow(),
+                            updated_at=datetime.utcnow(),
+                        ))
+
                     moved_pits.append(fish.internal_id or str(fish.id))
 
                 _refresh_pond_runtime_cache_many([src_id, dst_id], db)
@@ -4011,6 +4095,8 @@ def ui_movement_create(
 
             dest_label = dest_pond.name if dst_id and dest_pond else "egreso"
             msg = f"Peces movidos con éxito: {len(moved_pits)} hacia {dest_label}."
+            if batch_dev_state:
+                msg += f" Estado de desarrollo '{batch_dev_state}' registrado en {len(moved_pits)} pez(es)."
             if failed_pits:
                 failed_detail = "; ".join(failed_pits[:20])
                 if len(failed_pits) > 20:
@@ -4116,6 +4202,8 @@ def ui_movement_create(
 
             lot = db.query(Lot).filter(Lot.id == lot_id_int).first()
             lot_label = lot.internal_id if lot else str(lot_id_int)
+            if movement_reason == "faena":
+                return go_after_save("ok", f"Peces enviados a faena: {fish_quantity_untagged} sin marca (lote {lot_label}).")
             return go_after_save("ok", f"Peces movidos con éxito: {fish_quantity_untagged} sin PIT (lote {lot_label}).")
         except Exception:
             db.rollback()

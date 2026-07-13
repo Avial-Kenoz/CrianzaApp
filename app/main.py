@@ -15,8 +15,20 @@ from app.api.views import router as views_router
 from app.api.cultivation_declarations import router as cultivation_declarations_router
 from app.api.feed_endpoints import router as feed_router
 from app.api.ovulation import router as ovulation_router
+from app.api.reproduccion import router as reproduccion_router, api_router as reproduccion_api_router
+from app.services.pond_cache_scheduler import start_scheduler, shutdown_scheduler
 
 app = FastAPI(title="FastApp Etapa 1", version="0.1.0")
+
+
+@app.on_event("startup")
+def _start_pond_cache_scheduler() -> None:
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+def _stop_pond_cache_scheduler() -> None:
+    shutdown_scheduler()
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
@@ -33,6 +45,8 @@ app.include_router(feed_router)
 app.include_router(views_router)
 app.include_router(cultivation_declarations_router)
 app.include_router(ovulation_router)
+app.include_router(reproduccion_router)
+app.include_router(reproduccion_api_router)
 
 @app.get("/")
 def root():

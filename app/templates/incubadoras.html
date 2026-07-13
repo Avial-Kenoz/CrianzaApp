@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Incubadoras — Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f0f2f5; color: #111827; min-height: 100vh; }
+    .container { padding: 12px 10px 24px; display: grid; gap: 12px; max-width: 1080px; }
+    .page-header { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08);
+                   padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .title h1 { font-size: 1.15rem; color: #1a1a2e; }
+    .title p { margin-top: 3px; color: #6b7280; font-size: .82rem; }
+    .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); padding: 16px; }
+    .card h2 { font-size: .95rem; color: #1a1a2e; margin-bottom: 12px; }
+    .kpi-row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .kpi { flex: 1 1 200px; background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 6px rgba(0,0,0,.08); }
+    .kpi .big { font-size: 1.9rem; font-weight: 800; color: #1d4ed8; }
+    .kpi .lbl { color: #6b7280; font-size: .78rem; margin-top: 2px; }
+    .parents { display: flex; flex-direction: column; gap: 6px; }
+    .parent { display: flex; align-items: center; gap: 7px; font-size: .86rem; }
+    .parent .tag { display: inline-block; min-width: 34px; text-align: center; border-radius: 6px;
+                   font-size: .68rem; font-weight: 800; padding: 2px 6px; }
+    .tag-F { background: #fce7f3; color: #be185d; }
+    .tag-M { background: #dbeafe; color: #1d4ed8; }
+    .parent .plot { color: #6b7280; font-size: .8rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    th, td { padding: 7px 9px; border-bottom: 1px solid #eef0f3; text-align: left; vertical-align: middle; }
+    thead th { color: #6b7280; font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; }
+    input, select { border: 1px solid #d1d5db; border-radius: 6px; padding: 5px 7px; font-size: .82rem; }
+    .btn { border: none; border-radius: 8px; background: #2563eb; color: #fff; font-weight: 700; font-size: .82rem; padding: 8px 13px; cursor: pointer; }
+    .btn:hover { background: #1d4ed8; }
+    .btn.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+    .btn.green { background: #059669; } .btn.green:hover { background: #047857; }
+    .btn-sm { border: 1px solid #d1d5db; border-radius: 7px; background: #fff; color: #374151; font-size: .76rem; font-weight: 600; padding: 5px 9px; cursor: pointer; }
+    .btn-sm:hover { background: #f3f4f6; }
+    .banner { border-radius: 8px; padding: 9px 13px; font-size: .82rem; font-weight: 600; }
+    .banner.ok { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+    .banner.error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+    .status-pill { display: inline-block; border-radius: 999px; padding: 3px 11px; font-size: .74rem; font-weight: 700; }
+    .st-monitoring { background: #dbeafe; color: #1d4ed8; }
+    .st-awaiting_first_count { background: #fef3c7; color: #92400e; }
+    .st-completed { background: #d1fae5; color: #065f46; }
+    .u-active { }
+    .u-split { color: #9ca3af; text-decoration: line-through; }
+    .u-hatched { color: #065f46; }
+    .split-box { display: none; background: #f9fafb; border: 1px solid #eef0f3; border-radius: 8px; padding: 10px; margin-top: 6px; }
+    .split-box.open { display: block; }
+    .muted { color: #6b7280; font-size: .8rem; }
+    .inline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="container">
+  <section class="page-header">
+    <div class="title">
+      <h1>Monitoreo de incubadoras · Proceso 3 #{{ batch_id }}</h1>
+      <p>Estado: <span class="status-pill st-{{ status }}">{{ status }}</span>
+         {% if lot %}· Lote <b>{{ lot.name }}</b> ({{ lot.code }}){% endif %}</p>
+    </div>
+    <a class="btn ghost" href="/views/ui/reproduccion">← Volver</a>
+  </section>
+
+  {% if msg %}<div class="banner {{ 'error' if status == 'error' else 'ok' }}">{{ msg }}</div>{% endif %}
+
+  <!-- KPIs -->
+  <div class="kpi-row">
+    <div class="kpi">
+      <div class="big">{{ kpi_viability if kpi_viability is not none else '—' }}{% if kpi_viability is not none %}%{% endif %}</div>
+      <div class="lbl">Viabilidad total (ponderada por peso)</div>
+    </div>
+    <div class="kpi">
+      <div class="big">{{ '{:,}'.format(kpi_viable_ova) if kpi_viable_ova is not none else '—' }}</div>
+      <div class="lbl">Ovas viables estimadas</div>
+    </div>
+    <div class="kpi" style="flex: 1 1 260px;">
+      <div class="lbl" style="margin-bottom:8px; font-weight:700; color:#374151;">Reproductores originales</div>
+      <div class="parents">
+        <div class="parent">
+          <span class="tag tag-F">♀ H</span>
+          <b>{{ female_parent.pit }}</b>
+          <span class="plot">· {{ female_parent.lot }}</span>
+        </div>
+        {% for m in male_parents %}
+        <div class="parent">
+          <span class="tag tag-M">♂ M{{ loop.index }}</span>
+          <b>{{ m.pit }}</b>
+          <span class="plot">· {{ m.lot }}</span>
+        </div>
+        {% else %}
+        <div class="plot">Sin machos registrados.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Lote -->
+  <section class="card">
+    <h2>Lote de peces (Proceso 3)</h2>
+    <form method="post" action="/api/reproduccion/incubadoras/{{ batch_id }}/lot" class="inline">
+      <label class="muted">Nombre <input type="text" name="name" value="{{ lot.name if lot else '' }}" required></label>
+      <label class="muted">Código (≤3) <input type="text" name="code" maxlength="3" style="width:70px; text-transform:uppercase" value="{{ lot.code if lot else '' }}" required></label>
+      <button type="submit" class="btn">{{ 'Actualizar' if lot else 'Crear lote' }}</button>
+    </form>
+    <p class="muted" style="margin-top:6px">Se crea como fila real en <code>lots</code>. Obligatorio para cerrar el Proceso 3.</p>
+  </section>
+
+  <!-- Monitoreo rutinario -->
+  {% if active_units %}
+  <section class="card">
+    <h2>Registrar ronda de monitoreo</h2>
+    <form method="post" action="/api/reproduccion/incubadoras/{{ batch_id }}/monitoring">
+      <div class="inline" style="margin-bottom:8px">
+        <label class="muted">Fecha-hora <input type="datetime-local" name="log_datetime"></label>
+      </div>
+      <table>
+        <thead><tr><th>Incubadora</th><th>Peso (g)</th><th>Tamaño (mm)</th><th>Viabilidad (%)</th><th>Observaciones</th></tr></thead>
+        <tbody>
+          {% for u in active_units %}
+          <tr>
+            <td><b>{{ u.display_id }}</b></td>
+            <td>{{ u.weight }}</td>
+            <td><input type="number" step="0.01" name="size_{{ u.id }}" style="width:90px"></td>
+            <td><input type="number" step="0.1" name="viability_{{ u.id }}" style="width:90px"></td>
+            <td><input type="text" name="observation_{{ u.id }}" style="width:100%"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="submit" class="btn" style="margin-top:10px">Guardar todo</button>
+    </form>
+  </section>
+  {% endif %}
+
+  <!-- Unidades -->
+  <section class="card">
+    <h2>Incubadoras</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Estado</th><th>Peso (g)</th><th>Últ. viab.</th><th>Destino</th><th style="text-align:right">Acciones</th></tr></thead>
+      <tbody>
+        {% for u in units_all %}
+        <tr>
+          <td class="u-{{ u.status }}"><b>{{ u.display_id }}</b></td>
+          <td>{{ u.status }}</td>
+          <td>{{ u.weight if u.weight is not none else '—' }}</td>
+          <td>{{ u.last_viability if u.last_viability is not none else '—' }}</td>
+          <td>{{ u.pond or (u.hatched_at if u.hatched_at else '—') }}</td>
+          <td style="text-align:right">
+            {% if u.status == 'active' %}
+            <div class="inline" style="justify-content:flex-end">
+              <button type="button" class="btn-sm" onclick="document.getElementById('split-{{ u.id }}').classList.toggle('open')">Particionar</button>
+              <form method="post" action="/api/reproduccion/incubadoras/unidad/{{ u.id }}/hatch" class="inline"
+                    onsubmit="return confirm('¿Registrar eclosión de la incubadora {{ u.display_id }}?');">
+                <select name="target_pond_id" required>
+                  <option value="">Estanque Hatchery…</option>
+                  {% for p in pond_options %}<option value="{{ p.id }}">{{ p.label }}</option>{% endfor %}
+                </select>
+                <button type="submit" class="btn-sm">Eclosionar</button>
+              </form>
+            </div>
+            <div class="split-box" id="split-{{ u.id }}">
+              <form method="post" action="/api/reproduccion/incubadoras/unidad/{{ u.id }}/split">
+                <div class="muted" style="margin-bottom:6px">Sub-unidades (la suma debe igualar {{ u.weight }} g). ID = incubadora destino.</div>
+                <table id="sb-{{ u.id }}">
+                  <tbody>
+                    <tr><td><input type="number" min="1" max="20" name="base_id" placeholder="ID"></td><td><input type="number" step="0.01" name="weight" placeholder="peso g"></td></tr>
+                    <tr><td><input type="number" min="1" max="20" name="base_id" placeholder="ID"></td><td><input type="number" step="0.01" name="weight" placeholder="peso g"></td></tr>
+                  </tbody>
+                </table>
+                <div class="inline" style="margin-top:6px">
+                  <button type="button" class="btn-sm" onclick="addSplitRow({{ u.id }})">+ fila</button>
+                  <input type="text" name="notes" placeholder="notas (opcional)">
+                  <button type="submit" class="btn-sm">Confirmar partición</button>
+                </div>
+              </form>
+            </div>
+            {% elif u.status == 'hatched' %}
+              <span class="muted">eclosionada {{ u.hatched_at or '' }}</span>
+            {% else %}
+              <span class="muted">particionada</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Histórico -->
+  {% if history %}
+  <section class="card">
+    <h2>Histórico de monitoreo</h2>
+    <table>
+      <thead><tr><th>Fecha-hora</th><th>Incubadora</th><th>Tamaño (mm)</th><th>Viabilidad (%)</th><th>Observaciones</th></tr></thead>
+      <tbody>
+        {% for h in history %}
+        <tr><td>{{ h.when }}</td><td>{{ h.display_id }}</td><td>{{ h.size }}</td><td>{{ h.viability }}</td><td>{{ h.observation }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  <!-- Cierre -->
+  <section class="card inline">
+    <form method="post" action="/api/reproduccion/incubadoras/{{ batch_id }}/complete"
+          onsubmit="return confirm('¿Cerrar el Proceso 3?');">
+      <button type="submit" class="btn green" {% if not can_complete %}disabled title="Requiere todas eclosionadas y lote definido"{% endif %}>Cerrar Proceso 3</button>
+    </form>
+    <span class="muted">Se habilita cuando todas las incubadoras eclosionaron y el lote está definido.</span>
+  </section>
+</div>
+
+<script>
+  function addSplitRow(uid) {
+    var tb = document.querySelector('#sb-' + uid + ' tbody');
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td><input type="number" min="1" max="20" name="base_id" placeholder="ID"></td>' +
+                   '<td><input type="number" step="0.01" name="weight" placeholder="peso g"></td>';
+    tb.appendChild(tr);
+  }
+</script>
+
+</body>
+</html>

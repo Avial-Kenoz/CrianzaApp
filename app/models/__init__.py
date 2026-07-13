@@ -32,3 +32,14 @@ from .feed import (
     FeedExecutionLotAllocations,
     AccountingOutboxEvent,
 )
+# Reproducción (Proceso 1: selección · 2: desove · 3: incubadoras)
+from .reproductor_selections import ReproductorSelection
+from .reproductor_monitoring_logs import ReproductorMonitoringLog
+from .reproductor_spawning_events import ReproductorSpawningEvent
+from .reproductor_spawning_males import ReproductorSpawningMale
+from .reproductor_spawning_incubators import ReproductorSpawningIncubator
+from .reproductor_recovery_reports import ReproductorRecoveryReport
+from .incubator_batches import IncubatorBatch
+from .incubator_units import IncubatorUnit
+from .incubator_monitoring_logs import IncubatorMonitoringLog
+from .incubator_split_events import IncubatorSplitEvent

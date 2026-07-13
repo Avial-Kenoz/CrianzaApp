@@ -703,34 +703,49 @@ def create_cultivation_declaration(
         resolved_target_url = _resolve_planta_import_url(request)
         delivery_result = _send_declaration_json_to_planta(payload_for_delivery, target_url=resolved_target_url)
 
+        resp = delivery_result.get("response") or {}
+        planta_status = resp.get("status")  # completed | completed_with_errors | failed
+        counts = resp.get("counts") or {}
+        rejected = counts.get("invalid_fish") or 0
+        accepted = counts.get("valid_fish") or 0
+        total = counts.get("total_fish") or 0
+
         payload_db = dict(declaration.payload or {})
         payload_db["planta_delivery"] = {
             "attempted_at": datetime.utcnow().isoformat(),
             "target_url": resolved_target_url,
             "ok": bool(delivery_result.get("ok")),
             "status_code": delivery_result.get("status_code"),
-            "response": delivery_result.get("response"),
+            "planta_status": planta_status,
+            "counts": counts,
+            "response": resp,
         }
         declaration.payload = payload_db
         declaration.updated_at = datetime.utcnow()
         db.commit()
 
         if delivery_result.get("ok"):
-            batch_id = (delivery_result.get("response") or {}).get("batch_id")
-            if batch_id:
-                delivery_note = f"JSON enviado a PlantaApp y recibido correctamente (batch {batch_id})."
+            batch_id = resp.get("batch_id")
+            batch_txt = f"batch {batch_id}" if batch_id else "sin batch id"
+            if planta_status == "completed_with_errors" or rejected:
+                # Éxito PARCIAL: PlantaApp aceptó unos peces y rechazó otros. No es un fracaso,
+                # pero el operador debe saber que faltan crotales por cuadrar.
+                delivery_note = (
+                    f"JSON enviado a PlantaApp ({batch_txt}): {accepted} peces aceptados, "
+                    f"{rejected} rechazados de {total}. Revisar detalle de rechazos."
+                )
             else:
-                delivery_note = "JSON enviado a PlantaApp y recibido correctamente."
+                cuenta_txt = f", {accepted or total} peces" if (accepted or total) else ""
+                delivery_note = f"JSON enviado a PlantaApp y recibido correctamente ({batch_txt}{cuenta_txt})."
         else:
-            resp = delivery_result.get("response") or {}
             detail = (
-                resp.get("detail")
-                or resp.get("message")
+                resp.get("message")
+                or resp.get("detail")
                 or resp.get("raw_error")
                 or "sin detalle"
             )
             delivery_note = (
-                f"Folio generado, pero PlantaApp respondió error de integración "
+                f"Folio generado, pero PlantaApp RECHAZÓ la recepción "
                 f"({delivery_result.get('status_code')}): {detail}."
             )
     except Exception as exc:

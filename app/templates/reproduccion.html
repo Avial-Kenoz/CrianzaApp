@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reproducción — Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f0f2f5; color: #111827; min-height: 100vh; }
+    .container { padding: 12px 10px 24px; display: grid; gap: 12px; }
+    .page-header { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08);
+                   padding: 14px 16px; display: flex; justify-content: space-between;
+                   align-items: end; gap: 12px; flex-wrap: wrap; }
+    .title h1 { font-size: 1.15rem; color: #1a1a2e; }
+    .title p  { margin-top: 3px; color: #6b7280; font-size: .82rem; }
+    .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); padding: 16px; }
+    .card h2 { font-size: .95rem; color: #1a1a2e; margin-bottom: 4px; }
+    .card .sub { color: #6b7280; font-size: .78rem; margin-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eef0f3; vertical-align: middle; }
+    thead th { color: #6b7280; font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; }
+    tbody tr.main-row:hover { background: #f8fbff; }
+    .pit { font-weight: 700; letter-spacing: .02em; }
+    .sex { display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center;
+           border-radius: 50%; font-size: .72rem; font-weight: 800; }
+    .sex-F { background: #fce7f3; color: #be185d; }
+    .sex-M { background: #dbeafe; color: #1d4ed8; }
+    .progress { display: flex; align-items: center; gap: 8px; }
+    .bar { flex: 0 0 90px; height: 7px; border-radius: 999px; background: #e5e7eb; overflow: hidden; }
+    .bar > span { display: block; height: 100%; background: #4f8ef7; }
+    .bar.over > span { background: #ef4444; }
+    .btn-sm { border: 1px solid #d1d5db; border-radius: 7px; background: #fff; color: #374151;
+              font-size: .76rem; font-weight: 600; padding: 5px 9px; cursor: pointer; text-decoration: none;
+              display: inline-block; }
+    .btn-sm:hover { background: #f3f4f6; }
+    .btn-sm.disabled { opacity: .4; pointer-events: none; }
+    .btn-sm.danger { color: #b91c1c; border-color: #fca5a5; }
+    .btn-sm.danger:hover { background: #fef2f2; }
+    .btn-sm.primary { color: #fff; background: #2563eb; border-color: #2563eb; }
+    .btn-sm.primary:hover { background: #1d4ed8; }
+    .actions { display: flex; gap: 6px; justify-content: flex-end; }
+    td.actions { text-align: right; }
+    .empty { color: #9ca3af; font-size: .84rem; padding: 18px 4px; text-align: center; }
+    .flag { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 8px;
+            padding: 8px 12px; font-size: .8rem; }
+    .banner { border-radius: 8px; padding: 9px 13px; font-size: .82rem; font-weight: 600; }
+    .banner.ok { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+    .banner.error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+    .detail-row > td { background: #f9fafb; padding: 0; }
+    .detail-row { display: none; }
+    .detail-row.open { display: table-row; }
+    .detail-wrap { padding: 14px 16px; display: grid; gap: 16px; }
+    .sub-block h3 { font-size: .8rem; color: #374151; margin-bottom: 6px; }
+    .mini { width: 100%; border-collapse: collapse; font-size: .8rem; background: #fff;
+            border: 1px solid #eef0f3; border-radius: 8px; overflow: hidden; }
+    .mini th, .mini td { padding: 6px 8px; border-bottom: 1px solid #f1f3f5; }
+    .mini thead th { background: #f8fafc; }
+    .inline-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: end; margin-bottom: 8px; }
+    .inline-form label { display: flex; flex-direction: column; font-size: .68rem; color: #6b7280; gap: 2px; }
+    .inline-form input, .inline-form select {
+      border: 1px solid #d1d5db; border-radius: 6px; padding: 5px 7px; font-size: .8rem; }
+    .inline-form input[type=text], .inline-form input[type=date] { min-width: 110px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="container">
+  <section class="page-header">
+    <div class="title">
+      <h1>Reproducción</h1>
+      <p>Selección de reproductores · período de {{ selection_days }} días con fármacos y monitoreo.</p>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      {% if msg %}<div class="banner {{ 'error' if status == 'error' else 'ok' }}">{{ msg }}</div>{% endif %}
+      {% if expired_count %}<div class="flag">{{ expired_count }} selección(es) vencida(s) cerrada(s) al cargar.</div>{% endif %}
+    </div>
+  </section>
+
+  <!-- Tabla A -->
+  <section class="card">
+    <h2>Seleccionados activos</h2>
+    <div class="sub">Peces en período de selección ({{ tabla_a|length }}).</div>
+    {% if tabla_a %}
+    <table>
+      <thead>
+        <tr>
+          <th>Pit-Tag</th><th>Especie</th><th>Lote</th><th>Sexo</th>
+          <th>Días desde selección</th><th style="text-align:right">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in tabla_a %}
+        <tr class="main-row">
+          <td class="pit">{{ r.pit }}</td>
+          <td>{{ r.especie }}</td>
+          <td>{{ r.lote }}</td>
+          <td><span class="sex sex-{{ r.sexo[:1] }}">{{ r.sexo[:1] }}</span></td>
+          <td>
+            <div class="progress">
+              <span class="bar {% if r.dias > r.total %}over{% endif %}"><span style="width:{{ r.pct }}%"></span></span>
+              <span>Día {{ r.dias }} / {{ r.total }}</span>
+            </div>
+          </td>
+          <td class="actions">
+            <button type="button" class="btn-sm" onclick="toggleDetail({{ r.selection_id }})">Ingresar datos</button>
+            {% if r.is_female %}<a class="btn-sm" href="/views/ui/reproduccion/desove/{{ r.selection_id }}">Desove</a>{% endif %}
+            <form method="post" action="/api/reproduccion/selecciones/{{ r.selection_id }}/fail" style="display:inline"
+                  onsubmit="return confirm('¿Marcar esta selección como fallida?');">
+              <button type="submit" class="btn-sm danger">Fallido</button>
+            </form>
+          </td>
+        </tr>
+        <tr class="detail-row" id="detail-{{ r.selection_id }}">
+          <td colspan="6">
+            <div class="detail-wrap">
+              <div class="grid2">
+                <!-- Fármacos -->
+                <div class="sub-block">
+                  <h3>Fármacos usados</h3>
+                  <form class="inline-form" method="post" action="/api/reproduccion/selecciones/{{ r.selection_id }}/drugs">
+                    <label>Fecha<input type="date" name="log_date" required></label>
+                    <label>Hora<input type="time" name="log_time"></label>
+                    <label>Fármaco<input type="text" name="drug_name" required></label>
+                    <label>Dosis<input type="text" name="dose" placeholder="0.5ml/kg" required></label>
+                    <label>Temp.°C<input type="text" name="water_temp" style="width:70px"></label>
+                    <button type="submit" class="btn-sm primary">Guardar</button>
+                  </form>
+                  <table class="mini">
+                    <thead><tr><th>Fecha</th><th>Hora</th><th>Fármaco</th><th>Dosis</th><th>Temp.</th></tr></thead>
+                    <tbody>
+                      {% for d in r.drugs %}
+                      <tr><td>{{ d.date }}</td><td>{{ d.time }}</td><td>{{ d.drug_name }}</td><td>{{ d.dose }}</td><td>{{ d.water_temp }}</td></tr>
+                      {% else %}
+                      <tr><td colspan="5" style="color:#9ca3af">Sin fármacos registrados.</td></tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+                <!-- Monitoreo -->
+                <div class="sub-block">
+                  <h3>Monitoreo reproductivo</h3>
+                  <form class="inline-form" method="post" action="/api/reproduccion/selecciones/{{ r.selection_id }}/monitoring">
+                    <input type="hidden" name="sex" value="{{ r.sexo[:1] }}">
+                    <label>Fecha<input type="date" name="log_date" required></label>
+                    {% if r.is_female %}
+                      <label>IP (0-100)<input type="text" name="ip_value" style="width:70px"></label>
+                      <label>Observación<input type="text" name="observation" maxlength="100"></label>
+                    {% else %}
+                      <label>Densidad
+                        <select name="sperm_density"><option value="">—</option><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option></select>
+                      </label>
+                      <label>Motilidad
+                        <select name="sperm_motility"><option value="">—</option><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option></select>
+                      </label>
+                      <label>Tiempo
+                        <select name="sperm_time"><option value="">—</option><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option></select>
+                      </label>
+                    {% endif %}
+                    <button type="submit" class="btn-sm primary">Guardar</button>
+                  </form>
+                  <table class="mini">
+                    {% if r.is_female %}
+                    <thead><tr><th>Fecha</th><th>IP</th><th>Observación</th></tr></thead>
+                    <tbody>
+                      {% for mlog in r.monitoring %}
+                      <tr><td>{{ mlog.date }}</td><td>{{ mlog.ip_value }}</td><td>{{ mlog.observation }}</td></tr>
+                      {% else %}
+                      <tr><td colspan="3" style="color:#9ca3af">Sin monitoreos.</td></tr>
+                      {% endfor %}
+                    </tbody>
+                    {% else %}
+                    <thead><tr><th>Fecha</th><th>Densidad</th><th>Motilidad</th><th>Tiempo</th></tr></thead>
+                    <tbody>
+                      {% for mlog in r.monitoring %}
+                      <tr><td>{{ mlog.date }}</td><td>{{ mlog.sperm_density }}</td><td>{{ mlog.sperm_motility }}</td><td>{{ mlog.sperm_time }}</td></tr>
+                      {% else %}
+                      <tr><td colspan="4" style="color:#9ca3af">Sin monitoreos.</td></tr>
+                      {% endfor %}
+                    </tbody>
+                    {% endif %}
+                  </table>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <div class="empty">No hay peces en selección activa. Selecciónalos desde la vista de cada pez o desde la tabla de candidatos.</div>
+    {% endif %}
+  </section>
+
+  <!-- Procesos de incubación (Proceso 3) -->
+  <section class="card">
+    <h2>Procesos de incubación</h2>
+    <div class="sub">Desoves cerrados y su monitoreo de incubadoras ({{ batches|length }}).</div>
+    {% if batches %}
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>Hembra</th><th>Fecha desove</th><th>Lote</th>
+          <th>Estado</th><th>Incubadoras</th><th style="text-align:right">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in batches %}
+        <tr class="main-row">
+          <td class="pit">#{{ b.batch_id }}</td>
+          <td>{{ b.female_pit }}</td>
+          <td>{{ b.event_date }}</td>
+          <td>{{ b.lot }}</td>
+          <td>
+            {% if b.status == 'monitoring' %}<span class="sex" style="width:auto; padding:0 8px; border-radius:999px; background:#dbeafe; color:#1d4ed8;">monitoreo</span>
+            {% elif b.status == 'awaiting_first_count' %}<span class="sex" style="width:auto; padding:0 8px; border-radius:999px; background:#fef3c7; color:#92400e;">esperando recuento</span>
+            {% else %}<span class="sex" style="width:auto; padding:0 8px; border-radius:999px; background:#d1fae5; color:#065f46;">cerrado</span>{% endif %}
+          </td>
+          <td>{{ b.units_hatched }} eclos. / {{ b.units_active }} activas / {{ b.units_total }}</td>
+          <td class="actions">
+            <a class="btn-sm primary" href="/views/ui/reproduccion/incubadoras/{{ b.batch_id }}">Abrir</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <div class="empty">No hay procesos de incubación. Se crean al cerrar un desove.</div>
+    {% endif %}
+  </section>
+
+  <!-- Tabla B -->
+  <section class="card">
+    <h2>Reproductores (candidatos)</h2>
+    <div class="sub">Peces con historial de fármacos (sufijo <b>_R</b>), vivos y sin selección activa ({{ tabla_b|length }}).</div>
+    {% if tabla_b %}
+    <table>
+      <thead>
+        <tr>
+          <th>Pit-Tag</th><th>Especie</th><th>Lote</th><th>Sexo</th>
+          <th>Estanque actual</th><th style="text-align:right">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in tabla_b %}
+        <tr class="main-row">
+          <td class="pit">{{ r.pit }}</td>
+          <td>{{ r.especie }}</td>
+          <td>{{ r.lote }}</td>
+          <td><span class="sex sex-{{ r.sexo[:1] }}">{{ r.sexo[:1] }}</span></td>
+          <td>{{ r.estanque }}</td>
+          <td class="actions">
+            <a class="btn-sm" href="/views/ui/fish/{{ r.fish_id }}">Ver</a>
+            <form method="post" action="/api/reproduccion/selecciones" style="display:inline"
+                  onsubmit="return confirm('¿Seleccionar {{ r.pit }} como reproductor?');">
+              <input type="hidden" name="fish_id" value="{{ r.fish_id }}">
+              <input type="hidden" name="sex" value="{{ r.sexo[:1] }}">
+              <button type="submit" class="btn-sm primary">Seleccionar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <div class="empty">No hay reproductores candidatos con sufijo _R.</div>
+    {% endif %}
+  </section>
+</div>
+
+<script>
+  function toggleDetail(id) {
+    var row = document.getElementById('detail-' + id);
+    if (row) row.classList.toggle('open');
+  }
+  (function() {
+    var open = {{ open_sel if open_sel else 'null' }};
+    if (open) {
+      var row = document.getElementById('detail-' + open);
+      if (row) { row.classList.add('open'); row.scrollIntoView({block: 'center'}); }
+    }
+  })();
+</script>
+
+</body>
+</html>

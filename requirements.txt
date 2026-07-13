@@ -12,3 +12,4 @@ openpyxl
 numpy
 scipy
 matplotlib
+APScheduler>=3.10,<4

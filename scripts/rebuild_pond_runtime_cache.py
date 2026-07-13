@@ -15,20 +15,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.db.session import SessionLocal
-from app.models.ponds import Pond
-from app.api.views import _refresh_pond_runtime_cache
+from app.api.views import rebuild_all_pond_runtime_cache
 
 
 def main() -> None:
     db = SessionLocal()
     try:
-        ponds = db.query(Pond).order_by(Pond.id).all()
-        updated = 0
-        for pond in ponds:
-            _refresh_pond_runtime_cache(pond.id, db)
-            updated += 1
-
-        db.commit()
+        updated = rebuild_all_pond_runtime_cache(db)
         print(f"updated_ponds={updated}")
     except Exception:
         db.rollback()

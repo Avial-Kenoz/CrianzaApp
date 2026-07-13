@@ -1,7 +1,7 @@
 # Especificación Módulo Reproducción — CrianzaApp (v1)
 
 Fecha: 2026-05-13  
-Última actualización: 2026-05-13 (Proceso 3 incorporado)  
+Última actualización: 2026-07-10 (revalidación contra BD: reutiliza `lots` y `fish_drug_uses`, generaliza recuento de ovas a `n` gramos, confirma salas Hatchery y valor `sex`)  
 Estado: **Aprobado para implementación**  
 Objetivo: Agregar la sección "Reproducción" al sistema CrianzaApp como nuevo menú en el sidebar, debajo de Alimentación, para gestionar la selección y seguimiento de peces reproductores.
 
@@ -38,20 +38,23 @@ Registra cada período de selección de un pez como reproductor activo.
 | created_at | Timestamp | |
 | updated_at | Timestamp | |
 
-### 2.2 Tabla `reproductor_drug_logs`
-Registro de fármacos usados durante una selección.
+### 2.2 Fármacos: reutilización de `fish_drug_uses` (tabla existente)
+
+**No se crea una tabla nueva.** Los fármacos de reproducción se registran en la tabla sanitaria
+existente `fish_drug_uses`, extendida con dos columnas *nullable* para el contexto reproductivo:
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| id | BigInteger PK | |
-| selection_id | BigInteger FK→reproductor_selections.id | |
-| fish_id | BigInteger FK→fish.id | Desnormalizado para consultas |
-| log_date | Date | Fecha de aplicación |
-| log_time | Time | Hora de aplicación |
-| drug_name | String(200) | Nombre del fármaco |
-| dose | String(100) | Dosis (texto libre, ej: "5ml/kg") |
-| water_temp | Numeric(5,2) | Temperatura del agua (°C) |
-| created_at | Timestamp | |
+| *(existentes)* | | `drug_name`, `dose`, `application_date`, `withdrawal_period` |
+| reproductor_selection_id | BigInteger FK→reproductor_selections.id **nullable** | Selección que originó el fármaco (NULL para usos sanitarios normales) |
+| water_temp | Numeric(5,2) **nullable** | Temperatura del agua (°C) al aplicar (solo reproducción) |
+
+Además `withdrawal_period` pasa a **nullable** (los fármacos de reproducción pueden no tener
+período de resguardo). La lógica del sufijo `_R` (§3.2) consulta
+`fish_drug_uses WHERE reproductor_selection_id = <selection_id>`.
+
+> ⚠️ **A verificar en F1/F3:** que el flujo existente de "fármacos pendientes"
+> (`fish_pending_drug_logs.html`) no capture estas filas reproductivas como pendientes sanitarios.
 
 ### 2.3 Tabla `reproductor_monitoring_logs`
 Monitoreos reproductivos periódicos. Estructura diferente según sexo.
@@ -87,7 +90,8 @@ Registra el proceso de desove como un segundo proceso de reproducción, asociado
 | anesthesia_drug_name | String(200) | Fármaco usado en la preparación de anestesia |
 | anesthesia_dilution | String(100) | Dilución de la anestesia (texto libre) |
 | total_ova_weight_g | Numeric(10,2) | Peso total de ovas en gramos |
-| ova_count_per_5g | Integer | Recuento de ovas en 5 gramos |
+| ova_sample_grams | Numeric(6,2) | Gramos de la muestra usada para contar ovas (la `n`) |
+| ova_count_sample | Integer | Recuento de ovas en la muestra de `n` gramos |
 | ova_diameter_mm | Numeric(4,2) | Diámetro de las ovas en mm |
 | viability_pct | Numeric(5,2) | Viabilidad de 0 a 100 |
 | notes | Text | Observaciones generales del proceso |
@@ -136,14 +140,17 @@ Representa el proceso 3 de monitoreo de incubadoras, asociado a un desove.
 |---|---|---|
 | id | BigInteger PK | |
 | spawning_event_id | BigInteger FK→reproductor_spawning_events.id | Desove que originó las incubadoras |
-| lot_id | BigInteger FK→lots.id nullable | Lote creado para los peces que eclosionen. Puede ser nulo hasta asignación. |
-| lot_name | String(120) | Nombre del lote ingresado por el usuario |
-| lot_code | String(3) | Código interno del lote, máximo 3 caracteres |
+| lot_id | BigInteger FK→lots.id nullable | Lote real (fila en `lots`) creado para los peces que eclosionen. NULL hasta que el usuario lo defina. |
 | status | String(30) | `monitoring` / `completed` / `awaiting_first_count` |
 | created_at | Timestamp | |
 | updated_at | Timestamp | |
 
-> **Regla:** No es posible cerrar el proceso 3 (`status = completed`) sin que `lot_name` y `lot_code` estén definidos.
+> **Regla:** No es posible cerrar el proceso 3 (`status = completed`) sin `lot_id` definido.
+> El nombre y el código del lote **no** son columnas de esta tabla: viven en `lots.name` y
+> `lots.internal_id` (se reutiliza la estructura existente de lotes, no se crea nada nuevo). El
+> endpoint `/lot` crea/actualiza la fila en `lots` (derivando `species_id` de la hembra madre y
+> `hatch_year` del año de eclosión) y setea `incubator_batches.lot_id`. El límite de 3 caracteres
+> del código se valida en el endpoint (no en el esquema; `lots.internal_id` es `String(120)`).
 
 ### 2.9 Tabla `incubator_units`
 Representa cada incubadora activa dentro de un proceso 3. Incluye las unidades originales del desove y las particiones generadas.
@@ -207,13 +214,18 @@ Registra cada partición de una incubadora en N sub-unidades.
 
 ### 3.2 Lógica del sufijo `_R`
 
-- Al cerrar una selección con `status = completed` o `status = spawned`, el sistema verifica si existen registros en `reproductor_drug_logs` para esa `selection_id`.
+- Al cerrar una selección con `status = completed` o `status = spawned`, el sistema verifica si existen registros en `fish_drug_uses` con `reproductor_selection_id = selection_id`.
 - Si existen registros de fármacos → se modifica `fish.internal_id` agregando el sufijo `_R` (ej: `ABC123` → `ABC123_R`).
 - Si ya tiene sufijo `_R` (reselección), no se duplica.
 - Si no hubo fármacos → `fish.internal_id` no se modifica; el pez vuelve a estado normal.
 - Si `status = failed` → nunca se agrega `_R`, independientemente de los fármacos registrados durante esa selección.
 
 > **Nota:** El sufijo `_R` NO es un estado de "selección activa". Un pez `_R` puede estar actualmente seleccionado (Tabla A) o no. Un pez sin `_R` también puede estar seleccionado. El sufijo solo indica que el pez tuvo fármacos en alguna selección previa.
+
+> **Riesgo asumido (P4):** mutar `fish.internal_id` es aceptable porque `internal_id` **no está
+> indexado** y todas las relaciones se hacen por `fish.id`. La regla de oro es respetar esa
+> lógica: nunca emparejar peces por PIT en código nuevo. Al escribir el sufijo se debe
+> **normalizar a mayúscula** (el `@validates` de `Fish` ya lo hace) y no duplicar `_R` si ya existe.
 
 ### 3.3 Definición de "Reproductor" (Tabla B — candidatos)
 
@@ -249,7 +261,7 @@ La columna **"Días desde selección"** en la Tabla A permite al operador ver en
 | POST | `/views/ui/reproduccion/desove/{selection_id}` | Guardado parcial o final del formulario de desove |
 | POST | `/api/reproduccion/desove/{spawning_id}/complete` | Cerrar el proceso 2 y abrir proceso 3 (incubadoras) |
 | GET | `/views/ui/reproduccion/incubadoras/{batch_id}` | Vista propia del proceso 3 |
-| POST | `/api/reproduccion/incubadoras/{batch_id}/lot` | Crear/actualizar nombre y código del lote |
+| POST | `/api/reproduccion/incubadoras/{batch_id}/lot` | Crear/actualizar la fila en `lots` (nombre + código) y enlazar `incubator_batches.lot_id` |
 | POST | `/api/reproduccion/incubadoras/{batch_id}/monitoring` | Guardar monitoreo de una ronda completa |
 | POST | `/api/reproduccion/incubadoras/{unit_id}/split` | Registrar partición de una incubadora |
 | POST | `/api/reproduccion/incubadoras/{unit_id}/hatch` | Cerrar una incubadora por eclosión |
@@ -332,6 +344,7 @@ En la vista individual de un pez (`/views/ui/fish/{fish_id}`), se agregará un b
 
 - Si el pez ya tiene una selección `active`, el botón mostrará **"En reproducción"** (deshabilitado).
 - Si el pez **no tiene sexo registrado**, al presionar el botón se muestra un formulario/modal que **fuerza el ingreso del sexo** antes de poder confirmar la selección. El sexo queda guardado en `fish.sex` y también en `reproductor_selections.sex_at_selection`.
+  - Valores canónicos en `fish.sex`: **`F`** (hembra) / **`M`** (macho) / `IND` (indeterminado). La UI puede rotular `H/M`, pero se **persiste `F/M` en mayúscula** (hay datos legacy en minúscula que conviene normalizar). Solo `F` habilita el botón [Desove].
 - Si el pez tiene sexo registrado, al presionar se abre un modal de confirmación mostrando pit-tag y sexo, y se crea la selección directamente.
 
 ---
@@ -386,7 +399,7 @@ Se debe registrar la preparación de anestesia con:
 - fármaco
 - dilución
 
-Este registro se agrega también al historial de fármacos de todos los reproductores involucrados en el desove, tanto la hembra como los machos seleccionados.
+Este registro se inserta en `fish_drug_uses` (una fila por reproductor involucrado: la hembra y cada macho seleccionado), con `reproductor_selection_id` apuntando a la selección de cada pez, de modo que aparece en su historial sanitario de fármacos.
 
 ### 8.5 Registro de machos
 
@@ -398,15 +411,15 @@ Este registro se agrega también al historial de fármacos de todos los reproduc
 
 Campos requeridos:
 - Peso total de ovas en gramos
-- Recuento de ovas en 5 gr
+- Recuento de ovas en n gr (ingresado por usuario*)
 - Diámetro en mm, rango orientativo entre 2,5 y 5 mm
 - Viabilidad entre 0 y 100 %
 
 Campo Calculado:
-- Numero de ovas: recuento/5*peso
+- Numero de ovas: recuento/n*peso
 
 Notas:
-- El recuento de ovas en 5 gr no se restringe artificialmente a un valor fijo; puede variar.
+- El recuento de ovas en n gr no se restringe artificialmente a un valor fijo; puede variar.
 
 ### 8.7 Registro de incubadoras
 
@@ -446,7 +459,7 @@ El monitoreo de incubadoras es el **Proceso 3** de reproducción. Se inicia auto
 ### 9.2 Lote de peces
 
 - Al entrar al Proceso 3 se debe crear un nuevo lote para los peces que eclosionarán.
-- El lote requiere un **nombre** y un **código interno** de máximo 3 caracteres.
+- El lote requiere un **nombre** (`lots.name`) y un **código interno** (`lots.internal_id`, máximo 3 caracteres validado en el endpoint). Se crea como una **fila real en `lots`**; no hay tabla ni campos de lote paralelos.
 - El lote puede asignarse en cualquier momento durante el monitoreo, pero **no es posible cerrar el Proceso 3 sin haberlo definido**.
 - El lote queda en estado `awaiting_first_count` hasta que el operador realice el primer recuento de peces (ver §9.6).
 
@@ -459,8 +472,8 @@ $$\text{Viabilidad} = \frac{\sum(\text{viabilidad}_i \times \text{peso}_i)}{\sum
 Promedio ponderado por peso de la última viabilidad registrada en cada incubadora activa.
 
 **KPI 2 — Ovas viables estimadas**
-$$\text{Ovas viables} = \left\lfloor \frac{\text{recuento de ovas en 5g}}{5} \times \text{peso total ovas (g)} \times \frac{\text{viabilidad}}{100} \right\rfloor$$
-Estimación basada en el recuento del desove y la viabilidad calculada en KPI 1.
+$$\text{Ovas viables} = \left\lfloor \frac{\text{ova\_count\_sample}}{\text{ova\_sample\_grams }(n)} \times \text{peso total ovas (g)} \times \frac{\text{viabilidad}}{100} \right\rfloor$$
+Estimación basada en el recuento del desove (recuento en `n` gramos, §8.6) y la viabilidad calculada en KPI 1.
 
 ### 9.4 Vista de monitoreo rutinario
 
@@ -493,7 +506,7 @@ Una incubadora activa puede particionarse en N sub-unidades. Al particionar:
 El monitoreo de cada incubadora individualmente termina con su **eclosión**.
 
 Al registrar la eclosión:
-- El usuario selecciona el estanque de destino, que debe ser de tipo **Hatchery:Incubación** o **Hatchery:Sala 2**.
+- El usuario selecciona el estanque de destino, que debe ser estanques o subestanques de las salas **Hatchery:Incubación** o **Hatchery:Sala 2**. normalmente de tipo Batea
 - La unidad pasa a `status = hatched`.
 - Los peces eclosionados ingresan al estanque asignado bajo el lote del Proceso 3.
 
@@ -503,7 +516,7 @@ Al registrar la eclosión:
 
 El Proceso 3 (`incubator_batch.status = completed`) puede cerrarse cuando:
 1. **Todas** las incubadoras del batch tienen `status = hatched`.
-2. `lot_name` y `lot_code` están definidos.
+2. `lot_id` está definido (fila en `lots` con nombre y código).
 
 Al cerrarse, el Proceso 3 queda archivado y accesible por URL pero ya no se muestran formularios de edición.
 
@@ -521,13 +534,16 @@ Al cerrarse, el Proceso 3 queda archivado y accesible por URL pero ya no se mues
 
 | # | Pregunta | Decisión |
 |---|---|---|
-| P1 | ¿Sufijo `_R` modifica `internal_id` o campo separado? | El sufijo `_R` sí modifica `internal_id`. La selección activa es **independiente** del sufijo: un pez sin `_R` puede estar seleccionado. |
+| P1 | ¿Sufijo `_R` modifica `internal_id` o campo separado? | El sufijo `_R` **sí** modifica `internal_id`. Riesgo asumido bajo: `internal_id` no está indexado y los peces se referencian por `fish.id`; se respeta esa lógica (nunca emparejar por PIT en código nuevo). Normalizar a mayúscula y no duplicar `_R`. La selección activa es **independiente** del sufijo. |
 | P2 | ¿Sexo obligatorio para selección? | Sí. Si el pez no tiene sexo, se fuerza el ingreso del sexo en el mismo flujo de selección antes de confirmar. |
 | P3 | ¿Botón "Usar" en machos? | **Eliminado** de la vista principal. La acción de uso de semen de machos se gestiona dentro de la vista de desove (v1.1). |
 | P4 | ¿Expiración lazy aceptable? | Sí. La vista muestra columna "Día X / 30" como indicador visual del estado del período. |
 | P5 | ¿Historial de selecciones? | No es necesario. |
 | P6 | ¿Peces sin `_R` en Tabla B? | No. La Tabla B es exclusiva para peces con `_R`. Cualquier pez puede ser seleccionado desde la vista fish; la Tabla B solo muestra candidatos habituales (con historial de fármacos). |
 | P7 | ¿Vínculo con PlantaAPP? | No hay integración. |
+| P8 | ¿Estructura de lote propia o reutilizar `lots`? | **Reutilizar `lots`** (nombre=`lots.name`, código=`lots.internal_id`). Se eliminan `lot_name`/`lot_code` del modelo; `incubator_batches` solo guarda `lot_id`. El `/lot` deriva `species_id` (hembra madre) y `hatch_year` (año de eclosión). |
+| P9 | ¿Tabla de fármacos propia o reutilizar `fish_drug_uses`? | **Reutilizar `fish_drug_uses`** + columnas nullable `reproductor_selection_id` y `water_temp`; `withdrawal_period` pasa a nullable. Se elimina `reproductor_drug_logs`. |
+| P10 | Destino de eclosión | Ponds tipo `Batea` (incl. subestanques por `parent_pond_id`) cuya `cultivation_unit` sea una sala Hatchery (`Hatchery: Incubacion`, `Hatchery Sala 2`). Filtrar por unidad, no por string. |
 
 ---
 
@@ -535,7 +551,7 @@ Al cerrarse, el Proceso 3 queda archivado y accesible por URL pero ya no se mues
 
 | Fase | Alcance |
 |---|---|
-| F1 | Modelos de datos (`reproductor_selections`, `reproductor_drug_logs`, `reproductor_monitoring_logs`, `reproductor_spawning_events`, `reproductor_spawning_males`, `reproductor_spawning_incubators`, `reproductor_recovery_reports`, `incubator_batches`, `incubator_units`, `incubator_monitoring_logs`, `incubator_split_events`) + migraciones Alembic |
+| F1 | Modelos de datos (`reproductor_selections`, `reproductor_monitoring_logs`, `reproductor_spawning_events`, `reproductor_spawning_males`, `reproductor_spawning_incubators`, `reproductor_recovery_reports`, `incubator_batches`, `incubator_units`, `incubator_monitoring_logs`, `incubator_split_events`) + **extensión de `fish_drug_uses`** (columnas nullable `reproductor_selection_id`, `water_temp`; `withdrawal_period` nullable) + migraciones Alembic |
 | F2 | Sidebar + ruta `/views/ui/reproduccion` + vista principal (Tabla A y Tabla B, solo lectura + lógica lazy de expiración) |
 | F3 | API endpoints de selección (`POST /api/reproduccion/selecciones`), fármacos y monitoreo; formularios inline en Tabla A |
 | F4 | Integración con vista Fish: botón "Seleccionar como reproductor" + modal con forzado de sexo si aplica |

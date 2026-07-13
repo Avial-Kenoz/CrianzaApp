@@ -380,6 +380,28 @@
         <div class="value">{{ fish.sex_display or 'N/D' }}</div>
       </div>
       <div class="card">
+        <div class="label">Reproducción</div>
+        {% if repro.active %}
+          <div class="value"><a href="/views/ui/reproduccion" style="color:#1d4ed8; font-weight:700; text-decoration:none;">En reproducción ↗</a></div>
+        {% elif repro.can_select %}
+          <form method="post" action="/api/reproduccion/selecciones" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:2px;"
+                onsubmit="return confirm('¿Seleccionar este pez como reproductor por 30 días?');">
+            <input type="hidden" name="fish_id" value="{{ fish.id }}">
+            <input type="hidden" name="next" value="/views/ui/fish/{{ fish.id }}">
+            {% if repro.needs_sex %}
+              <select name="sex" required style="border:1px solid #d1d5db; border-radius:6px; padding:5px 7px;">
+                <option value="">Sexo…</option><option value="F">Hembra</option><option value="M">Macho</option>
+              </select>
+            {% else %}
+              <input type="hidden" name="sex" value="{{ repro.sex_char }}">
+            {% endif %}
+            <button type="submit" style="border:none; border-radius:7px; background:#2563eb; color:#fff; font-weight:700; font-size:.8rem; padding:6px 11px; cursor:pointer;">Seleccionar como reproductor</button>
+          </form>
+        {% else %}
+          <div class="value" style="color:#9ca3af;">No disponible</div>
+        {% endif %}
+      </div>
+      <div class="card">
         <div class="label">PIT tag secundario</div>
         <div class="pit-edit-wrap" id="sec-pit-wrap">
           <span class="pit-display" id="sec-pit-display">{{ fish.secondary_internal_id or '—' }}</span>

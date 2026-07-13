@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Desove — Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f0f2f5; color: #111827; min-height: 100vh; }
+    .container { padding: 12px 10px 24px; display: grid; gap: 12px; max-width: 1000px; }
+    .page-header { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08);
+                   padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .title h1 { font-size: 1.15rem; color: #1a1a2e; }
+    .title p { margin-top: 3px; color: #6b7280; font-size: .82rem; }
+    .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); padding: 16px; }
+    .card h2 { font-size: .95rem; color: #1a1a2e; margin-bottom: 12px; }
+    .row { display: flex; flex-wrap: wrap; gap: 12px; }
+    label.f { display: flex; flex-direction: column; font-size: .72rem; color: #6b7280; gap: 3px; }
+    input, select { border: 1px solid #d1d5db; border-radius: 7px; padding: 7px 9px; font-size: .84rem; }
+    input[type=number] { width: 130px; }
+    .btn { border: none; border-radius: 8px; background: #2563eb; color: #fff; font-weight: 700; font-size: .84rem; padding: 9px 15px; cursor: pointer; }
+    .btn:hover { background: #1d4ed8; }
+    .btn.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+    .btn.green { background: #059669; } .btn.green:hover { background: #047857; }
+    .banner { border-radius: 8px; padding: 9px 13px; font-size: .82rem; font-weight: 600; }
+    .banner.ok { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+    .banner.error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+    .males { display: flex; flex-wrap: wrap; gap: 8px; }
+    .males label { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; font-size: .82rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .84rem; margin-top: 8px; }
+    th, td { padding: 6px 8px; border-bottom: 1px solid #eef0f3; text-align: left; }
+    .calc { font-weight: 700; color: #1d4ed8; }
+    .status-pill { display: inline-block; border-radius: 999px; padding: 3px 11px; font-size: .74rem; font-weight: 700; }
+    .st-draft, .st-partial { background: #fef3c7; color: #92400e; }
+    .st-completed { background: #d1fae5; color: #065f46; }
+    .foot { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .muted { color: #6b7280; font-size: .8rem; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="container">
+  <section class="page-header">
+    <div class="title">
+      <h1>Desove · Hembra {{ female.pit }}</h1>
+      <p>Proceso 2 — <span class="status-pill st-{{ ev.status }}">{{ ev.status }}</span></p>
+    </div>
+    <a class="btn ghost" href="/views/ui/reproduccion">← Volver</a>
+  </section>
+
+  {% if msg %}<div class="banner {{ 'error' if status == 'error' else 'ok' }}">{{ msg }}</div>{% endif %}
+
+  {% if ev.status == 'completed' %}
+    <div class="card">
+      <h2>Desove cerrado</h2>
+      <p class="muted">Este desove ya fue completado.
+        {% if batch_id %}<a href="/views/ui/reproduccion/incubadoras/{{ batch_id }}">Ir al monitoreo de incubadoras →</a>{% endif %}
+      </p>
+    </div>
+  {% else %}
+  <form method="post" action="/views/ui/reproduccion/desove/{{ selection_id }}" id="desove-form">
+    <div class="card">
+      <h2>Registro ambiental</h2>
+      <div class="row">
+        <label class="f">Fecha<input type="date" name="event_date" value="{{ ev.event_date or '' }}"></label>
+        <label class="f">Hora<input type="time" name="event_time" value="{{ ev.event_time.strftime('%H:%M') if ev.event_time else '' }}"></label>
+        <label class="f">Temperatura °C<input type="number" step="0.1" name="water_temp" value="{{ ev.water_temp if ev.water_temp is not none else '' }}"></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Anestesia</h2>
+      <div class="row">
+        <label class="f">Fármaco<input type="text" name="anesthesia_drug_name" value="{{ ev.anesthesia_drug_name or '' }}"></label>
+        <label class="f">Dilución<input type="text" name="anesthesia_dilution" value="{{ ev.anesthesia_dilution or '' }}"></label>
+      </div>
+      <p class="muted" style="margin-top:6px">Se registrará en el historial de fármacos de la hembra y de cada macho al cerrar el desove.</p>
+    </div>
+
+    <div class="card">
+      <h2>Machos (seleccionados activos)</h2>
+      {% if males_avail %}
+      <div class="males">
+        {% for mm in males_avail %}
+        <label><input type="checkbox" name="male_selection_ids" value="{{ mm.selection_id }}" {% if mm.checked %}checked{% endif %}> {{ mm.pit }}</label>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="muted">No hay machos en selección activa. Selecciona machos desde la vista principal primero.</p>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Ovas</h2>
+      <div class="row">
+        <label class="f">Peso total (g)<input type="number" step="0.01" name="total_ova_weight_g" id="ova_total" value="{{ ev.total_ova_weight_g if ev.total_ova_weight_g is not none else '' }}" oninput="recalc()"></label>
+        <label class="f">Muestra n (g)<input type="number" step="0.01" name="ova_sample_grams" id="ova_n" value="{{ ev.ova_sample_grams if ev.ova_sample_grams is not none else '' }}" oninput="recalc()"></label>
+        <label class="f">Recuento en n g<input type="number" step="1" name="ova_count_sample" id="ova_count" value="{{ ev.ova_count_sample if ev.ova_count_sample is not none else '' }}" oninput="recalc()"></label>
+        <label class="f">Diámetro (mm)<input type="number" step="0.01" name="ova_diameter_mm" value="{{ ev.ova_diameter_mm if ev.ova_diameter_mm is not none else '' }}"></label>
+        <label class="f">Viabilidad %<input type="number" step="0.1" name="viability_pct" value="{{ ev.viability_pct if ev.viability_pct is not none else '' }}"></label>
+      </div>
+      <p style="margin-top:8px">Número estimado de ovas: <span class="calc" id="ova_num">—</span></p>
+    </div>
+
+    <div class="card">
+      <h2>Distribución en incubadoras (1–20)</h2>
+      <table id="inc-table">
+        <thead><tr><th>ID incubadora</th><th>Peso (g)</th><th></th></tr></thead>
+        <tbody id="inc-body">
+          {% for inc in incubators %}
+          <tr>
+            <td><input type="number" min="1" max="20" name="incubator_id" value="{{ inc.incubator_id }}" oninput="sumInc()"></td>
+            <td><input type="number" step="0.01" name="incubator_weight" value="{{ inc.weight }}" oninput="sumInc()"></td>
+            <td><button type="button" class="btn ghost" onclick="this.closest('tr').remove(); sumInc()">✕</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="foot" style="margin-top:8px">
+        <button type="button" class="btn ghost" onclick="addInc()">+ Incubadora</button>
+        <span class="muted">Suma distribuida: <b id="inc-sum">0</b> g / total <b id="inc-target">—</b> g</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Recuperación de reproductores</h2>
+      <table>
+        <thead><tr><th>Reproductor</th><th>Resultado</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Hembra {{ female.pit }}</td>
+            <td>
+              <select name="recovery_{{ female.id }}">
+                <option value="">—</option>
+                <option value="successful" {% if female.recovery == 'successful' %}selected{% endif %}>Recuperación exitosa</option>
+                <option value="sacrifice" {% if female.recovery == 'sacrifice' %}selected{% endif %}>Sacrificio</option>
+              </select>
+            </td>
+          </tr>
+          {% for mm in males_avail %}
+          <tr>
+            <td>Macho {{ mm.pit }}</td>
+            <td>
+              <select name="recovery_{{ mm.fish_id }}">
+                <option value="">—</option>
+                <option value="successful">Recuperación exitosa</option>
+                <option value="sacrifice">Sacrificio</option>
+              </select>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted" style="margin-top:6px">Requerido para todos los reproductores involucrados al cerrar.</p>
+    </div>
+
+    <div class="card foot">
+      <button type="submit" class="btn">Guardar</button>
+      <span class="muted">Guarda parcial; puedes retomar más tarde.</span>
+    </div>
+  </form>
+
+  <form method="post" action="/api/reproduccion/desove/{{ selection_id }}/complete"
+        onsubmit="return confirm('Cerrar el desove: los reproductores salen de selección y comienza el monitoreo de incubadoras. ¿Continuar?');">
+    <div class="card foot">
+      <button type="submit" class="btn green">Cerrar desove y abrir incubadoras</button>
+      <span class="muted">Guarda antes de cerrar. Valida: ovas, ≥1 macho, suma de incubadoras = peso total, recuperación completa.</span>
+    </div>
+  </form>
+  {% endif %}
+</div>
+
+<script>
+  function recalc() {
+    var t = parseFloat(document.getElementById('ova_total').value) || 0;
+    var n = parseFloat(document.getElementById('ova_n').value) || 0;
+    var c = parseFloat(document.getElementById('ova_count').value) || 0;
+    document.getElementById('ova_num').textContent = (n > 0) ? Math.round(c / n * t).toLocaleString() : '—';
+    sumInc();
+  }
+  function sumInc() {
+    var s = 0;
+    document.querySelectorAll('input[name="incubator_weight"]').forEach(function(i){ s += parseFloat(i.value) || 0; });
+    document.getElementById('inc-sum').textContent = s.toFixed(2);
+    var t = parseFloat(document.getElementById('ova_total').value) || 0;
+    document.getElementById('inc-target').textContent = t ? t.toFixed(2) : '—';
+    document.getElementById('inc-sum').style.color = (t && Math.abs(s - t) < 0.01) ? '#059669' : '#b91c1c';
+  }
+  function addInc() {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td><input type="number" min="1" max="20" name="incubator_id" oninput="sumInc()"></td>' +
+                   '<td><input type="number" step="0.01" name="incubator_weight" oninput="sumInc()"></td>' +
+                   '<td><button type="button" class="btn ghost" onclick="this.closest(\'tr\').remove(); sumInc()">✕</button></td>';
+    document.getElementById('inc-body').appendChild(tr);
+  }
+  recalc();
+</script>
+
+</body>
+</html>

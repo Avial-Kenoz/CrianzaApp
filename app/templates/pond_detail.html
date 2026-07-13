@@ -582,8 +582,16 @@
 
       <!-- 1. Peces total -->
       <div class="card">
-        <div class="label">Peces (con / sin PIT)</div>
-        <div class="value">{{ tagged_count }} / {{ unregistered_count }}</div>
+        <div class="label">Peces (con / sin PIT{% if retagged_unresolved_count %} / retag{% endif %})</div>
+        <div class="value">
+          {{ net_fish_count }}
+          <span style="font-size:0.9rem;font-weight:600;color:#9ca3af;">
+            ({{ tagged_count }} / {{ unregistered_count }}{% if retagged_unresolved_count %} / <span style="color:#b45309;">&minus;{{ retagged_unresolved_count }}</span>{% endif %})
+          </span>
+        </div>
+        {% if retagged_unresolved_count %}
+        <div class="subline">Incluye {{ retagged_unresolved_count }} retag sin reconciliar (restado del total).</div>
+        {% endif %}
       </div>
 
       <!-- 2. Recuento por lote -->
@@ -882,7 +890,7 @@
                   {% endif %}
                 </select>
                 {% if row.e4_label %}
-                <div style="font-size:.68rem;color:#6b7280;margin-top:3px;white-space:nowrap;" title="Fecha probable de entrada a etapa 4 (modelo de ciclo ovárico)">
+                <div style="font-size:.68rem;color:#6b7280;margin-top:3px;white-space:nowrap;" title="Predicción: etapa 2/3 → fecha probable de E4; etapa 4 → diámetro de ova vs umbral de cosecha 2,8 mm">
                   {{ row.e4_label }}
                 </div>
                 {% endif %}

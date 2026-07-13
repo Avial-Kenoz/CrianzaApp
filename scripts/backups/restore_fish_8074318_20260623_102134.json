@@ -1,0 +1,65 @@
+{
+  "fish": {
+    "id": 50927,
+    "legacy_id": null,
+    "internal_id": "8074318",
+    "lot_id": 3,
+    "sex": "f",
+    "state": "reconciled",
+    "registration_time": "2026-06-16T18:33:21.966847",
+    "devious_time": "2026-06-17T21:18:36.952033",
+    "date_of_death": null,
+    "depuration_start_time": null,
+    "mortality_id": null,
+    "created_at": "2026-06-16T18:33:21.966847",
+    "updated_at": "2026-06-17T21:18:36.952033",
+    "secondary_internal_id": null,
+    "notes": null
+  },
+  "ponds_movements_171774": {
+    "id": 171774,
+    "legacy_id": null,
+    "source_pond_id": 79,
+    "destiny_pond_id": null,
+    "fish_id": 50927,
+    "lot_id": 3,
+    "fish_quantity": 1,
+    "movement_reason": "reconciliation",
+    "movement_time": "2026-06-17T21:18:36.952033",
+    "folio": null,
+    "created_at": "2026-06-17T21:18:36.952033",
+    "updated_at": "2026-06-17T21:18:36.952033"
+  },
+  "tag_detachment_events_406": {
+    "id": 406,
+    "pond_id": 79,
+    "fish_id": null,
+    "retag_fish_id": 50927,
+    "event_date": "2026-06-15T00:00:00",
+    "registered_by_user_id": null,
+    "notes": "[lote:I]",
+    "status": "written_off",
+    "created_at": "2026-06-15T11:06:39.268635",
+    "resolution": "left_unregistered",
+    "resolved_at": "2026-06-17T21:18:36.952033"
+  },
+  "ponds_79": {
+    "id": 79,
+    "name": "NP6 - Nor-poniente 6",
+    "state": "success",
+    "biomass_current": "5868.622",
+    "tagged_count": 802,
+    "unregistered_count": 0,
+    "n_fish_cached": 802,
+    "active_lots_count": 5,
+    "active_lot_ids": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "runtime_cache_updated_at": "2026-06-23T13:09:06.379628",
+    "last_tag_reconciliation_at": "2026-06-17T21:18:36.952033"
+  }
+}

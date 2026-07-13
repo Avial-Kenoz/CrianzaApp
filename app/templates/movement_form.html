@@ -145,6 +145,7 @@
       cursor: pointer;
     }
     .btn-add-batch { background: #2563eb; color: #fff; }
+    .btn-load-all { background: #059669; color: #fff; }
     .btn-clear-batch { background: #6b7280; color: #fff; }
     .batch-list {
       margin-top: 10px;
@@ -189,6 +190,16 @@
     .batch-summary.visible { display: block; }
     .batch-summary ul { margin: 8px 0 0 18px; }
     .batch-summary-note { margin-top: 8px; font-weight: 700; }
+    .batch-devstate {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border: 1px solid #c7d2fe;
+      border-radius: 8px;
+      background: #eef2ff;
+    }
+    .batch-devstate label { font-size: .8rem; font-weight: 700; color: #3730a3; }
+    .batch-devstate select { width: 100%; margin-top: 4px; }
+    .batch-devstate .hint { margin-top: 4px; }
 
     /* Saldo info */
     .balance-info {
@@ -293,6 +304,7 @@
     <form method="POST" action="/views/ui/movements" id="movForm">
       <input type="hidden" name="mode" id="modeInput" value="tagged" />
       <input type="hidden" name="tagged_batch_ids" id="taggedBatchIds" value="" />
+      <input type="hidden" name="batch_development_state" id="batchDevState" value="" />
 
       <!-- ── CAMPOS COMUNES ── -->
       <div class="field-row">
@@ -334,6 +346,7 @@
             <option value="missing_number">Número faltante</option>
             <option value="inventory_mismatch">Ajuste de inventario</option>
             <option value="unmarked_devious">Desvío no marcado</option>
+            <option value="faena" data-untagged-only="1">Faena (egreso a planta, sin marca)</option>
           </select>
         </div>
         <div class="field">
@@ -359,6 +372,7 @@
           </datalist>
           <div class="pit-result" id="pitResult"></div>
           <input type="hidden" name="fish_id" id="fishIdHidden" />
+          <input type="hidden" id="fishSexHidden" />
           <input type="hidden" name="lot_id" id="lotIdTagged" />
 
           <label class="tagged-batch-toggle" for="taggedBatchToggle">
@@ -369,11 +383,19 @@
           <div id="batchTools" class="batch-tools">
             <div class="batch-tools-row">
               <button type="button" class="btn-small btn-add-batch" onclick="addCurrentFishToBatch()">+ Agregar PIT a lista</button>
+              <button type="button" class="btn-small btn-load-all" onclick="loadAllFishToBatch()">⬇ Cargar todo</button>
               <button type="button" class="btn-small btn-clear-batch" onclick="clearBatchList()">Limpiar lista</button>
             </div>
             <div id="batchCount" class="batch-count">0 PIT tags en lista</div>
             <div id="batchEmpty" class="batch-empty">Aún no hay PIT tags agregados.</div>
             <div id="batchList" class="batch-list"></div>
+            <div id="batchDevStateWrap" class="batch-devstate" style="display:none;">
+              <label for="batchDevStateSelect">Estado de desarrollo (masivo)</label>
+              <select id="batchDevStateSelect" onchange="onBatchDevStateChange()" title="Aplica a todos los peces movidos">
+                <option value="">— Sin cambio —</option>
+              </select>
+              <div class="hint" id="batchDevStateHint"></div>
+            </div>
             <div id="batchSummary" class="batch-summary"></div>
           </div>
         </div>
@@ -446,6 +468,37 @@
     updateTaggedPitRequirement();
     document.getElementById('fishQtyUntagged').required = (mode === 'untagged');
     document.getElementById('lotIdUntagged').required = (mode === 'untagged');
+    updateReasonModeConstraints(mode);
+  }
+
+  // "Faena" solo aplica a peces sin marca (masivo): se oculta en modo con PIT tag.
+  function updateReasonModeConstraints(mode) {
+    const reasonSel = document.getElementById('movementReason');
+    if (!reasonSel) return;
+    const faenaOpt = reasonSel.querySelector('option[data-untagged-only="1"]');
+    if (faenaOpt) {
+      const disableFaena = (mode !== 'untagged');
+      faenaOpt.disabled = disableFaena;
+      faenaOpt.hidden = disableFaena;
+      if (disableFaena && reasonSel.value === 'faena') {
+        reasonSel.value = 'pond_movement';
+      }
+    }
+    updateDestinyForReason();
+  }
+
+  // Faena es un egreso definitivo: fuerza sin estanque destino.
+  function updateDestinyForReason() {
+    const reasonSel = document.getElementById('movementReason');
+    const destSel = document.getElementById('destinyPond');
+    if (!reasonSel || !destSel) return;
+    if (reasonSel.value === 'faena') {
+      destSel.value = '';
+      destSel.disabled = true;
+      updateBalance();
+    } else {
+      destSel.disabled = false;
+    }
   }
 
   function setPitSuggestions(pitTags) {
@@ -490,11 +543,69 @@
     empty.style.display = batchFish.length ? 'none' : 'block';
     count.textContent = `${batchFish.length} PIT tags en lista`;
     hidden.value = batchFish.map(x => x.id).join(',');
+    updateBatchDevStateControl();
+  }
+
+  // Opciones de estado de desarrollo por sexo (igual que la vista individual).
+  const DEV_STATE_OPTIONS = {
+    f: [
+      ['0', '0 - Sin ovas'], ['1', '1 - Ovas blancas'], ['2', '2 - Ovas amarillas'],
+      ['3', '3 - Ovas gris'], ['4', '4 - Caviar'], ['R', 'R - Revertida'],
+    ],
+    m: [['0', '0 - Sin observación'], ['L', 'L - Lechoso']],
+  };
+
+  // Muestra el selector de estado masivo solo si la lista no está vacía y todos
+  // los peces tienen el mismo sexo registrado (no nulo). Reconstruye las opciones
+  // acorde a ese sexo común y mantiene sincronizado el input oculto.
+  function updateBatchDevStateControl() {
+    const wrap = document.getElementById('batchDevStateWrap');
+    const select = document.getElementById('batchDevStateSelect');
+    const hint = document.getElementById('batchDevStateHint');
+    const hidden = document.getElementById('batchDevState');
+
+    const sexes = new Set(batchFish.map(x => x.sex || null));
+    const commonSex = batchFish.length && sexes.size === 1 ? [...sexes][0] : null;
+
+    if (!commonSex || !DEV_STATE_OPTIONS[commonSex]) {
+      wrap.style.display = 'none';
+      select.value = '';
+      hidden.value = '';
+      if (batchFish.length && sexes.size > 1) {
+        // Señal sutil de por qué no aparece: sexos mezclados o sin registrar.
+      }
+      return;
+    }
+
+    const prev = select.value;
+    select.innerHTML = '<option value="">— Sin cambio —</option>';
+    DEV_STATE_OPTIONS[commonSex].forEach(([val, label]) => {
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = label;
+      select.appendChild(opt);
+    });
+    // Conserva la selección previa si sigue siendo válida para el sexo común.
+    select.value = DEV_STATE_OPTIONS[commonSex].some(([v]) => v === prev) ? prev : '';
+    hidden.value = select.value;
+    hint.textContent = commonSex === 'f'
+      ? 'Se aplicará a todas las hembras movidas.'
+      : 'Se aplicará a todos los machos movidos.';
+    wrap.style.display = 'block';
+  }
+
+  function onBatchDevStateChange() {
+    document.getElementById('batchDevState').value =
+      document.getElementById('batchDevStateSelect').value;
+    // Cambiar el estado invalida el resumen confirmado.
+    batchConfirmed = false;
+    hideBatchSummary();
   }
 
   function addCurrentFishToBatch() {
     const fishId = parseInt(document.getElementById('fishIdHidden').value || '0', 10);
     const pit = (document.getElementById('pitSearch').value || '').trim().toUpperCase();
+    const sex = (document.getElementById('fishSexHidden').value || '').trim().toLowerCase() || null;
     if (!fishId || !pit) {
       alert('Busca y selecciona un PIT válido antes de agregar.');
       return;
@@ -503,16 +614,61 @@
       alert('Ese PIT ya está en la lista.');
       return;
     }
-    batchFish.push({ id: fishId, pit });
+    batchFish.push({ id: fishId, pit, sex });
     batchConfirmed = false;
     hideBatchSummary();
     renderBatchList();
     document.getElementById('pitSearch').value = '';
     document.getElementById('fishIdHidden').value = '';
     document.getElementById('lotIdTagged').value = '';
+    document.getElementById('fishSexHidden').value = '';
     const result = document.getElementById('pitResult');
     result.className = 'pit-result';
     result.textContent = '';
+  }
+
+  async function loadAllFishToBatch() {
+    const source = document.getElementById('sourcePond');
+    if (!source || !source.value) {
+      alert('Selecciona un estanque origen para cargar todos sus peces.');
+      return;
+    }
+    let fish = [];
+    try {
+      const response = await fetch(`/views/ui/ponds/${encodeURIComponent(source.value)}/pit-tags`);
+      const data = await response.json();
+      fish = Array.isArray(data.fish) ? data.fish : [];
+    } catch (_error) {
+      alert('Error al cargar los peces del estanque.');
+      return;
+    }
+    if (!fish.length) {
+      alert('El estanque origen no tiene peces con PIT tag.');
+      return;
+    }
+    let added = 0;
+    fish.forEach(item => {
+      const id = parseInt(item.id, 10);
+      const pit = (item.pit || '').trim().toUpperCase();
+      const sex = (item.sex || '').trim().toLowerCase() || null;
+      if (!id || !pit) return;
+      if (batchFish.some(x => x.id === id)) return;
+      batchFish.push({ id, pit, sex });
+      added++;
+    });
+    batchConfirmed = false;
+    hideBatchSummary();
+    renderBatchList();
+    document.getElementById('pitSearch').value = '';
+    document.getElementById('fishIdHidden').value = '';
+    document.getElementById('lotIdTagged').value = '';
+    document.getElementById('fishSexHidden').value = '';
+    const result = document.getElementById('pitResult');
+    result.className = 'pit-result';
+    result.textContent = added
+      ? `✓ ${added} pez(es) agregado(s) a la lista.`
+      : 'Todos los peces del estanque ya estaban en la lista.';
+    if (added) result.classList.add('found');
   }
 
   function removeFromBatch(fishId) {
@@ -548,12 +704,17 @@
     const reasonTxt = reasonSel.options[reasonSel.selectedIndex]?.text || reasonSel.value;
     const preview = batchFish.slice(0, 10).map(x => `<li>${x.pit}</li>`).join('');
     const extra = batchFish.length > 10 ? `<li>... +${batchFish.length - 10} más</li>` : '';
+    const devSel = document.getElementById('batchDevStateSelect');
+    const devTxt = (document.getElementById('batchDevState').value && devSel)
+      ? (devSel.options[devSel.selectedIndex]?.text || document.getElementById('batchDevState').value)
+      : '';
+    const devLine = devTxt ? `Estado de desarrollo: ${devTxt}<br>` : '';
     box.innerHTML = `
       <strong>Resumen de operación masiva con PIT tag</strong><br>
       Origen: ${srcTxt}<br>
       Destino: ${dstTxt}<br>
       Razón: ${reasonTxt}<br>
-      Total PIT tags: ${batchFish.length}
+      ${devLine}Total PIT tags: ${batchFish.length}
       <ul>${preview}${extra}</ul>
       <div class="batch-summary-note">Revisa el resumen y presiona nuevamente uno de los botones de guardado para confirmar.</div>
     `;
@@ -567,8 +728,10 @@
     const result = document.getElementById('pitResult');
     const fishHidden = document.getElementById('fishIdHidden');
     const lotHidden = document.getElementById('lotIdTagged');
+    const sexHidden = document.getElementById('fishSexHidden');
     fishHidden.value = '';
     lotHidden.value = '';
+    sexHidden.value = '';
     const normalized = val.toUpperCase();
     document.getElementById('pitSearch').value = normalized;
     if (normalized.length < 3) { result.className = 'pit-result'; return; }
@@ -581,6 +744,7 @@
           result.innerHTML = `✓ ${data.internal_id} — Lote: ${data.lot} — Estado: ${data.state} — Estanque actual: ${data.current_pond || 'N/D'}`;
           fishHidden.value = data.id;
           lotHidden.value = data.lot_id;
+          sexHidden.value = data.sex || '';
         } else {
           result.className = 'pit-result not-found';
           result.textContent = `✗ No se encontró pez con PIT tag "${normalized}"`;
@@ -603,6 +767,7 @@
     document.getElementById('pitSearch').value = (data.internal_id || normalized).toUpperCase();
     document.getElementById('fishIdHidden').value = data.id;
     document.getElementById('lotIdTagged').value = data.lot_id || '';
+    document.getElementById('fishSexHidden').value = data.sex || '';
     const result = document.getElementById('pitResult');
     result.className = 'pit-result found';
     result.innerHTML = `✓ ${data.internal_id} — Lote: ${data.lot} — Estado: ${data.state} — Estanque actual: ${data.current_pond || 'N/D'}`;
@@ -722,6 +887,11 @@
       });
     }
   });
+
+  const reasonSelEl = document.getElementById('movementReason');
+  if (reasonSelEl) {
+    reasonSelEl.addEventListener('change', updateDestinyForReason);
+  }
 
   const pitInput = document.getElementById('pitSearch');
   if (pitInput) {
