@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Calidad de agua – Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    .page { padding: 26px 30px 60px; }
+    .page-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 20px; }
+    .page-title { font-size: 1.45rem; font-weight: 750; }
+    .page-sub { color: #6b7280; font-size: .86rem; margin-top: 2px; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn { display: inline-flex; align-items: center; gap: 7px; border: none; border-radius: 9px;
+           padding: 9px 15px; font-size: .86rem; font-weight: 650; cursor: pointer; text-decoration: none; }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-ghost { background: #fff; color: #1a1a2e; border: 1px solid #d7dbe0; }
+    .btn-ghost:hover { border-color: #2563eb; color: #2563eb; }
+    .flash { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46;
+             padding: 11px 15px; border-radius: 10px; font-size: .88rem; margin-bottom: 18px; }
+    .kpis { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 22px; }
+    .kpi { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 18px; min-width: 150px; }
+    .kpi .n { font-size: 1.7rem; font-weight: 750; }
+    .kpi .l { font-size: .74rem; color: #6b7280; text-transform: uppercase; letter-spacing: .05em; }
+    .kpi.alarm .n { color: #dc2626; } .kpi.alert .n { color: #d97706; } .kpi.ok .n { color: #059669; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; margin-bottom: 22px; overflow: hidden; }
+    .card-head { padding: 14px 18px; border-bottom: 1px solid #eef0f2; display: flex; align-items: center; justify-content: space-between; }
+    .card-title { font-size: 1.02rem; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th, td { text-align: left; padding: 10px 18px; border-bottom: 1px solid #f1f3f5; white-space: nowrap; }
+    th { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; font-weight: 700; }
+    tbody tr:hover { background: #fafbfc; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .pill { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: .72rem; font-weight: 700; }
+    .pill-ok    { background: #ecfdf5; color: #059669; }
+    .pill-alert { background: #fffbeb; color: #b45309; }
+    .pill-alarm { background: #fef2f2; color: #dc2626; }
+    .pill-none  { background: #f3f4f6; color: #9ca3af; }
+    .pill-warn  { background: #fff7ed; color: #c2410c; }
+    .stale { color: #b45309; font-size: .78rem; }
+    .muted { color: #9ca3af; }
+    .table-wrap { overflow-x: auto; }
+    .empty { padding: 26px 18px; color: #9ca3af; font-size: .88rem; text-align: center; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+{% macro level_pill(level) -%}
+  {% if level == 'alarma' %}<span class="pill pill-alarm">Alarma</span>
+  {% elif level == 'alerta' %}<span class="pill pill-alert">Alerta</span>
+  {% elif level == 'ok' %}<span class="pill pill-ok">OK</span>
+  {% else %}<span class="pill pill-none">Sin dato</span>{% endif %}
+{%- endmacro %}
+
+<div class="page">
+  <div class="page-head">
+    <div>
+      <div class="page-title">Calidad de agua</div>
+      <div class="page-sub">Oxígeno por estanque · biofiltros por unidad de cultivo</div>
+    </div>
+    <div class="actions">
+      <a class="btn btn-primary" href="/views/ui/calidad-agua/oxigeno/nueva">+ Lectura de O₂</a>
+      <a class="btn btn-ghost" href="/views/ui/calidad-agua/biofiltro/nueva">+ Muestreo biofiltro</a>
+    </div>
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+  <div class="kpis">
+    <div class="kpi {{ 'alarm' if o2_counts.alarma else ('alert' if o2_counts.alerta else 'ok') }}">
+      <div class="n">{{ o2_counts.alarma }}</div><div class="l">Alarmas O₂</div>
+    </div>
+    <div class="kpi {{ 'alert' if o2_counts.alerta else 'ok' }}">
+      <div class="n">{{ o2_counts.alerta }}</div><div class="l">Alertas O₂</div>
+    </div>
+    <div class="kpi {{ 'alarm' if bf_counts.alarma else ('alert' if bf_counts.alerta else 'ok') }}">
+      <div class="n">{{ bf_counts.alarma }}</div><div class="l">Alarmas biofiltro</div>
+    </div>
+    <div class="kpi {{ 'alert' if bf_counts.alerta else 'ok' }}">
+      <div class="n">{{ bf_counts.alerta }}</div><div class="l">Alertas biofiltro</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div class="card-title">Oxígeno por estanque</div>
+      <span class="muted" style="font-size:.78rem">Última lectura · vencida > {{ o2_stale_hours }} h</span></div>
+    <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Estanque</th><th>Unidad</th><th class="num">O₂ (mg/L)</th><th class="num">Temp (°C)</th>
+        <th class="num">Sat. (%)</th><th class="num">Sat. teór.</th><th>Terna</th><th>Estado</th><th>Última</th>
+      </tr></thead>
+      <tbody>
+        {% for r in oxygen_rows %}
+        <tr>
+          <td><strong>{{ r.pond_name }}</strong></td>
+          <td class="muted">{{ r.unit_name }}</td>
+          {% if r.has_data %}
+            <td class="num">{{ '%.2f'|format(r.reading.do_mg_l) if r.reading.do_mg_l is not none else '—' }}</td>
+            <td class="num">{{ '%.1f'|format(r.reading.water_temp_c) if r.reading.water_temp_c is not none else '—' }}</td>
+            <td class="num">{{ '%.1f'|format(r.reading.saturation_pct) if r.reading.saturation_pct is not none else '—' }}</td>
+            <td class="num muted">{{ '%.1f'|format(r.reading.saturation_computed_pct) if r.reading.saturation_computed_pct is not none else '—' }}</td>
+            <td>{% if r.consistency_flag == 'sospechoso' %}<span class="pill pill-warn">Sospechosa</span>{% else %}<span class="pill pill-ok">OK</span>{% endif %}</td>
+            <td>{{ level_pill(r.alarm_level) }}</td>
+            <td>{% if r.stale %}<span class="stale">hace {{ r.hours_ago }} h ⚠</span>{% else %}<span class="muted">hace {{ r.hours_ago }} h</span>{% endif %}</td>
+          {% else %}
+            <td class="num muted" colspan="5" style="text-align:left">Sin lecturas</td>
+            <td>{{ level_pill(None) }}</td><td class="muted">—</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        {% if not oxygen_rows %}<tr><td colspan="9" class="empty">No hay estanques activos.</td></tr>{% endif %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div class="card-title">Biofiltros por unidad de cultivo</div>
+      <span class="muted" style="font-size:.78rem">Último muestreo diario</span></div>
+    <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Unidad</th><th>Fecha</th><th class="num">NH₃-N ent/sal</th><th class="num">NO₂-N ent/sal</th>
+        <th class="num">N tot ent/sal</th><th>Balance N</th><th>ΔpH</th><th>Δtemp</th><th>Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for r in biofilter_rows %}
+        <tr>
+          <td><strong>{{ r.unit_name }}</strong></td>
+          {% if r.has_data %}
+            <td>{{ r.reading.reading_date.strftime('%d/%m/%Y') }}</td>
+            <td class="num">{{ '%.4f'|format(r.reading.nh3_n_in) if r.reading.nh3_n_in is not none else '—' }} / {{ '%.4f'|format(r.reading.nh3_n_out) if r.reading.nh3_n_out is not none else '—' }}</td>
+            <td class="num">{{ '%.2f'|format(r.reading.in_no2_n) if r.reading.in_no2_n is not none else '—' }} / {{ '%.2f'|format(r.reading.out_no2_n) if r.reading.out_no2_n is not none else '—' }}</td>
+            <td class="num">{{ '%.2f'|format(r.reading.tn_in) if r.reading.tn_in is not none else '—' }} / {{ '%.2f'|format(r.reading.tn_out) if r.reading.tn_out is not none else '—' }}</td>
+            <td>{% if r.n_balance_flag == 'sospechoso' %}<span class="pill pill-warn">Desbalance</span>{% elif r.n_balance_flag == 'ok' %}<span class="pill pill-ok">OK</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td>{% if r.ph_delta_flag == 'sospechoso' %}<span class="pill pill-warn">Alto</span>{% elif r.ph_delta_flag == 'ok' %}<span class="pill pill-ok">OK</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td>{% if r.temp_delta_flag == 'sospechoso' %}<span class="pill pill-warn">Alto</span>{% elif r.temp_delta_flag == 'ok' %}<span class="pill pill-ok">OK</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td>{{ level_pill(r.alarm_level) }}</td>
+          {% else %}
+            <td class="muted" colspan="6" style="text-align:left">Sin muestreos</td>
+            <td></td><td>{{ level_pill(None) }}</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        {% if not biofilter_rows %}<tr><td colspan="9" class="empty">No hay unidades de cultivo.</td></tr>{% endif %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+</div>
+</div></div>
+</body>
+</html>

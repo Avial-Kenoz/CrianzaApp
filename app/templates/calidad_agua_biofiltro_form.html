@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nuevo muestreo de biofiltro – Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    .page { padding: 26px 30px 60px; max-width: 760px; }
+    .crumb { font-size: .8rem; color: #6b7280; margin-bottom: 6px; }
+    .crumb a { color: #2563eb; text-decoration: none; }
+    .page-title { font-size: 1.4rem; font-weight: 750; margin-bottom: 4px; }
+    .page-sub { color: #6b7280; font-size: .86rem; margin-bottom: 22px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 22px 24px; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 18px; margin-bottom: 6px; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    label { font-size: .8rem; font-weight: 650; color: #374151; }
+    label .hint { font-weight: 400; color: #9ca3af; }
+    input, select, textarea { border: 1px solid #d7dbe0; border-radius: 9px; padding: 9px 11px;
+           font-size: .9rem; font-family: inherit; color: #1a1a2e; background: #fff; outline: none; width: 100%; }
+    input:focus, select:focus, textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+    .points { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 20px; }
+    .point { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px 16px 6px; }
+    .point h3 { font-size: .82rem; text-transform: uppercase; letter-spacing: .05em; color: #2563eb; margin-bottom: 12px; }
+    .point.out h3 { color: #059669; }
+    .p-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+    .note { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 11px 14px;
+            font-size: .8rem; color: #4b5563; margin-top: 18px; }
+    .actions { display: flex; gap: 10px; margin-top: 22px; }
+    .btn { border: none; border-radius: 9px; padding: 10px 18px; font-size: .88rem; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+    .btn-primary { background: #2563eb; color: #fff; } .btn-primary:hover { background: #1d4ed8; }
+    .btn-ghost { background: #fff; color: #1a1a2e; border: 1px solid #d7dbe0; } .btn-ghost:hover { border-color: #2563eb; color: #2563eb; }
+    @media (max-width: 640px) { .points, .row2 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+<div class="page">
+  <div class="crumb"><a href="/views/ui/calidad-agua">Calidad de agua</a> · Nuevo muestreo de biofiltro</div>
+  <div class="page-title">Nuevo muestreo de biofiltro</div>
+  <div class="page-sub">Muestreo diario en entrada y salida del biofiltro de la unidad. Nitrógeno expresado como N.</div>
+
+  <form class="card" method="post" action="/views/ui/calidad-agua/biofiltro">
+    <div class="row2">
+      <div class="field">
+        <label for="cultivation_unit_id">Unidad de cultivo</label>
+        <select id="cultivation_unit_id" name="cultivation_unit_id" required>
+          <option value="" disabled {{ '' if selected_unit else 'selected' }}>Seleccionar…</option>
+          {% for u in units %}
+          <option value="{{ u.id }}" {{ 'selected' if selected_unit == u.id else '' }}>{{ u.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="reading_date">Fecha</label>
+        <input type="date" id="reading_date" name="reading_date" value="{{ today }}" required />
+      </div>
+    </div>
+
+    <div class="points">
+      <div class="point in">
+        <h3>Entrada</h3>
+        <div class="p-field"><label for="in_ph">pH</label><input type="number" step="0.01" id="in_ph" name="in_ph" /></div>
+        <div class="p-field"><label for="in_temp_c">Temperatura <span class="hint">°C</span></label><input type="number" step="0.1" id="in_temp_c" name="in_temp_c" /></div>
+        <div class="p-field"><label for="in_nh4_n">Amonio <span class="hint">NH₄-N, mg/L</span></label><input type="number" step="0.001" min="0" id="in_nh4_n" name="in_nh4_n" /></div>
+        <div class="p-field"><label for="in_no2_n">Nitrito <span class="hint">NO₂-N, mg/L</span></label><input type="number" step="0.001" min="0" id="in_no2_n" name="in_no2_n" /></div>
+        <div class="p-field"><label for="in_no3_n">Nitrato <span class="hint">NO₃-N, mg/L</span></label><input type="number" step="0.001" min="0" id="in_no3_n" name="in_no3_n" /></div>
+      </div>
+      <div class="point out">
+        <h3>Salida</h3>
+        <div class="p-field"><label for="out_ph">pH</label><input type="number" step="0.01" id="out_ph" name="out_ph" /></div>
+        <div class="p-field"><label for="out_temp_c">Temperatura <span class="hint">°C</span></label><input type="number" step="0.1" id="out_temp_c" name="out_temp_c" /></div>
+        <div class="p-field"><label for="out_nh4_n">Amonio <span class="hint">NH₄-N, mg/L</span></label><input type="number" step="0.001" min="0" id="out_nh4_n" name="out_nh4_n" /></div>
+        <div class="p-field"><label for="out_no2_n">Nitrito <span class="hint">NO₂-N, mg/L</span></label><input type="number" step="0.001" min="0" id="out_no2_n" name="out_no2_n" /></div>
+        <div class="p-field"><label for="out_no3_n">Nitrato <span class="hint">NO₃-N, mg/L</span></label><input type="number" step="0.001" min="0" id="out_no3_n" name="out_no3_n" /></div>
+      </div>
+    </div>
+
+    <div class="row2" style="margin-top:18px">
+      <div class="field">
+        <label for="operator_id">Operador <span class="hint">opcional</span></label>
+        <select id="operator_id" name="operator_id">
+          <option value="">—</option>
+          {% for u in users %}<option value="{{ u.id }}">{{ u.label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="observation">Observación <span class="hint">opcional</span></label>
+        <input type="text" id="observation" name="observation" placeholder="Notas…" />
+      </div>
+    </div>
+
+    <div class="note">El sistema valida la conservación de N (suma entrada ≈ salida), ΔpH y Δtemperatura acotados,
+      y evalúa NH₃ no ionizado (según pH y temperatura) y nitrito para las alarmas.</div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Guardar muestreo</button>
+      <a href="/views/ui/calidad-agua" class="btn btn-ghost">Cancelar</a>
+    </div>
+  </form>
+</div>
+</div></div>
+</body>
+</html>

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nueva lectura de O₂ – Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    .page { padding: 26px 30px 60px; max-width: 720px; }
+    .crumb { font-size: .8rem; color: #6b7280; margin-bottom: 6px; }
+    .crumb a { color: #2563eb; text-decoration: none; }
+    .page-title { font-size: 1.4rem; font-weight: 750; margin-bottom: 4px; }
+    .page-sub { color: #6b7280; font-size: .86rem; margin-bottom: 22px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 22px 24px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 18px; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field.full { grid-column: 1 / -1; }
+    label { font-size: .8rem; font-weight: 650; color: #374151; }
+    label .hint { font-weight: 400; color: #9ca3af; }
+    input, select, textarea { border: 1px solid #d7dbe0; border-radius: 9px; padding: 9px 11px;
+           font-size: .9rem; font-family: inherit; color: #1a1a2e; background: #fff; outline: none; width: 100%; }
+    input:focus, select:focus, textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+    .note { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 11px 14px;
+            font-size: .8rem; color: #4b5563; margin: 18px 0 4px; }
+    .actions { display: flex; gap: 10px; margin-top: 22px; }
+    .btn { border: none; border-radius: 9px; padding: 10px 18px; font-size: .88rem; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+    .btn-primary { background: #2563eb; color: #fff; } .btn-primary:hover { background: #1d4ed8; }
+    .btn-ghost { background: #fff; color: #1a1a2e; border: 1px solid #d7dbe0; } .btn-ghost:hover { border-color: #2563eb; color: #2563eb; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+<div class="page">
+  <div class="crumb"><a href="/views/ui/calidad-agua">Calidad de agua</a> · Nueva lectura de O₂</div>
+  <div class="page-title">Nueva lectura de oxígeno</div>
+  <div class="page-sub">Por estanque, cada 2–4 h. Basta con dos de los tres valores; el tercero valida la medición.</div>
+
+  <form class="card" method="post" action="/views/ui/calidad-agua/oxigeno">
+    <div class="grid">
+      <div class="field">
+        <label for="pond_id">Estanque</label>
+        <select id="pond_id" name="pond_id" required>
+          <option value="" disabled {{ '' if selected_pond else 'selected' }}>Seleccionar…</option>
+          {% for p in ponds %}
+          <option value="{{ p.id }}" {{ 'selected' if selected_pond == p.id else '' }}>{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="reading_datetime">Fecha y hora</label>
+        <input type="datetime-local" id="reading_datetime" name="reading_datetime" value="{{ now_local }}" required />
+      </div>
+
+      <div class="field">
+        <label for="do_mg_l">O₂ disuelto <span class="hint">mg/L</span></label>
+        <input type="number" step="0.01" min="0" id="do_mg_l" name="do_mg_l" placeholder="p. ej. 8.90" />
+      </div>
+      <div class="field">
+        <label for="water_temp_c">Temperatura <span class="hint">°C</span></label>
+        <input type="number" step="0.1" id="water_temp_c" name="water_temp_c" placeholder="p. ej. 18.5" />
+      </div>
+      <div class="field">
+        <label for="saturation_pct">Saturación <span class="hint">%</span></label>
+        <input type="number" step="0.1" min="0" id="saturation_pct" name="saturation_pct" placeholder="p. ej. 98.0" />
+      </div>
+      <div class="field">
+        <label for="operator_id">Operador <span class="hint">opcional</span></label>
+        <select id="operator_id" name="operator_id">
+          <option value="">—</option>
+          {% for u in users %}<option value="{{ u.id }}">{{ u.label }}</option>{% endfor %}
+        </select>
+      </div>
+
+      <div class="field full">
+        <label for="observation">Observación <span class="hint">opcional</span></label>
+        <textarea id="observation" name="observation" rows="2" placeholder="Notas de la medición…"></textarea>
+      </div>
+    </div>
+
+    <div class="note">La saturación teórica se calcula con temperatura y O₂ (agua dulce, altitud {{ altitude_m }} m).
+      Si difiere mucho de la ingresada, la lectura se marca como <strong>terna sospechosa</strong>.
+      Saturación &lt; 70 % genera alerta; &lt; 60 %, alarma.</div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Guardar lectura</button>
+      <a href="/views/ui/calidad-agua" class="btn btn-ghost">Cancelar</a>
+    </div>
+  </form>
+</div>
+</div></div>
+</body>
+</html>
