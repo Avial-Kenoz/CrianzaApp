@@ -43,3 +43,7 @@ from .incubator_batches import IncubatorBatch
 from .incubator_units import IncubatorUnit
 from .incubator_monitoring_logs import IncubatorMonitoringLog
 from .incubator_split_events import IncubatorSplitEvent
+# Calidad de agua (oxígeno en estanques + biofiltros por unidad)
+from .pond_oxygen_readings import PondOxygenReading
+from .biofilter_readings import BiofilterReading
+from .water_quality_thresholds import WaterQualityThreshold
