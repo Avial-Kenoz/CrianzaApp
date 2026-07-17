@@ -35,6 +35,9 @@ def _stop_pond_cache_scheduler() -> None:
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+# PWA de captura en terreno (SPA offline, mismo origen). Sirve app/field_client
+# en /captura; el service worker en /captura/sw.js controla ese ámbito.
+app.mount("/captura", StaticFiles(directory=str(Path(__file__).parent / "field_client"), html=True), name="captura")
 
 
 app.include_router(fish_router)
