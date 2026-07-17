@@ -12,4 +12,5 @@ openpyxl
 numpy
 scipy
 matplotlib
+segno
 APScheduler>=3.10,<4

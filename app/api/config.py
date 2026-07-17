@@ -21,6 +21,12 @@ CONFIG_SECTIONS = [
         "url": "/views/ui/calidad-agua/umbrales",
         "icon": "💧",
     },
+    {
+        "title": "Etiquetas QR de estanques",
+        "desc": "Hoja imprimible con el QR de cada estanque para la captura en terreno.",
+        "url": "/views/ui/calidad-agua/qr",
+        "icon": "🏷️",
+    },
 ]
 
 

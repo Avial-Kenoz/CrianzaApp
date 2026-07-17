@@ -23,7 +23,7 @@ from app.models.ponds import Pond
 from app.models.cultivation_units import CultivationUnit
 from app.models.pond_oxygen_readings import PondOxygenReading
 from app.services import water_quality as wq
-from app.api.water_quality import load_thresholds
+from app.api.water_quality import load_thresholds, ensure_pond_qr_codes
 
 router = APIRouter(prefix="/api/field/v1", tags=["field"])
 
@@ -43,6 +43,7 @@ def get_db():
 def bootstrap():
     db = SessionLocal()
     try:
+        ensure_pond_qr_codes(db)  # garantiza qr_code para mapear escaneos offline
         unit_names = {u.id: u.name for u in db.query(CultivationUnit).order_by(CultivationUnit.name).all()}
         ponds = (
             db.query(Pond)
@@ -59,6 +60,7 @@ def bootstrap():
                     "id": p.id,
                     "name": p.name,
                     "code": p.code,
+                    "qr_code": p.qr_code,
                     "cultivation_unit_id": p.cultivation_unit_id,
                     "cultivation_unit_name": unit_names.get(p.cultivation_unit_id),
                 }

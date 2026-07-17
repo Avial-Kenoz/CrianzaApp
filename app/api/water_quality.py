@@ -17,6 +17,8 @@ from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 from urllib.parse import quote_plus
+import secrets
+import segno
 
 from app.db.session import SessionLocal
 from app.models.ponds import Pond
@@ -471,5 +473,68 @@ async def thresholds_save(request: Request):
         if changed:
             msg = f"{changed} umbral(es) actualizado(s)."
         return RedirectResponse(url=f"/views/ui/calidad-agua/umbrales?msg={quote_plus(msg)}", status_code=303)
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# QR por estanque: código estable + hoja imprimible
+# ---------------------------------------------------------------------------
+def _generate_qr_code() -> str:
+    """Token estable y corto para el QR (E + 8 hex)."""
+    return "E" + secrets.token_hex(4).upper()
+
+
+def ensure_pond_qr_codes(db: Session) -> int:
+    """Asigna qr_code a los estanques padre activos que aún no tengan uno.
+
+    Idempotente: solo genera para los que falten. Devuelve cuántos creó.
+    """
+    pending = (
+        db.query(Pond)
+        .filter(Pond.state != "inactive", Pond.parent_pond_id.is_(None), Pond.qr_code.is_(None))
+        .all()
+    )
+    if not pending:
+        return 0
+    used = {c for (c,) in db.query(Pond.qr_code).filter(Pond.qr_code.isnot(None)).all()}
+    created = 0
+    for p in pending:
+        code = _generate_qr_code()
+        while code in used:
+            code = _generate_qr_code()
+        p.qr_code = code
+        used.add(code)
+        created += 1
+    db.commit()
+    return created
+
+
+@router.get("/qr", response_class=HTMLResponse)
+def qr_labels(request: Request):
+    db = SessionLocal()
+    try:
+        ensure_pond_qr_codes(db)
+        unit_names = {u.id: u.name for u in db.query(CultivationUnit).all()}
+        ponds = (
+            db.query(Pond)
+            .filter(Pond.state != "inactive", Pond.parent_pond_id.is_(None))
+            .order_by(Pond.name)
+            .all()
+        )
+        # Agrupar por unidad para ordenar la hoja
+        groups: dict = {}
+        for p in ponds:
+            uname = unit_names.get(p.cultivation_unit_id, "Sin unidad")
+            groups.setdefault(uname, []).append({
+                "pond_name": p.name,
+                "unit_name": uname,
+                "qr_code": p.qr_code,
+                "svg": segno.make(p.qr_code, error="m").svg_data_uri(scale=4),
+            })
+        grouped = [{"unit_name": k, "ponds": v} for k, v in sorted(groups.items())]
+        context = {"request": request, "grouped": grouped, "total": len(ponds)}
+        html = jinja_env.get_template("calidad_agua_qr.html").render(context)
+        return HTMLResponse(content=html)
     finally:
         db.close()

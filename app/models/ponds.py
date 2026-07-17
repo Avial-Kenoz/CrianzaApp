@@ -9,6 +9,8 @@ class Pond(Base):
     name = Column(String(120), nullable=False)
     internal_id = Column(String(120))
     code = Column(String(120))
+    # Código estable para el QR de terreno (independiente del id de la BD).
+    qr_code = Column(String(16), unique=True)
     cultivation_unit_id = Column(BigInteger, ForeignKey("cultivation_units.id"))
     pond_type_id = Column(BigInteger, ForeignKey("pond_types.id"))
     lot_id = Column(BigInteger, ForeignKey("lots.id"))
