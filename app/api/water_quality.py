@@ -78,7 +78,55 @@ def _active_users(db: Session):
 
 
 # ---------------------------------------------------------------------------
-# Panel de estado
+# Helpers de última lectura
+# ---------------------------------------------------------------------------
+def _latest_o2_by_pond(db: Session) -> dict:
+    """Última lectura de O2 por estanque (pond_id -> PondOxygenReading)."""
+    sub = (
+        db.query(
+            PondOxygenReading.pond_id.label("pid"),
+            func.max(PondOxygenReading.reading_datetime).label("mx"),
+        )
+        .group_by(PondOxygenReading.pond_id)
+        .subquery()
+    )
+    out = {}
+    for r in db.query(PondOxygenReading).join(
+        sub, and_(PondOxygenReading.pond_id == sub.c.pid,
+                  PondOxygenReading.reading_datetime == sub.c.mx),
+    ).order_by(PondOxygenReading.id.desc()).all():
+        out.setdefault(r.pond_id, r)
+    return out
+
+
+def _latest_bf_by_unit(db: Session) -> dict:
+    """Último muestreo de biofiltro por unidad (unit_id -> BiofilterReading)."""
+    sub = (
+        db.query(
+            BiofilterReading.cultivation_unit_id.label("uid"),
+            func.max(BiofilterReading.reading_date).label("mx"),
+        )
+        .group_by(BiofilterReading.cultivation_unit_id)
+        .subquery()
+    )
+    out = {}
+    for r in db.query(BiofilterReading).join(
+        sub, and_(BiofilterReading.cultivation_unit_id == sub.c.uid,
+                  BiofilterReading.reading_date == sub.c.mx),
+    ).order_by(BiofilterReading.id.desc()).all():
+        out.setdefault(r.cultivation_unit_id, r)
+    return out
+
+
+def _o2_hours_ago(reading, now: datetime):
+    if reading is None or reading.reading_datetime is None:
+        return None, False
+    hours = (now - reading.reading_datetime).total_seconds() / 3600.0
+    return round(hours, 1), hours > O2_STALE_HOURS
+
+
+# ---------------------------------------------------------------------------
+# Panel de estado (rollup por unidad de cultivo, semáforo)
 # ---------------------------------------------------------------------------
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
@@ -86,106 +134,128 @@ def panel(request: Request, msg: Optional[str] = None):
     db = SessionLocal()
     try:
         now = datetime.now()
-
-        # Estanques padre activos con su unidad de cultivo
+        units = db.query(CultivationUnit).order_by(CultivationUnit.name).all()
         ponds = (
             db.query(Pond)
             .filter(Pond.state != "inactive", Pond.parent_pond_id.is_(None))
             .order_by(Pond.name)
             .all()
         )
-        unit_names = {u.id: u.name for u in db.query(CultivationUnit).all()}
-
-        # Última lectura de O2 por estanque
-        o2_sub = (
-            db.query(
-                PondOxygenReading.pond_id.label("pid"),
-                func.max(PondOxygenReading.reading_datetime).label("mx"),
-            )
-            .group_by(PondOxygenReading.pond_id)
-            .subquery()
-        )
-        o2_latest = {
-            r.pond_id: r
-            for r in db.query(PondOxygenReading).join(
-                o2_sub,
-                and_(
-                    PondOxygenReading.pond_id == o2_sub.c.pid,
-                    PondOxygenReading.reading_datetime == o2_sub.c.mx,
-                ),
-            ).all()
-        }
-
-        oxygen_rows = []
+        ponds_by_unit: dict = {}
         for p in ponds:
-            r = o2_latest.get(p.id)
-            stale = False
-            hours = None
-            if r is not None and r.reading_datetime is not None:
-                hours = (now - r.reading_datetime).total_seconds() / 3600.0
-                stale = hours > O2_STALE_HOURS
-            oxygen_rows.append({
-                "pond_id": p.id,
-                "pond_name": p.name,
-                "unit_name": unit_names.get(p.cultivation_unit_id, "—"),
-                "reading": r,
-                "alarm_level": (r.alarm_level if r else None),
-                "consistency_flag": (r.consistency_flag if r else None),
-                "hours_ago": round(hours, 1) if hours is not None else None,
-                "stale": stale,
-                "has_data": r is not None,
-            })
+            ponds_by_unit.setdefault(p.cultivation_unit_id, []).append(p)
 
-        # Última lectura de biofiltro por unidad de cultivo
-        units = db.query(CultivationUnit).order_by(CultivationUnit.name).all()
-        bf_sub = (
-            db.query(
-                BiofilterReading.cultivation_unit_id.label("uid"),
-                func.max(BiofilterReading.reading_date).label("mx"),
-            )
-            .group_by(BiofilterReading.cultivation_unit_id)
-            .subquery()
-        )
-        bf_latest = {}
-        for r in db.query(BiofilterReading).join(
-            bf_sub,
-            and_(
-                BiofilterReading.cultivation_unit_id == bf_sub.c.uid,
-                BiofilterReading.reading_date == bf_sub.c.mx,
-            ),
-        ).order_by(BiofilterReading.id.desc()).all():
-            bf_latest.setdefault(r.cultivation_unit_id, r)  # el más reciente por id si empatan fecha
+        o2_latest = _latest_o2_by_pond(db)
+        bf_latest = _latest_bf_by_unit(db)
 
-        biofilter_rows = []
+        cards = []
+        totals = {"ok": 0, "alerta": 0, "alarma": 0, "sin_dato": 0}
         for u in units:
-            r = bf_latest.get(u.id)
-            biofilter_rows.append({
+            u_ponds = ponds_by_unit.get(u.id, [])
+            levels = []
+            n_alarm = n_alert = n_nodata = n_stale = 0
+
+            for p in u_ponds:
+                r = o2_latest.get(p.id)
+                if r is None:
+                    n_nodata += 1
+                    continue
+                _, stale = _o2_hours_ago(r, now)
+                if stale:
+                    n_stale += 1
+                lvl = r.alarm_level
+                if lvl:
+                    levels.append(lvl)
+                    if lvl == "alarma":
+                        n_alarm += 1
+                    elif lvl == "alerta":
+                        n_alert += 1
+
+            bf = bf_latest.get(u.id)
+            has_bf = bf is not None
+            if bf is None:
+                n_nodata += 1
+            elif bf.alarm_level:
+                levels.append(bf.alarm_level)
+                if bf.alarm_level == "alarma":
+                    n_alarm += 1
+                elif bf.alarm_level == "alerta":
+                    n_alert += 1
+
+            rollup = wq.worst_level(*levels) if levels else "sin_dato"
+            totals[rollup] = totals.get(rollup, 0) + 1
+            cards.append({
                 "unit_id": u.id,
                 "unit_name": u.name,
-                "reading": r,
-                "alarm_level": (r.alarm_level if r else None),
-                "n_balance_flag": (r.n_balance_flag if r else None),
-                "ph_delta_flag": (r.ph_delta_flag if r else None),
-                "temp_delta_flag": (r.temp_delta_flag if r else None),
-                "has_data": r is not None,
+                "rollup": rollup,
+                "n_ponds": len(u_ponds),
+                "has_bf": has_bf,
+                "n_alarm": n_alarm,
+                "n_alert": n_alert,
+                "n_nodata": n_nodata,
+                "n_stale": n_stale,
             })
-
-        def _count(rows, key="alarm_level"):
-            return {
-                "alarma": sum(1 for x in rows if x.get(key) == "alarma"),
-                "alerta": sum(1 for x in rows if x.get(key) == "alerta"),
-            }
 
         context = {
             "request": request,
             "msg": msg,
-            "oxygen_rows": oxygen_rows,
-            "biofilter_rows": biofilter_rows,
-            "o2_counts": _count(oxygen_rows),
-            "bf_counts": _count(biofilter_rows),
-            "o2_stale_hours": O2_STALE_HOURS,
+            "cards": cards,
+            "totals": totals,
         }
         html = jinja_env.get_template("calidad_agua_panel.html").render(context)
+        return HTMLResponse(content=html)
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Detalle de una unidad de cultivo (biofiltro + estanques asociados)
+# ---------------------------------------------------------------------------
+@router.get("/unidad/{unit_id}", response_class=HTMLResponse)
+def unit_detail(request: Request, unit_id: int):
+    db = SessionLocal()
+    try:
+        now = datetime.now()
+        unit = db.query(CultivationUnit).filter(CultivationUnit.id == unit_id).first()
+        if unit is None:
+            return RedirectResponse(url="/views/ui/calidad-agua", status_code=303)
+
+        u_ponds = (
+            db.query(Pond)
+            .filter(Pond.state != "inactive", Pond.parent_pond_id.is_(None),
+                    Pond.cultivation_unit_id == unit_id)
+            .order_by(Pond.name)
+            .all()
+        )
+        o2_latest = _latest_o2_by_pond(db)
+        bf = _latest_bf_by_unit(db).get(unit_id)
+
+        pond_rows = []
+        levels = []
+        for p in u_ponds:
+            r = o2_latest.get(p.id)
+            hours, stale = _o2_hours_ago(r, now)
+            if r and r.alarm_level:
+                levels.append(r.alarm_level)
+            pond_rows.append({
+                "pond_id": p.id, "pond_name": p.name, "reading": r,
+                "alarm_level": (r.alarm_level if r else None),
+                "consistency_flag": (r.consistency_flag if r else None),
+                "hours_ago": hours, "stale": stale, "has_data": r is not None,
+            })
+        if bf and bf.alarm_level:
+            levels.append(bf.alarm_level)
+        rollup = wq.worst_level(*levels) if levels else "sin_dato"
+
+        context = {
+            "request": request,
+            "unit": {"id": unit.id, "name": unit.name},
+            "rollup": rollup,
+            "pond_rows": pond_rows,
+            "bf": bf,
+            "o2_stale_hours": O2_STALE_HOURS,
+        }
+        html = jinja_env.get_template("calidad_agua_unidad.html").render(context)
         return HTMLResponse(content=html)
     finally:
         db.close()

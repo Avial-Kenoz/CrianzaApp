@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ unit.name }} · Calidad de agua – Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    .page { padding: 26px 30px 60px; max-width: 1000px; }
+    .crumb { font-size: .8rem; color: #6b7280; margin-bottom: 8px; }
+    .crumb a { color: #2563eb; text-decoration: none; }
+    .head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 22px; }
+    .title-wrap { display: flex; align-items: center; gap: 14px; }
+    .page-title { font-size: 1.5rem; font-weight: 780; }
+    .status-badge { display: inline-flex; align-items: center; gap: 8px; font-weight: 750; font-size: .9rem;
+                    padding: 7px 14px; border-radius: 999px; }
+    .status-badge .d { width: 12px; height: 12px; border-radius: 50%; }
+    .b-ok { background: #ecfdf5; color: #15803d; } .b-ok .d { background: #16a34a; }
+    .b-alerta { background: #fffbeb; color: #b45309; } .b-alerta .d { background: #d97706; }
+    .b-alarma { background: #fef2f2; color: #b91c1c; } .b-alarma .d { background: #dc2626; }
+    .b-sin_dato { background: #f3f4f6; color: #6b7280; } .b-sin_dato .d { background: #9ca3af; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn { display: inline-flex; align-items: center; gap: 7px; border: none; border-radius: 9px;
+           padding: 9px 15px; font-size: .84rem; font-weight: 650; cursor: pointer; text-decoration: none; }
+    .btn-primary { background: #2563eb; color: #fff; } .btn-primary:hover { background: #1d4ed8; }
+    .btn-ghost { background: #fff; color: #1a1a2e; border: 1px solid #d7dbe0; } .btn-ghost:hover { border-color: #2563eb; color: #2563eb; }
+
+    .section-title { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: #6b7280;
+                     font-weight: 750; margin: 26px 0 12px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
+    .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+    .card-name { font-size: 1.05rem; font-weight: 720; }
+    .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .72rem; font-weight: 700; }
+    .pill-ok { background: #ecfdf5; color: #059669; } .pill-alert { background: #fffbeb; color: #b45309; }
+    .pill-alarm { background: #fef2f2; color: #dc2626; } .pill-none { background: #f3f4f6; color: #9ca3af; }
+    .pill-warn { background: #fff7ed; color: #c2410c; }
+    .meta { color: #9ca3af; font-size: .78rem; margin-top: 2px; }
+    .stale { color: #b45309; }
+
+    .params { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; margin-top: 14px; }
+    .param { background: #f9fafb; border: 1px solid #eef0f2; border-radius: 10px; padding: 10px 12px; }
+    .param .k { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #9ca3af; font-weight: 700; }
+    .param .v { font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 3px; }
+    .param .v small { font-size: .72rem; color: #9ca3af; font-weight: 500; }
+
+    .bf-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: .88rem; }
+    .bf-table th, .bf-table td { padding: 9px 12px; border-bottom: 1px solid #f1f3f5; text-align: right; font-variant-numeric: tabular-nums; }
+    .bf-table th:first-child, .bf-table td:first-child { text-align: left; font-weight: 650; }
+    .bf-table thead th { font-size: .72rem; text-transform: uppercase; color: #6b7280; letter-spacing: .04em; }
+    .bf-table .col-in { color: #2563eb; } .bf-table .col-out { color: #059669; }
+    .flags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+    .no-data { color: #9ca3af; font-size: .88rem; padding: 8px 0; }
+    .empty { color: #9ca3af; font-size: .9rem; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+{% macro level_pill(level) -%}
+  {% if level == 'alarma' %}<span class="pill pill-alarm">Alarma</span>
+  {% elif level == 'alerta' %}<span class="pill pill-alert">Alerta</span>
+  {% elif level == 'ok' %}<span class="pill pill-ok">OK</span>
+  {% else %}<span class="pill pill-none">Sin dato</span>{% endif %}
+{%- endmacro %}
+{% macro fmt(v, dec=2, unit='') -%}
+  {% if v is not none %}{{ ('%.'+dec|string+'f')|format(v) }}{% if unit %} <small>{{ unit }}</small>{% endif %}{% else %}<span class="meta">—</span>{% endif %}
+{%- endmacro %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/calidad-agua">Calidad de agua</a> · {{ unit.name }}</div>
+  <div class="head">
+    <div class="title-wrap">
+      <div class="page-title">{{ unit.name }}</div>
+      <span class="status-badge b-{{ rollup }}"><span class="d"></span>
+        {% if rollup == 'ok' %}Todo en orden{% elif rollup == 'alerta' %}En alerta
+        {% elif rollup == 'alarma' %}En alarma{% else %}Sin datos{% endif %}</span>
+    </div>
+    <div class="actions">
+      <a class="btn btn-primary" href="/views/ui/calidad-agua/oxigeno/nueva">+ Lectura de O₂</a>
+      <a class="btn btn-ghost" href="/views/ui/calidad-agua/biofiltro/nueva?unit_id={{ unit.id }}">+ Muestreo biofiltro</a>
+    </div>
+  </div>
+
+  <!-- Biofiltro -->
+  <div class="section-title">Biofiltro</div>
+  <div class="card">
+    {% if bf %}
+    <div class="card-head">
+      <div class="card-name">Muestreo del {{ bf.reading_date.strftime('%d/%m/%Y') }}</div>
+      {{ level_pill(bf.alarm_level) }}
+    </div>
+    <table class="bf-table">
+      <thead><tr><th>Parámetro</th><th class="col-in">Entrada</th><th class="col-out">Salida</th></tr></thead>
+      <tbody>
+        <tr><td>pH</td><td>{{ fmt(bf.in_ph, '2') }}</td><td>{{ fmt(bf.out_ph, '2') }}</td></tr>
+        <tr><td>Temperatura</td><td>{{ fmt(bf.in_temp_c, '1', '°C') }}</td><td>{{ fmt(bf.out_temp_c, '1', '°C') }}</td></tr>
+        <tr><td>Amonio (NH₄-N)</td><td>{{ fmt(bf.in_nh4_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_nh4_n, '3', 'mg/L') }}</td></tr>
+        <tr><td>Nitrito (NO₂-N)</td><td>{{ fmt(bf.in_no2_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_no2_n, '3', 'mg/L') }}</td></tr>
+        <tr><td>Nitrato (NO₃-N)</td><td>{{ fmt(bf.in_no3_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_no3_n, '3', 'mg/L') }}</td></tr>
+        <tr><td>N total</td><td>{{ fmt(bf.tn_in, '2', 'mg/L') }}</td><td>{{ fmt(bf.tn_out, '2', 'mg/L') }}</td></tr>
+        <tr><td>NH₃-N no ionizado</td><td>{{ fmt(bf.nh3_n_in, '4', 'mg/L') }}</td><td>{{ fmt(bf.nh3_n_out, '4', 'mg/L') }}</td></tr>
+      </tbody>
+    </table>
+    <div class="flags">
+      <span>Validación:</span>
+      {% if bf.n_balance_flag == 'sospechoso' %}<span class="pill pill-warn">Balance N desbalanceado</span>{% else %}<span class="pill pill-ok">Balance N OK</span>{% endif %}
+      {% if bf.ph_delta_flag == 'sospechoso' %}<span class="pill pill-warn">ΔpH alto</span>{% else %}<span class="pill pill-ok">ΔpH OK</span>{% endif %}
+      {% if bf.temp_delta_flag == 'sospechoso' %}<span class="pill pill-warn">Δtemp alto</span>{% else %}<span class="pill pill-ok">Δtemp OK</span>{% endif %}
+    </div>
+    {% else %}
+    <div class="no-data">Sin muestreos de biofiltro. <a href="/views/ui/calidad-agua/biofiltro/nueva?unit_id={{ unit.id }}">Registrar el primero →</a></div>
+    {% endif %}
+  </div>
+
+  <!-- Estanques -->
+  <div class="section-title">Estanques ({{ pond_rows|length }})</div>
+  {% for p in pond_rows %}
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <div class="card-name">{{ p.pond_name }}</div>
+        {% if p.has_data %}<div class="meta {{ 'stale' if p.stale else '' }}">Última lectura hace {{ p.hours_ago }} h{{ ' · vencida' if p.stale else '' }}</div>{% endif %}
+      </div>
+      {{ level_pill(p.alarm_level) }}
+    </div>
+    {% if p.has_data %}
+    <div class="params">
+      <div class="param"><div class="k">O₂ disuelto</div><div class="v">{{ fmt(p.reading.do_mg_l, '2', 'mg/L') }}</div></div>
+      <div class="param"><div class="k">Temperatura</div><div class="v">{{ fmt(p.reading.water_temp_c, '1', '°C') }}</div></div>
+      <div class="param"><div class="k">Saturación</div><div class="v">{{ fmt(p.reading.saturation_pct, '1', '%') }}</div></div>
+      <div class="param"><div class="k">Sat. teórica</div><div class="v">{{ fmt(p.reading.saturation_computed_pct, '1', '%') }}</div></div>
+      <div class="param"><div class="k">Terna</div><div class="v" style="font-size:.9rem">
+        {% if p.consistency_flag == 'sospechoso' %}<span class="pill pill-warn">Sospechosa</span>{% else %}<span class="pill pill-ok">OK</span>{% endif %}</div></div>
+    </div>
+    {% else %}
+    <div class="no-data">Sin lecturas de O₂. <a href="/views/ui/calidad-agua/oxigeno/nueva?pond_id={{ p.pond_id }}">Registrar la primera →</a></div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% if not pond_rows %}<div class="card"><div class="empty">Esta unidad no tiene estanques activos asociados.</div></div>{% endif %}
+
+</div>
+</div></div>
+</body>
+</html>
