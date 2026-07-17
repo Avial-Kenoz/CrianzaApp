@@ -126,11 +126,11 @@ def _o2_hours_ago(reading, now: datetime):
 
 
 # ---------------------------------------------------------------------------
-# Panel de estado (rollup por unidad de cultivo, semáforo)
+# Panel de estado (rollup por unidad de cultivo, semáforo + detalle inline)
 # ---------------------------------------------------------------------------
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
-def panel(request: Request, msg: Optional[str] = None):
+def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = None):
     db = SessionLocal()
     try:
         now = datetime.now()
@@ -148,28 +148,34 @@ def panel(request: Request, msg: Optional[str] = None):
         o2_latest = _latest_o2_by_pond(db)
         bf_latest = _latest_bf_by_unit(db)
 
-        cards = []
+        units_data = []
         totals = {"ok": 0, "alerta": 0, "alarma": 0, "sin_dato": 0}
         for u in units:
             u_ponds = ponds_by_unit.get(u.id, [])
             levels = []
             n_alarm = n_alert = n_nodata = n_stale = 0
+            pond_rows = []
 
             for p in u_ponds:
                 r = o2_latest.get(p.id)
+                hours, stale = _o2_hours_ago(r, now)
                 if r is None:
                     n_nodata += 1
-                    continue
-                _, stale = _o2_hours_ago(r, now)
-                if stale:
-                    n_stale += 1
-                lvl = r.alarm_level
-                if lvl:
-                    levels.append(lvl)
-                    if lvl == "alarma":
-                        n_alarm += 1
-                    elif lvl == "alerta":
-                        n_alert += 1
+                else:
+                    if stale:
+                        n_stale += 1
+                    if r.alarm_level:
+                        levels.append(r.alarm_level)
+                        if r.alarm_level == "alarma":
+                            n_alarm += 1
+                        elif r.alarm_level == "alerta":
+                            n_alert += 1
+                pond_rows.append({
+                    "pond_id": p.id, "pond_name": p.name, "reading": r,
+                    "alarm_level": (r.alarm_level if r else None),
+                    "consistency_flag": (r.consistency_flag if r else None),
+                    "hours_ago": hours, "stale": stale, "has_data": r is not None,
+                })
 
             bf = bf_latest.get(u.id)
             has_bf = bf is not None
@@ -184,7 +190,7 @@ def panel(request: Request, msg: Optional[str] = None):
 
             rollup = wq.worst_level(*levels) if levels else "sin_dato"
             totals[rollup] = totals.get(rollup, 0) + 1
-            cards.append({
+            units_data.append({
                 "unit_id": u.id,
                 "unit_name": u.name,
                 "rollup": rollup,
@@ -194,68 +200,19 @@ def panel(request: Request, msg: Optional[str] = None):
                 "n_alert": n_alert,
                 "n_nodata": n_nodata,
                 "n_stale": n_stale,
+                "pond_rows": pond_rows,
+                "bf": bf,
             })
 
         context = {
             "request": request,
             "msg": msg,
-            "cards": cards,
+            "units": units_data,
             "totals": totals,
-        }
-        html = jinja_env.get_template("calidad_agua_panel.html").render(context)
-        return HTMLResponse(content=html)
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
-# Detalle de una unidad de cultivo (biofiltro + estanques asociados)
-# ---------------------------------------------------------------------------
-@router.get("/unidad/{unit_id}", response_class=HTMLResponse)
-def unit_detail(request: Request, unit_id: int):
-    db = SessionLocal()
-    try:
-        now = datetime.now()
-        unit = db.query(CultivationUnit).filter(CultivationUnit.id == unit_id).first()
-        if unit is None:
-            return RedirectResponse(url="/views/ui/calidad-agua", status_code=303)
-
-        u_ponds = (
-            db.query(Pond)
-            .filter(Pond.state != "inactive", Pond.parent_pond_id.is_(None),
-                    Pond.cultivation_unit_id == unit_id)
-            .order_by(Pond.name)
-            .all()
-        )
-        o2_latest = _latest_o2_by_pond(db)
-        bf = _latest_bf_by_unit(db).get(unit_id)
-
-        pond_rows = []
-        levels = []
-        for p in u_ponds:
-            r = o2_latest.get(p.id)
-            hours, stale = _o2_hours_ago(r, now)
-            if r and r.alarm_level:
-                levels.append(r.alarm_level)
-            pond_rows.append({
-                "pond_id": p.id, "pond_name": p.name, "reading": r,
-                "alarm_level": (r.alarm_level if r else None),
-                "consistency_flag": (r.consistency_flag if r else None),
-                "hours_ago": hours, "stale": stale, "has_data": r is not None,
-            })
-        if bf and bf.alarm_level:
-            levels.append(bf.alarm_level)
-        rollup = wq.worst_level(*levels) if levels else "sin_dato"
-
-        context = {
-            "request": request,
-            "unit": {"id": unit.id, "name": unit.name},
-            "rollup": rollup,
-            "pond_rows": pond_rows,
-            "bf": bf,
+            "open_unit": open,
             "o2_stale_hours": O2_STALE_HOURS,
         }
-        html = jinja_env.get_template("calidad_agua_unidad.html").render(context)
+        html = jinja_env.get_template("calidad_agua_panel.html").render(context)
         return HTMLResponse(content=html)
     finally:
         db.close()
@@ -328,11 +285,17 @@ def oxigeno_create(
         db.add(reading)
         db.commit()
 
+        pond = db.query(Pond).filter(Pond.id == pond_id).first()
+        unit_id = pond.cultivation_unit_id if pond else None
+
         msg = f"Lectura de O2 registrada (estado: {res.alarm_level}"
         if res.consistency_flag == "sospechoso":
             msg += ", terna sospechosa"
         msg += ")."
-        return RedirectResponse(url=f"/views/ui/calidad-agua?msg={quote_plus(msg)}", status_code=303)
+        url = f"/views/ui/calidad-agua?msg={quote_plus(msg)}"
+        if unit_id:
+            url += f"&open={unit_id}"
+        return RedirectResponse(url=url, status_code=303)
     finally:
         db.close()
 
@@ -423,6 +386,7 @@ def biofiltro_create(
         if flags:
             msg += "; validación: " + ", ".join(flags)
         msg += ")."
-        return RedirectResponse(url=f"/views/ui/calidad-agua?msg={quote_plus(msg)}", status_code=303)
+        url = f"/views/ui/calidad-agua?msg={quote_plus(msg)}&open={cultivation_unit_id}"
+        return RedirectResponse(url=url, status_code=303)
     finally:
         db.close()
