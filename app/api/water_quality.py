@@ -390,3 +390,86 @@ def biofiltro_create(
         return RedirectResponse(url=url, status_code=303)
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Umbrales: vista de configuración (editable)
+# ---------------------------------------------------------------------------
+# Metadatos de presentación: etiqueta y grupo (biológico vs validación).
+THRESHOLD_META = {
+    "o2_saturation":      {"label": "Saturación de O₂", "group": "bio"},
+    "nh3_n":              {"label": "Amonio no ionizado (NH₃-N)", "group": "bio"},
+    "nitrite_n":          {"label": "Nitrito (NO₂-N)", "group": "bio"},
+    "n_balance_tol":      {"label": "Balance de N (entrada vs salida)", "group": "val"},
+    "ph_delta_tol":       {"label": "ΔpH entrada→salida", "group": "val"},
+    "temp_delta_tol":     {"label": "Δtemperatura entrada→salida", "group": "val"},
+    "o2_consistency_tol": {"label": "Consistencia terna O₂/temp/saturación", "group": "val"},
+}
+THRESHOLD_ORDER = ["o2_saturation", "nh3_n", "nitrite_n",
+                   "n_balance_tol", "ph_delta_tol", "temp_delta_tol", "o2_consistency_tol"]
+_COMPARATOR_TEXT = {"lt": "dispara si es menor que", "gt": "dispara si es mayor que"}
+
+
+def _num(v):
+    return None if v is None else float(v)
+
+
+@router.get("/umbrales", response_class=HTMLResponse)
+def thresholds_form(request: Request, msg: Optional[str] = None):
+    db = SessionLocal()
+    try:
+        by_param = {r.parameter: r for r in db.query(WaterQualityThreshold).all()}
+        bio, val = [], []
+        for param in THRESHOLD_ORDER:
+            r = by_param.get(param)
+            if r is None:
+                continue
+            meta = THRESHOLD_META.get(param, {"label": param, "group": "val"})
+            row = {
+                "parameter": param,
+                "label": meta["label"],
+                "unit": r.unit or "",
+                "comparator": r.comparator,
+                "comparator_text": _COMPARATOR_TEXT.get(r.comparator, r.comparator),
+                "alert_value": _num(r.alert_value),
+                "alarm_value": _num(r.alarm_value),
+                "active": bool(r.active),
+                "is_validation": meta["group"] == "val",
+            }
+            (val if meta["group"] == "val" else bio).append(row)
+        context = {"request": request, "msg": msg, "bio_rows": bio, "val_rows": val,
+                   "altitude_m": wq.SITE_ALTITUDE_M}
+        html = jinja_env.get_template("calidad_agua_umbrales.html").render(context)
+        return HTMLResponse(content=html)
+    finally:
+        db.close()
+
+
+@router.post("/umbrales")
+async def thresholds_save(request: Request):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        rows = {r.parameter: r for r in db.query(WaterQualityThreshold).all()}
+        changed = 0
+        for param, r in rows.items():
+            if param not in THRESHOLD_META:
+                continue
+            alert = _parse_decimal(form.get(f"alert_{param}"))
+            alarm = _parse_decimal(form.get(f"alarm_{param}"))
+            active = form.get(f"active_{param}") is not None
+            new = (alert, alarm, active)
+            old = (_num(r.alert_value), _num(r.alarm_value), bool(r.active))
+            if new != old:
+                r.alert_value = alert
+                r.alarm_value = alarm
+                r.active = active
+                r.updated_at = datetime.now()
+                changed += 1
+        db.commit()
+        msg = "Umbrales guardados." if changed else "Sin cambios."
+        if changed:
+            msg = f"{changed} umbral(es) actualizado(s)."
+        return RedirectResponse(url=f"/views/ui/calidad-agua/umbrales?msg={quote_plus(msg)}", status_code=303)
+    finally:
+        db.close()

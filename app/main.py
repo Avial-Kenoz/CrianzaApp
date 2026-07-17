@@ -17,6 +17,7 @@ from app.api.feed_endpoints import router as feed_router
 from app.api.ovulation import router as ovulation_router
 from app.api.reproduccion import router as reproduccion_router, api_router as reproduccion_api_router
 from app.api.water_quality import router as water_quality_router
+from app.api.config import router as config_router
 from app.services.pond_cache_scheduler import start_scheduler, shutdown_scheduler
 
 app = FastAPI(title="FastApp Etapa 1", version="0.1.0")
@@ -49,6 +50,7 @@ app.include_router(ovulation_router)
 app.include_router(reproduccion_router)
 app.include_router(reproduccion_api_router)
 app.include_router(water_quality_router)
+app.include_router(config_router)
 
 @app.get("/")
 def root():
