@@ -18,6 +18,9 @@ class PondOxygenReading(Base):
     pond_id = Column(BigInteger, ForeignKey("ponds.id"), nullable=False, index=True)
     operator_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)
     reading_datetime = Column(TIMESTAMP, nullable=False)
+    # UUID generado por el cliente PWA de terreno (idempotencia de sincronización).
+    # NULL para lecturas creadas desde el formulario web.
+    client_uuid = Column(String(64), unique=True)
 
     # Valores ingresados por el operador
     do_mg_l = Column(Numeric(6, 2))            # O2 disuelto absoluto (mg/L)
