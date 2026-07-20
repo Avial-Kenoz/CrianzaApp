@@ -27,27 +27,43 @@ function openDB() {
     req.onerror = () => reject(req.error);
   });
 }
+// Best-effort: estas funciones NUNCA rechazan. Si el equipo deniega la BD
+// (abre pero falla al leer/escribir), resuelven en silencio y la app sigue
+// en memoria. Así el almacenamiento local no puede romper el flujo.
 function tx(store, mode) { return _db.transaction(store, mode).objectStore(store); }
 function idbGet(store, key) {
   if (!_db) return Promise.resolve(undefined);
-  return new Promise((res, rej) => { const r = tx(store, "readonly").get(key); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  return new Promise((res) => {
+    try { const r = tx(store, "readonly").get(key); r.onsuccess = () => res(r.result); r.onerror = () => res(undefined); }
+    catch (e) { res(undefined); }
+  });
 }
 function idbPut(store, val, key) {
-  if (!_db) return Promise.resolve();
-  return new Promise((res, rej) => { const r = tx(store, "readwrite").put(val, key); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
+  if (!_db) return Promise.resolve(false);
+  return new Promise((res) => {
+    try { const r = tx(store, "readwrite").put(val, key); r.onsuccess = () => res(true); r.onerror = () => res(false); }
+    catch (e) { res(false); }
+  });
 }
 function idbDel(store, key) {
   if (!_db) return Promise.resolve();
-  return new Promise((res, rej) => { const r = tx(store, "readwrite").delete(key); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
+  return new Promise((res) => {
+    try { const r = tx(store, "readwrite").delete(key); r.onsuccess = () => res(); r.onerror = () => res(); }
+    catch (e) { res(); }
+  });
 }
 function idbAll(store) {
   if (!_db) return Promise.resolve([]);
-  return new Promise((res, rej) => { const r = tx(store, "readonly").getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => rej(r.error); });
+  return new Promise((res) => {
+    try { const r = tx(store, "readonly").getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => res([]); }
+    catch (e) { res([]); }
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Estado
 // ---------------------------------------------------------------------------
+let _canPersist = false; // ¿el equipo permite guardado local persistente?
 const state = {
   boot: null,          // {ponds, units, thresholds, site, server_time}
   pondsByCode: {},     // qr_code -> pond
@@ -214,11 +230,16 @@ async function saveReading() {
     saturation_pct: null,
     observation: $("in-obs").value.trim() || null,
   };
-  await idbPut("queue", rec);
+  // En memoria PRIMERO (nunca perder la lectura), luego persistir best-effort.
   state.queue.push(rec);
   state.doneThisRound[rec.pond_id] = true;
   show("view-dash"); renderDash();
-  toast("Guardado" + (navigator.onLine ? ", sincronizando…" : " (offline)"), "ok");
+  idbPut("queue", rec);
+  if (!_canPersist && !navigator.onLine) {
+    toast("Guardado en memoria — sincroniza antes de cerrar la app", "err");
+  } else {
+    toast("Guardado" + (navigator.onLine ? ", sincronizando…" : " (offline)"), "ok");
+  }
   if (navigator.onLine) syncQueue();
 }
 
@@ -393,8 +414,13 @@ async function init() {
     if (boot) { state.boot = boot; indexPonds(); }
   } catch (e) {
     _db = null;
-    toast("Sin almacenamiento local (modo online): " + (e.message || e), "err");
+    toast("Sin almacenamiento local: " + (e.message || e), "err");
   }
+
+  // Sonda real: algunos equipos abren la BD pero deniegan escrituras.
+  _canPersist = (await idbPut("meta", { t: Date.now() }, "__probe__")) === true;
+  const np = document.getElementById("nopersist");
+  if (np) np.classList.toggle("hidden", _canPersist);
 
   roundStart();
   recomputeDone();

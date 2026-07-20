@@ -29,6 +29,8 @@
     .badge { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
     .badge b { color: var(--txt); }
     .badge.warn { border-color: var(--amber); color: var(--amber); }
+    .warn-banner { background: rgba(245,158,11,.16); border-bottom: 1px solid var(--amber);
+                   color: #fbbf24; font-size: .82rem; font-weight: 650; padding: 10px 16px; text-align: center; }
 
     section { padding: 16px; flex: 1; }
     .hidden { display: none !important; }
@@ -109,6 +111,7 @@
     <span class="badge" id="sync-badge">Sin subir: <b id="pending-n">0</b></span>
     <span class="badge" id="boot-badge">Datos: <b id="boot-when">—</b></span>
   </div>
+  <div class="warn-banner hidden" id="nopersist">⚠ Este equipo no guarda datos localmente. Sincroniza antes de cerrar la app.</div>
 
   <!-- Dashboard -->
   <section id="view-dash">
