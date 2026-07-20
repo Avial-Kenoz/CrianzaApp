@@ -213,12 +213,38 @@ async function saveReading() {
 }
 
 // ---------------------------------------------------------------------------
-// Escáner (BarcodeDetector nativo; fallback: elegir de la lista)
+// Escáner: detección sobre canvas. Usa BarcodeDetector si soporta qr_code;
+// si no, jsQR (window.jsQR) cuando esté disponible. Fallback final: la lista.
 // ---------------------------------------------------------------------------
-let _stream = null, _scanning = false;
+let _stream = null, _scanning = false, _scanTimer = null;
+
+async function makeDetector() {
+  if ("BarcodeDetector" in window) {
+    try {
+      const fmts = await BarcodeDetector.getSupportedFormats();
+      if (fmts && fmts.includes("qr_code")) {
+        const bd = new BarcodeDetector({ formats: ["qr_code"] });
+        return async (canvas) => {
+          const codes = await bd.detect(canvas);
+          return codes && codes.length ? codes[0].rawValue : null;
+        };
+      }
+    } catch (e) { /* sigue con jsQR */ }
+  }
+  if (typeof window.jsQR === "function") {
+    return (canvas, ctx, w, h) => {
+      const img = ctx.getImageData(0, 0, w, h);
+      const r = window.jsQR(img.data, w, h, { inversionAttempts: "attemptBoth" });
+      return r && r.data ? r.data : null;
+    };
+  }
+  return null;
+}
+
 async function startScan() {
-  if (!("BarcodeDetector" in window)) {
-    toast("Escáner no disponible; elige el estanque de la lista", "err");
+  const detect = await makeDetector();
+  if (!detect) {
+    toast("Escáner no disponible en este teléfono; toca el estanque en la lista", "err");
     return;
   }
   try {
@@ -227,24 +253,33 @@ async function startScan() {
     toast("No se pudo abrir la cámara; usa la lista", "err"); return;
   }
   const video = $("video");
-  video.srcObject = _stream; await video.play();
+  video.setAttribute("playsinline", "");
+  video.srcObject = _stream;
+  try { await video.play(); } catch (e) { /* algunos navegadores reproducen solo */ }
   show("view-scan");
-  const det = new BarcodeDetector({ formats: ["qr_code"] });
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   _scanning = true;
-  const loop = async () => {
+  _scanTimer = setInterval(async () => {
     if (!_scanning) return;
+    const w = video.videoWidth, h = video.videoHeight;
+    if (!w || !h) return;                 // frame aún sin dimensiones
+    canvas.width = w; canvas.height = h;
+    ctx.drawImage(video, 0, 0, w, h);
     try {
-      const codes = await det.detect(video);
-      if (codes && codes.length) { onScanned(codes[0].rawValue); return; }
+      const raw = await detect(canvas, ctx, w, h);
+      if (raw) onScanned(raw);
     } catch (e) { /* frame sin código */ }
-    requestAnimationFrame(loop);
-  };
-  requestAnimationFrame(loop);
+  }, 220);
 }
+
 function stopScan() {
   _scanning = false;
+  if (_scanTimer) { clearInterval(_scanTimer); _scanTimer = null; }
   if (_stream) { _stream.getTracks().forEach((t) => t.stop()); _stream = null; }
 }
+
 function onScanned(raw) {
   const code = (raw || "").trim().toUpperCase();
   const pond = state.pondsByCode[code];
