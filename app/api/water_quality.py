@@ -530,7 +530,9 @@ def qr_labels(request: Request):
                 "pond_name": p.name,
                 "unit_name": uname,
                 "qr_code": p.qr_code,
-                "svg": segno.make(p.qr_code, error="m").svg_data_uri(scale=4),
+                # make_qr fuerza QR estándar (make() elegiría Micro QR para
+                # textos cortos, y BarcodeDetector no lee Micro QR).
+                "svg": segno.make_qr(p.qr_code, error="m").svg_data_uri(scale=4),
             })
         grouped = [{"unit_name": k, "ponds": v} for k, v in sorted(groups.items())]
         context = {"request": request, "grouped": grouped, "total": len(ponds)}
