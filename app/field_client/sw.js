@@ -1,7 +1,7 @@
 /* Service worker de Captura O2. Precachea el shell para funcionar offline.
    Las llamadas a la API (/api/) no se cachean: van a la red y, si no hay,
    la app las encola localmente. */
-const CACHE = "captura-v3";
+const CACHE = "captura-v4";
 const ASSETS = [
   "./",
   "./index.html",

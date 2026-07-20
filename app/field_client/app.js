@@ -5,6 +5,12 @@
 const API = "/api/field/v1";
 const LS_ROUND = "captura.roundStart";
 
+// localStorage puede estar bloqueado (WebViews/kioscos con datos de sitio
+// restringidos lanzan "Access denied"): fallback a memoria para no romper.
+const _mem = {};
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return (k in _mem) ? _mem[k] : null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { _mem[k] = v; } }
+
 // ---------------------------------------------------------------------------
 // IndexedDB
 // ---------------------------------------------------------------------------
@@ -109,11 +115,11 @@ function fmtWhen(iso) {
 // Ronda
 // ---------------------------------------------------------------------------
 function roundStart() {
-  let v = localStorage.getItem(LS_ROUND);
-  if (!v) { v = new Date().toISOString(); localStorage.setItem(LS_ROUND, v); }
+  let v = lsGet(LS_ROUND);
+  if (!v) { v = new Date().toISOString(); lsSet(LS_ROUND, v); }
   return v;
 }
-function newRound() { localStorage.setItem(LS_ROUND, new Date().toISOString()); recomputeDone(); renderDash(); toast("Nueva ronda iniciada"); }
+function newRound() { lsSet(LS_ROUND, new Date().toISOString()); recomputeDone(); renderDash(); toast("Nueva ronda iniciada"); }
 function recomputeDone() {
   const start = roundStart();
   state.doneThisRound = {};
@@ -121,15 +127,15 @@ function recomputeDone() {
     if (r.reading_datetime >= start) state.doneThisRound[r.pond_id] = true;
   }
   // marcas locales de lecturas ya sincronizadas en esta ronda
-  const synced = JSON.parse(localStorage.getItem("captura.syncedRound") || "{}");
+  const synced = JSON.parse(lsGet("captura.syncedRound") || "{}");
   for (const [pid, ts] of Object.entries(synced)) {
     if (ts >= start) state.doneThisRound[pid] = true;
   }
 }
 function markDoneLocal(pondId) {
-  const synced = JSON.parse(localStorage.getItem("captura.syncedRound") || "{}");
+  const synced = JSON.parse(lsGet("captura.syncedRound") || "{}");
   synced[pondId] = new Date().toISOString();
-  localStorage.setItem("captura.syncedRound", JSON.stringify(synced));
+  lsSet("captura.syncedRound", JSON.stringify(synced));
 }
 
 // ---------------------------------------------------------------------------
