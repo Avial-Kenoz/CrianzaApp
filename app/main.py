@@ -39,6 +39,8 @@ app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")
 # PWA de captura en terreno (SPA offline, mismo origen). Sirve app/field_client
 # en /captura; el service worker en /captura/sw.js controla ese ámbito.
 app.mount("/captura", StaticFiles(directory=str(Path(__file__).parent / "field_client"), html=True), name="captura")
+# PWA de sexado offline (clasificación/movimientos por estanque)
+app.mount("/sexado_offline", StaticFiles(directory=str(Path(__file__).parent / "sexado_client"), html=True), name="sexado_offline")
 
 
 app.include_router(fish_router)

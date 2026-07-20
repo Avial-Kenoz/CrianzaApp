@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <title>Sexado offline – Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    :root { --bg:#0f172a; --panel:#1e293b; --panel2:#334155; --line:#334155; --txt:#e2e8f0; --mut:#94a3b8;
+            --blue:#3b82f6; --green:#22c55e; --amber:#f59e0b; --red:#ef4444; --pink:#ec4899; }
+    html, body { height: 100%; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: var(--bg); color: var(--txt); overscroll-behavior: none;
+           padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    .app { max-width: 640px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; }
+    .top { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
+           padding: 12px 16px; display: flex; align-items: center; gap: 10px; }
+    .top h1 { font-size: 1.05rem; font-weight: 750; flex: 1; }
+    .net { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--mut); }
+    .net .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+    .net.off .dot { background: var(--mut); }
+    .warn-banner { background: rgba(245,158,11,.16); border-bottom: 1px solid var(--amber);
+                   color: #fbbf24; font-size: .82rem; font-weight: 650; padding: 10px 16px; text-align: center; }
+    .subbar { display: flex; gap: 8px; padding: 8px 16px; font-size: .76rem; color: var(--mut);
+              border-bottom: 1px solid var(--line); align-items: center; flex-wrap: wrap; }
+    .badge { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
+    .badge b { color: var(--txt); } .badge.warn { border-color: var(--amber); color: var(--amber); }
+    section { padding: 16px; flex: 1; }
+    .hidden { display: none !important; }
+
+    label { display: block; font-size: .82rem; color: var(--mut); font-weight: 650; margin-bottom: 6px; }
+    select, input, .destlist { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+           color: var(--txt); font-size: 1rem; padding: 12px 14px; outline: none; margin-bottom: 14px; font-family: inherit; }
+    .destlist { max-height: 220px; overflow-y: auto; padding: 6px; }
+    .destlist label { display: flex; align-items: center; gap: 10px; padding: 8px 8px; margin: 0; font-size: .92rem; color: var(--txt); }
+    .destlist input { width: auto; margin: 0; }
+    .btn { border: none; border-radius: 14px; padding: 16px; font-size: 1rem; font-weight: 750; cursor: pointer;
+           color: #fff; display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
+    .btn:active { transform: scale(.99); }
+    .btn-primary { background: var(--blue); } .btn-scan { background: var(--panel2); }
+    .btn-ghost { background: transparent; color: var(--mut); border: 1px solid var(--line); }
+    .row { display: flex; gap: 10px; } .row .btn { width: auto; flex: 1; }
+    .mt { margin-top: 12px; }
+
+    /* Búsqueda */
+    .search-row { display: flex; gap: 10px; margin-bottom: 14px; }
+    #pit-search { flex: 1; text-transform: uppercase; font-family: ui-monospace, monospace; font-weight: 700; margin-bottom: 0; }
+    .btn-icon { width: 58px; flex: 0 0 58px; border-radius: 12px; background: var(--blue); border: none; color: #fff; font-size: 1.3rem; }
+
+    /* Ficha del pez */
+    .fish { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+    .fish .pit { font-family: ui-monospace, monospace; font-size: 1.5rem; font-weight: 800; }
+    .fish .cur { color: var(--mut); font-size: .82rem; margin-top: 2px; }
+    .field { margin-bottom: 14px; }
+    .segs { display: flex; gap: 8px; }
+    .seg { flex: 1; text-align: center; padding: 12px; border-radius: 12px; border: 2px solid var(--line);
+           background: var(--panel2); font-weight: 750; cursor: pointer; }
+    .seg.on-f { border-color: var(--pink); background: rgba(236,72,153,.18); color: #fbcfe8; }
+    .seg.on-m { border-color: var(--blue); background: rgba(59,130,246,.18); color: #bfdbfe; }
+    .num { text-align: center; font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .devstate { display: flex; gap: 8px; flex-wrap: wrap; }
+    .devstate button { flex: 1 0 42px; padding: 12px 0; border-radius: 10px; border: 2px solid var(--line);
+           background: var(--panel2); color: var(--txt); font-weight: 750; font-size: 1.05rem; cursor: pointer; }
+    .devstate button.on { border-color: var(--green); background: rgba(34,197,94,.18); color: #bbf7d0; }
+    .valerr { color: var(--amber); font-size: .82rem; margin-bottom: 10px; }
+
+    .done { color: var(--green); font-size: .8rem; }
+    .recent { margin-top: 8px; }
+    .recent .r { display: flex; justify-content: space-between; padding: 9px 12px; background: var(--panel);
+                 border: 1px solid var(--line); border-radius: 10px; margin-bottom: 6px; font-size: .86rem; }
+    .recent .r .p { font-family: ui-monospace, monospace; font-weight: 700; }
+    .list-title { font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; color: var(--mut); font-weight: 700; margin: 18px 4px 8px; }
+
+    .scanwrap { position: relative; background:#000; border-radius: 16px; overflow: hidden; aspect-ratio: 3/4; }
+    #video { width: 100%; height: 100%; object-fit: cover; }
+    .scan-frame { position: absolute; inset: 18%; border: 3px solid rgba(255,255,255,.85); border-radius: 18px; }
+    .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: #0b1220;
+             border: 1px solid var(--line); color: var(--txt); padding: 12px 18px; border-radius: 12px;
+             font-size: .9rem; box-shadow: 0 8px 30px rgba(0,0,0,.5); opacity: 0; transition: opacity .2s; z-index: 50; max-width: 90%; text-align: center; }
+    .toast.show { opacity: 1; } .toast.ok { border-color: var(--green); } .toast.err { border-color: var(--red); }
+    .muted { color: var(--mut); font-size: .85rem; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <h1>Sexado offline</h1>
+    <span class="net" id="net"><span class="dot"></span><span id="net-txt">en línea</span></span>
+  </div>
+  <div class="warn-banner hidden" id="nopersist">⚠ Este equipo no guarda datos localmente. Sincroniza antes de cerrar la app.</div>
+  <div class="subbar" id="subbar">
+    <span class="badge" id="sess-badge">Sin sesión</span>
+    <span class="badge" id="pending-badge">Sin subir: <b id="pending-n">0</b></span>
+  </div>
+
+  <!-- Setup / checkout -->
+  <section id="view-setup">
+    <label for="src">Estanque fuente</label>
+    <select id="src"></select>
+    <label>Estanques destino (hasta 10)</label>
+    <div class="destlist" id="destlist"></div>
+    <button class="btn btn-primary" id="btn-checkout">Iniciar sesión offline</button>
+    <p class="muted mt" id="setup-hint">Con conexión, elige el estanque a trabajar y sus destinos. Quedarán bloqueados hasta sincronizar.</p>
+  </section>
+
+  <!-- Trabajo -->
+  <section id="view-work" class="hidden">
+    <div class="search-row">
+      <input id="pit-search" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Buscar PIT…" />
+      <button class="btn-icon" id="btn-scan">📷</button>
+    </div>
+
+    <div class="fish hidden" id="fish-card">
+      <div class="pit" id="f-pit">—</div>
+      <div class="cur" id="f-cur">—</div>
+
+      <div class="field mt">
+        <label>Sexo</label>
+        <div class="segs">
+          <div class="seg" id="seg-f" data-sex="f">Hembra</div>
+          <div class="seg" id="seg-m" data-sex="m">Macho</div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Peso <span class="muted">g</span></label>
+        <input class="num" id="f-weight" type="number" inputmode="decimal" step="1" placeholder="0" />
+      </div>
+      <div class="field hidden" id="field-diam">
+        <label>Diámetro caviar <span class="muted">mm</span></label>
+        <input class="num" id="f-diam" type="number" inputmode="decimal" step="0.1" placeholder="0.0" />
+      </div>
+      <div class="field">
+        <label>Estado de desarrollo</label>
+        <div class="devstate" id="devstate"></div>
+      </div>
+      <div class="valerr hidden" id="valerr"></div>
+      <div class="row">
+        <button class="btn btn-ghost" id="btn-cancel" style="flex:0 0 38%">Cancelar</button>
+        <button class="btn btn-primary" id="btn-save">Guardar</button>
+      </div>
+    </div>
+
+    <div class="recent" id="recent"></div>
+
+    <div class="list-title">Sesión</div>
+    <div class="row">
+      <button class="btn btn-scan" id="btn-sync">Sincronizar</button>
+      <button class="btn btn-ghost" id="btn-exit" style="flex:0 0 34%">Salir</button>
+    </div>
+    <p class="muted mt" id="work-hint"></p>
+  </section>
+
+  <!-- Escáner -->
+  <section id="view-scan" class="hidden">
+    <div class="scanwrap"><video id="video" playsinline muted></video><div class="scan-frame"></div></div>
+    <p class="muted" style="text-align:center;margin:14px 0">Apunta al QR/código del pez…</p>
+    <button class="btn btn-ghost" id="btn-scan-cancel">Cancelar</button>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
