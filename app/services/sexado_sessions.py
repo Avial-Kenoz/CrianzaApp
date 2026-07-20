@@ -26,12 +26,40 @@ MAX_DESTINATIONS = 10
 # Estados de desarrollo válidos por sexo (espejo de la validación online)
 VALID_DEV_STATES = {"f": ["0", "1", "2", "3", "4", "R"], "m": ["0", "L"]}
 
+# Estados de sesión que mantienen los estanques bloqueados
+LOCKING_STATUSES = ("active", "reconciling")
+
 
 # ---------------------------------------------------------------------------
 # Bloqueo
 # ---------------------------------------------------------------------------
 def active_sessions(db: Session):
-    return db.query(SexadoOfflineSession).filter(SexadoOfflineSession.status == "active").all()
+    """Sesiones que aún bloquean estanques (activas o en reconciliación)."""
+    return db.query(SexadoOfflineSession).filter(
+        SexadoOfflineSession.status.in_(LOCKING_STATUSES)).all()
+
+
+def session_by_token(db: Session, token: str) -> Optional[SexadoOfflineSession]:
+    return db.query(SexadoOfflineSession).filter(
+        SexadoOfflineSession.token == token,
+        SexadoOfflineSession.status.in_(LOCKING_STATUSES)).first()
+
+
+def resolve_fish_by_pit(db: Session, pit: str):
+    if not pit:
+        return None
+    return db.query(Fish).filter(Fish.internal_id == str(pit).strip().upper()).first()
+
+
+def finalize_session(db: Session, session: SexadoOfflineSession, has_pending: bool) -> None:
+    """Tras sincronizar: si quedan contingencias, la sesión pasa a 'reconciling'
+    (sigue bloqueando); si todo quedó limpio, 'synced' y libera el bloqueo."""
+    if has_pending:
+        session.status = "reconciling"
+    else:
+        session.status = "synced"
+        session.released_at = datetime.now()
+    db.commit()
 
 
 def locked_pond_ids(db: Session) -> set[int]:
