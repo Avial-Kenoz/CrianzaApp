@@ -23,15 +23,19 @@ function openDB() {
 }
 function tx(store, mode) { return _db.transaction(store, mode).objectStore(store); }
 function idbGet(store, key) {
+  if (!_db) return Promise.resolve(undefined);
   return new Promise((res, rej) => { const r = tx(store, "readonly").get(key); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 }
 function idbPut(store, val, key) {
+  if (!_db) return Promise.resolve();
   return new Promise((res, rej) => { const r = tx(store, "readwrite").put(val, key); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
 }
 function idbDel(store, key) {
+  if (!_db) return Promise.resolve();
   return new Promise((res, rej) => { const r = tx(store, "readwrite").delete(key); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
 }
 function idbAll(store) {
+  if (!_db) return Promise.resolve([]);
   return new Promise((res, rej) => { const r = tx(store, "readonly").getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => rej(r.error); });
 }
 
@@ -351,17 +355,7 @@ async function syncQueue() {
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
-async function init() {
-  _db = await openDB();
-  state.queue = await idbAll("queue");
-  const boot = await idbGet("meta", "boot");
-  if (boot) { state.boot = boot; indexPonds(); }
-  roundStart();
-  recomputeDone();
-  setNet();
-  renderDash();
-
-  // eventos
+function wireEvents() {
   $("btn-scan").addEventListener("click", startScan);
   $("btn-scan-cancel").addEventListener("click", () => { stopScan(); show("view-dash"); });
   $("btn-sync").addEventListener("click", syncQueue);
@@ -371,13 +365,36 @@ async function init() {
   $("btn-save").addEventListener("click", saveReading);
   $("in-do").addEventListener("input", updateLive);
   $("in-temp").addEventListener("input", updateLive);
-
   window.addEventListener("online", () => { setNet(); syncQueue(); });
   window.addEventListener("offline", setNet);
+}
 
-  // primer arranque sin datos: intenta bajar
+async function init() {
+  // Errores no capturados -> visibles (diagnóstico en dispositivos sin devtools)
+  window.addEventListener("error", (e) => toast("Error: " + (e.message || "script"), "err"));
+  window.addEventListener("unhandledrejection", (e) =>
+    toast("Error: " + ((e.reason && e.reason.message) || e.reason || "async"), "err"));
+
+  // Enlaza botones SIEMPRE, aunque el almacenamiento local falle.
+  wireEvents();
+  setNet();
+
+  // Almacenamiento local tolerante a fallos: sin IndexedDB, sigue en modo online.
+  try {
+    _db = await openDB();
+    state.queue = await idbAll("queue");
+    const boot = await idbGet("meta", "boot");
+    if (boot) { state.boot = boot; indexPonds(); }
+  } catch (e) {
+    _db = null;
+    toast("Sin almacenamiento local (modo online): " + (e.message || e), "err");
+  }
+
+  roundStart();
+  recomputeDone();
+  renderDash();
+
   if (!state.boot && navigator.onLine) refreshBootstrap();
-  // sincroniza pendientes si hay red
   if (navigator.onLine) syncQueue();
 
   if ("serviceWorker" in navigator) {
