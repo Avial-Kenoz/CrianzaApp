@@ -4,17 +4,25 @@
 destinos (que quedan bloqueados), trabaja offline, y luego sincroniza (PR-S2).
 """
 
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from jinja2 import Environment, FileSystemLoader
+from pathlib import Path
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
+from urllib.parse import quote_plus
 
 from app.db.session import SessionLocal
 from app.models.sexing_offline_operation import SexingOfflineOperation
+from app.models.sexado_offline_session import SexadoOfflineSession
+from app.models.ponds import Pond
+from app.models.users import User
 from app.services import sexado_sessions as sx
 
 router = APIRouter(prefix="/api/field/v1/sexado", tags=["sexado"])
+admin_router = APIRouter(prefix="/views/ui/sexado", tags=["sexado-admin"])
+_jinja = Environment(loader=FileSystemLoader(str(Path(__file__).parent.parent / "templates")))
 
 # kinds que siempre van a reconciliación (no se aplican automático)
 CONTINGENCY_KINDS = {"retag", "register", "foreign_tag"}
@@ -158,3 +166,76 @@ def list_sessions():
         } for s in sx.active_sessions(db)]
     finally:
         db.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Bandeja de reconciliación (vista supervisor) [PR-S2b]
+# ═══════════════════════════════════════════════════════════════════════════
+@admin_router.get("/reconciliacion", response_class=HTMLResponse)
+def reconciliacion(request: Request, msg: Optional[str] = None):
+    db = SessionLocal()
+    try:
+        sessions = (db.query(SexadoOfflineSession)
+                    .filter(SexadoOfflineSession.status == "reconciling")
+                    .order_by(SexadoOfflineSession.created_at).all())
+        pond_names = {p.id: p.name for p in db.query(Pond).all()}
+        user_names = {u.id: (" ".join(x for x in [u.name, u.lastname] if x) or u.email)
+                      for u in db.query(User).all()}
+        blocks = []
+        for s in sessions:
+            ops = (db.query(SexingOfflineOperation)
+                   .filter(SexingOfflineOperation.session_id == s.id,
+                           SexingOfflineOperation.status == "pending_review")
+                   .order_by(SexingOfflineOperation.id).all())
+            rows = []
+            for op in ops:
+                fish = sx.resolve_fish_by_pit(db, op.pit) if op.pit else None
+                rows.append({
+                    "id": op.id, "pit": op.pit, "kind": op.kind,
+                    "message": op.result_message, "payload": op.payload or {},
+                    "captured_at": op.captured_at,
+                    "fish_state": (fish.state if fish else None),
+                    "fish_found": fish is not None,
+                })
+            blocks.append({
+                "session_id": s.id,
+                "source": pond_names.get(s.source_pond_id, s.source_pond_id),
+                "operator": user_names.get(s.operator_id, "—"),
+                "created_at": s.created_at,
+                "pending": rows,
+            })
+        html = _jinja.get_template("sexado_reconciliacion.html").render(
+            {"request": request, "msg": msg, "blocks": blocks})
+        return HTMLResponse(content=html)
+    finally:
+        db.close()
+
+
+def _resolve_and_redirect(op_id: int, fn):
+    db = SessionLocal()
+    try:
+        op = db.query(SexingOfflineOperation).filter(SexingOfflineOperation.id == op_id).first()
+        if not op:
+            return RedirectResponse(url="/views/ui/sexado/reconciliacion?msg=Operación+no+encontrada", status_code=303)
+        ok, message = fn(db, op)
+        session = db.query(SexadoOfflineSession).filter(SexadoOfflineSession.id == op.session_id).first()
+        closed = sx.close_session_if_clean(db, session) if session else False
+        msg = message + (" · sesión cerrada, estanques liberados" if closed else "")
+        return RedirectResponse(url=f"/views/ui/sexado/reconciliacion?msg={quote_plus(msg)}", status_code=303)
+    finally:
+        db.close()
+
+
+@admin_router.post("/op/{op_id}/retry")
+def op_retry(op_id: int):
+    return _resolve_and_redirect(op_id, sx.retry_operation)
+
+
+@admin_router.post("/op/{op_id}/revive-retry")
+def op_revive_retry(op_id: int):
+    return _resolve_and_redirect(op_id, sx.revive_and_retry)
+
+
+@admin_router.post("/op/{op_id}/dismiss")
+def op_dismiss(op_id: int):
+    return _resolve_and_redirect(op_id, lambda db, op: (sx.dismiss_operation(db, op) or (True, "Operación descartada")))

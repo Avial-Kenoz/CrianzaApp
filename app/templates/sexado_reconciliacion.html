@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reconciliación de sexado offline – Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    .page { padding: 26px 30px 60px; max-width: 1000px; }
+    .crumb { font-size: .8rem; color: #6b7280; margin-bottom: 6px; }
+    .crumb a { color: #2563eb; text-decoration: none; }
+    .page-title { font-size: 1.4rem; font-weight: 750; margin-bottom: 4px; }
+    .page-sub { color: #6b7280; font-size: .86rem; margin-bottom: 18px; }
+    .flash { background: #eef2ff; border: 1px solid #c7d2fe; color: #3730a3;
+             padding: 11px 15px; border-radius: 10px; font-size: .88rem; margin-bottom: 18px; }
+    .session { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; margin-bottom: 18px; overflow: hidden; }
+    .s-head { padding: 14px 18px; border-bottom: 1px solid #eef0f2; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+    .s-head .src { font-size: 1.05rem; font-weight: 750; }
+    .s-head .meta { font-size: .8rem; color: #6b7280; }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th, td { padding: 10px 14px; border-bottom: 1px solid #f1f3f5; text-align: left; vertical-align: top; }
+    thead th { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; font-weight: 700; background: #fafbfc; }
+    tbody tr:last-child td { border-bottom: none; }
+    .pit { font-family: ui-monospace, "Cascadia Code", monospace; font-weight: 700; }
+    .kind { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .7rem; font-weight: 700; background: #fff7ed; color: #c2410c; }
+    .reason { color: #b45309; font-size: .82rem; }
+    .payload { color: #6b7280; font-size: .78rem; }
+    .st-dead { color: #dc2626; font-weight: 700; } .st-alive { color: #059669; }
+    .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+    .btn { border: none; border-radius: 8px; padding: 6px 11px; font-size: .78rem; font-weight: 650; cursor: pointer; }
+    .btn-primary { background: #2563eb; color: #fff; } .btn-primary:hover { background: #1d4ed8; }
+    .btn-amber { background: #f59e0b; color: #fff; } .btn-amber:hover { background: #d97706; }
+    .btn-ghost { background: #fff; color: #6b7280; border: 1px solid #d7dbe0; } .btn-ghost:hover { border-color: #dc2626; color: #dc2626; }
+    .empty { background: #fff; border: 1px dashed #d7dbe0; border-radius: 14px; padding: 40px; text-align: center; color: #9ca3af; }
+    .note { font-size: .8rem; color: #6b7280; margin-top: 14px; }
+    form { display: inline; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+<div class="page">
+  <div class="crumb"><a href="/views/ui/config">Configuración</a> · Reconciliación de sexado offline</div>
+  <div class="page-title">Reconciliación de sexado offline</div>
+  <div class="page-sub">Contingencias que la sincronización no aplicó automáticamente. Los estanques de cada sesión siguen bloqueados hasta resolverlas todas.</div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+  {% for b in blocks %}
+  <div class="session">
+    <div class="s-head">
+      <span class="src">{{ b.source }}</span>
+      <span class="meta">Operador: {{ b.operator }}</span>
+      <span class="meta">Sesión #{{ b.session_id }}{% if b.created_at %} · {{ b.created_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</span>
+      <span class="meta">{{ b.pending|length }} pendiente(s)</span>
+    </div>
+    <table>
+      <thead><tr><th>PIT</th><th>Tipo</th><th>Motivo</th><th>Datos capturados</th><th>Estado pez</th><th>Acciones</th></tr></thead>
+      <tbody>
+        {% for op in b.pending %}
+        <tr>
+          <td class="pit">{{ op.pit or '—' }}</td>
+          <td><span class="kind">{{ op.kind }}</span></td>
+          <td class="reason">{{ op.message }}</td>
+          <td class="payload">
+            {% set p = op.payload %}
+            {% if p.sex %}sexo {{ p.sex }} {% endif %}
+            {% if p.development_state %}· estado {{ p.development_state }} {% endif %}
+            {% if p.weight %}· {{ p.weight }} g {% endif %}
+            {% if p.diameter %}· ø {{ p.diameter }} {% endif %}
+            {% if p.move_to %}· mover→{{ p.move_to }}{% endif %}
+          </td>
+          <td>
+            {% if not op.fish_found %}<span class="reason">PIT no existe</span>
+            {% elif op.fish_state in ['dead','faena'] %}<span class="st-dead">{{ op.fish_state }}</span>
+            {% else %}<span class="st-alive">{{ op.fish_state }}</span>{% endif %}
+          </td>
+          <td>
+            <div class="acts">
+              <form method="post" action="/views/ui/sexado/op/{{ op.id }}/retry"><button class="btn btn-primary">Reintentar</button></form>
+              {% if op.fish_state in ['dead','faena'] %}
+              <form method="post" action="/views/ui/sexado/op/{{ op.id }}/revive-retry"><button class="btn btn-amber">Revivir y reintentar</button></form>
+              {% endif %}
+              <form method="post" action="/views/ui/sexado/op/{{ op.id }}/dismiss"><button class="btn btn-ghost">Descartar</button></form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+
+  {% if not blocks %}<div class="empty">No hay contingencias pendientes. 🎉</div>{% endif %}
+
+  <div class="note"><strong>Reintentar</strong>: reaplica la operación (útil tras corregir la posición del pez, hacer el retag o el movimiento intermedio desde la app).
+    <strong>Revivir y reintentar</strong>: si el pez fue declarado muerto por error, lo reactiva y reaplica.
+    <strong>Descartar</strong>: marca la contingencia como resuelta sin aplicar. Al resolver la última, la sesión se cierra y libera los estanques.</div>
+</div>
+</div></div>
+</body>
+</html>

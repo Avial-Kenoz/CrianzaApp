@@ -20,6 +20,7 @@ from app.models.fish_samplings import FishSampling
 from app.models.ponds_movements import PondMovement
 from app.models.lots import Lot
 from app.models.sexado_offline_session import SexadoOfflineSession
+from app.models.sexing_offline_operation import SexingOfflineOperation
 
 MAX_DESTINATIONS = 10
 
@@ -59,6 +60,77 @@ def finalize_session(db: Session, session: SexadoOfflineSession, has_pending: bo
     else:
         session.status = "synced"
         session.released_at = datetime.now()
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Reconciliación (bandeja del supervisor)
+# ---------------------------------------------------------------------------
+def pending_count(db: Session, session_id: int) -> int:
+    return (db.query(SexingOfflineOperation)
+            .filter(SexingOfflineOperation.session_id == session_id,
+                    SexingOfflineOperation.status == "pending_review").count())
+
+
+def close_session_if_clean(db: Session, session: SexadoOfflineSession) -> bool:
+    """Cierra la sesión (libera el bloqueo) si ya no quedan pendientes."""
+    if pending_count(db, session.id) == 0 and session.status in LOCKING_STATUSES:
+        session.status = "synced"
+        session.released_at = datetime.now()
+        db.commit()
+        return True
+    return False
+
+
+def _apply_op_payload(db: Session, op: SexingOfflineOperation, fish_id: int):
+    from app.api.views import apply_fish_save  # perezoso (evita ciclo)
+    p = op.payload or {}
+    return apply_fish_save(
+        db, op.pond_id, fish_id,
+        sex=p.get("sex"),
+        weight=(str(p["weight"]) if p.get("weight") is not None else None),
+        diameter=(str(p["diameter"]) if p.get("diameter") is not None else None),
+        development_state=p.get("development_state"),
+        move_to=(str(p["move_to"]) if p.get("move_to") is not None else None),
+    )
+
+
+def retry_operation(db: Session, op: SexingOfflineOperation) -> tuple[bool, str]:
+    """Reintenta aplicar una operación pendiente vía apply_fish_save."""
+    fish = resolve_fish_by_pit(db, op.pit)
+    if fish is None:
+        op.result_message = "PIT no encontrado."
+        db.commit()
+        return False, op.result_message
+    res = _apply_op_payload(db, op, fish.id)
+    op.fish_id = fish.id
+    op.result_message = (res.message or "")[:255]
+    if res.ok:
+        op.status = "applied"
+        op.applied_at = datetime.now()
+    db.commit()
+    return res.ok, res.message
+
+
+def revive_and_retry(db: Session, op: SexingOfflineOperation) -> tuple[bool, str]:
+    """Revive un pez declarado muerto/faena por error y reintenta la operación."""
+    fish = resolve_fish_by_pit(db, op.pit)
+    if fish is None:
+        op.result_message = "PIT no encontrado."
+        db.commit()
+        return False, op.result_message
+    if fish.state in ("dead", "faena"):
+        fish.state = "alive"
+        fish.date_of_death = None
+        fish.depuration_start_time = None
+        fish.updated_at = datetime.now()
+        db.commit()
+    return retry_operation(db, op)
+
+
+def dismiss_operation(db: Session, op: SexingOfflineOperation, note: str = "") -> None:
+    op.status = "dismissed"
+    op.result_message = ("Descartada por supervisor. " + (note or ""))[:255]
     db.commit()
 
 

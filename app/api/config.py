@@ -44,6 +44,12 @@ CONFIG_SECTIONS = [
         "url": "/views/ui/config/usuarios",
         "icon": "👥",
     },
+    {
+        "title": "Reconciliación de sexado offline",
+        "desc": "Contingencias de la sincronización de sexado que requieren consolidación manual.",
+        "url": "/views/ui/sexado/reconciliacion",
+        "icon": "🔀",
+    },
 ]
 
 
