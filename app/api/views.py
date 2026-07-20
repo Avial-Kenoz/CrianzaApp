@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from dataclasses import dataclass
 from collections import defaultdict
 from urllib.parse import quote_plus
 import bisect
@@ -2793,25 +2794,31 @@ def _resolve_destination_pond(move_to: Optional[str], db: Session) -> Optional[P
     return db.query(Pond).filter(Pond.name == text).first()
 
 
-@router.post("/ui/ponds/{pond_id}/fish/{fish_id}/save")
-def ui_pond_fish_save(
+@dataclass
+class FishSaveResult:
+    ok: bool
+    status: str   # "ok" | "error"
+    message: str
+
+
+def apply_fish_save(
+    db: Session,
     pond_id: int,
     fish_id: int,
-    sex: Optional[str] = Form(None),
-    weight: Optional[str] = Form(None),
-    diameter: Optional[str] = Form(None),
-    development_state: Optional[str] = Form(None),
-    move_to: Optional[str] = Form(None),
-    action: str = Form("save"),
-    db: Session = Depends(get_db),
-):
-    redirect_base = f"/views/ui/ponds/{pond_id}"
+    sex: Optional[str] = None,
+    weight: Optional[str] = None,
+    diameter: Optional[str] = None,
+    development_state: Optional[str] = None,
+    move_to: Optional[str] = None,
+    action: str = "save",
+) -> "FishSaveResult":
+    """Lógica canónica de sexado por pez (clasificación + movimiento).
 
-    def go(status_value: str, message: str):
-        return RedirectResponse(
-            url=f"{redirect_base}?status={quote_plus(status_value)}&msg={quote_plus(message)}",
-            status_code=303,
-        )
+    Fuente única de verdad: la usa el formulario online y la usará la
+    sincronización de sexado offline. No hace HTTP; devuelve FishSaveResult.
+    """
+    def go(status_value: str, message: str) -> "FishSaveResult":
+        return FishSaveResult(ok=(status_value == "ok"), status=status_value, message=message)
 
     pond = db.query(Pond).filter(Pond.id == pond_id).first()
     if not pond:
@@ -3040,6 +3047,28 @@ def ui_pond_fish_save(
     except Exception:
         db.rollback()
         return go("error", "No se pudieron guardar los cambios.")
+
+
+@router.post("/ui/ponds/{pond_id}/fish/{fish_id}/save")
+def ui_pond_fish_save(
+    pond_id: int,
+    fish_id: int,
+    sex: Optional[str] = Form(None),
+    weight: Optional[str] = Form(None),
+    diameter: Optional[str] = Form(None),
+    development_state: Optional[str] = Form(None),
+    move_to: Optional[str] = Form(None),
+    action: str = Form("save"),
+    db: Session = Depends(get_db),
+):
+    res = apply_fish_save(
+        db, pond_id, fish_id, sex=sex, weight=weight, diameter=diameter,
+        development_state=development_state, move_to=move_to, action=action,
+    )
+    return RedirectResponse(
+        url=f"/views/ui/ponds/{pond_id}?status={quote_plus(res.status)}&msg={quote_plus(res.message)}",
+        status_code=303,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
