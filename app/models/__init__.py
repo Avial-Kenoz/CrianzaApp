@@ -47,3 +47,4 @@ from .incubator_split_events import IncubatorSplitEvent
 from .pond_oxygen_readings import PondOxygenReading
 from .biofilter_readings import BiofilterReading
 from .water_quality_thresholds import WaterQualityThreshold
+from .water_quality_test_specs import WaterQualityTestSpec

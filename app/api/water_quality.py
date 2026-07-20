@@ -27,6 +27,7 @@ from app.models.users import User
 from app.models.pond_oxygen_readings import PondOxygenReading
 from app.models.biofilter_readings import BiofilterReading
 from app.models.water_quality_thresholds import WaterQualityThreshold
+from app.models.water_quality_test_specs import WaterQualityTestSpec
 from app.services import water_quality as wq
 
 router = APIRouter(prefix="/views/ui/calidad-agua", tags=["calidad-agua"])
@@ -70,6 +71,21 @@ def load_thresholds(db: Session) -> dict:
             "comparator": r.comparator,
         }
     for key, spec in wq.DEFAULT_THRESHOLDS.items():
+        out.setdefault(key, spec)
+    return out
+
+
+def load_test_specs(db: Session) -> dict:
+    """Lee las especificaciones de los tests de N con la forma que espera el
+    motor. Rellena con DEFAULT_TEST_SPECS lo que falte."""
+    out: dict[str, dict] = {}
+    for r in db.query(WaterQualityTestSpec).all():
+        out[r.test] = {
+            "resolution": float(r.resolution) if r.resolution is not None else None,
+            "acc_fixed": float(r.acc_fixed) if r.acc_fixed is not None else 0.0,
+            "acc_pct": float(r.acc_pct) if r.acc_pct is not None else 0.0,
+        }
+    for key, spec in wq.DEFAULT_TEST_SPECS.items():
         out.setdefault(key, spec)
     return out
 
@@ -361,7 +377,8 @@ def biofiltro_create(
         }
 
         thresholds = load_thresholds(db)
-        res = wq.evaluate_biofilter(reading_vals, thresholds=thresholds)
+        test_specs = load_test_specs(db)
+        res = wq.evaluate_biofilter(reading_vals, thresholds=thresholds, test_specs=test_specs)
 
         reading = BiofilterReading(
             cultivation_unit_id=cultivation_unit_id,
@@ -402,13 +419,13 @@ THRESHOLD_META = {
     "o2_saturation":      {"label": "Saturación de O₂", "group": "bio"},
     "nh3_n":              {"label": "Amonio no ionizado (NH₃-N)", "group": "bio"},
     "nitrite_n":          {"label": "Nitrito (NO₂-N)", "group": "bio"},
-    "n_balance_tol":      {"label": "Balance de N (entrada vs salida)", "group": "val"},
     "ph_delta_tol":       {"label": "ΔpH entrada→salida", "group": "val"},
     "temp_delta_tol":     {"label": "Δtemperatura entrada→salida", "group": "val"},
     "o2_consistency_tol": {"label": "Consistencia terna O₂/temp/saturación", "group": "val"},
 }
+# n_balance_k se edita en la página de especificaciones de test, no aquí.
 THRESHOLD_ORDER = ["o2_saturation", "nh3_n", "nitrite_n",
-                   "n_balance_tol", "ph_delta_tol", "temp_delta_tol", "o2_consistency_tol"]
+                   "ph_delta_tol", "temp_delta_tol", "o2_consistency_tol"]
 _COMPARATOR_TEXT = {"lt": "dispara si es menor que", "gt": "dispara si es mayor que"}
 
 
@@ -538,5 +555,77 @@ def qr_labels(request: Request):
         context = {"request": request, "grouped": grouped, "total": len(ponds)}
         html = jinja_env.get_template("calidad_agua_qr.html").render(context)
         return HTMLResponse(content=html)
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Especificaciones de tests de N (balance por incertidumbre) — editable
+# ---------------------------------------------------------------------------
+TEST_ORDER = ["nh4_n", "no2_n", "no3_n"]
+TEST_LABELS = {"nh4_n": "Amonio (NH₄-N)", "no2_n": "Nitrito (NO₂-N)", "no3_n": "Nitrato (NO₃-N)"}
+
+
+def _get_k(db: Session) -> float:
+    row = db.query(WaterQualityThreshold).filter_by(parameter="n_balance_k").first()
+    if row and row.alarm_value is not None:
+        return float(row.alarm_value)
+    return 1.0
+
+
+@router.get("/tests", response_class=HTMLResponse)
+def tests_form(request: Request, msg: Optional[str] = None):
+    db = SessionLocal()
+    try:
+        by_test = {s.test: s for s in db.query(WaterQualityTestSpec).all()}
+        rows = []
+        for t in TEST_ORDER:
+            s = by_test.get(t)
+            d = wq.DEFAULT_TEST_SPECS[t]
+            rows.append({
+                "test": t,
+                "label": (s.label if s and s.label else TEST_LABELS[t]),
+                "resolution": float(s.resolution) if s and s.resolution is not None else d["resolution"],
+                "acc_fixed": float(s.acc_fixed) if s and s.acc_fixed is not None else d["acc_fixed"],
+                "acc_pct_display": (float(s.acc_pct) if s and s.acc_pct is not None else d["acc_pct"]) * 100.0,
+            })
+        context = {"request": request, "msg": msg, "rows": rows, "k": _get_k(db)}
+        html = jinja_env.get_template("calidad_agua_tests.html").render(context)
+        return HTMLResponse(content=html)
+    finally:
+        db.close()
+
+
+@router.post("/tests")
+async def tests_save(request: Request):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        by_test = {s.test: s for s in db.query(WaterQualityTestSpec).all()}
+        for t in TEST_ORDER:
+            s = by_test.get(t)
+            if s is None:
+                s = WaterQualityTestSpec(test=t, label=TEST_LABELS[t])
+                db.add(s)
+            s.resolution = _parse_decimal(form.get(f"resolution_{t}"))
+            s.acc_fixed = _parse_decimal(form.get(f"acc_fixed_{t}"))
+            pct = _parse_decimal(form.get(f"acc_pct_{t}"))
+            s.acc_pct = (pct / 100.0) if pct is not None else None  # % -> fracción
+            s.updated_at = datetime.now()
+
+        # Factor k (en la tabla de umbrales)
+        k = _parse_decimal(form.get("k"))
+        krow = db.query(WaterQualityThreshold).filter_by(parameter="n_balance_k").first()
+        if krow is None:
+            krow = WaterQualityThreshold(parameter="n_balance_k", comparator="gt",
+                                         unit="×U", active=True)
+            db.add(krow)
+        krow.alarm_value = k if k is not None else 1.0
+        krow.updated_at = datetime.now()
+
+        db.commit()
+        return RedirectResponse(
+            url=f"/views/ui/calidad-agua/tests?msg={quote_plus('Especificaciones guardadas.')}",
+            status_code=303)
     finally:
         db.close()

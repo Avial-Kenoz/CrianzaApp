@@ -33,6 +33,12 @@ CONFIG_SECTIONS = [
         "icon": "🏷️",
     },
     {
+        "title": "Especificaciones de tests (balance N)",
+        "desc": "Accuracy de amonio/nitrito/nitrato y factor k para validar el balance de nitrógeno.",
+        "url": "/views/ui/calidad-agua/tests",
+        "icon": "🧪",
+    },
+    {
         "title": "Gestión de usuarios",
         "desc": "Activa o desactiva usuarios. Los activos aparecen en los selectores de operador.",
         "url": "/views/ui/config/usuarios",

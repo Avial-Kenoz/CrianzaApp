@@ -38,11 +38,46 @@ DEFAULT_THRESHOLDS: dict[str, dict] = {
     "o2_saturation":      {"alert": 70.0,   "alarm": 60.0,   "comparator": "lt"},
     "nh3_n":              {"alert": 0.0125, "alarm": 0.025,  "comparator": "gt"},
     "nitrite_n":          {"alert": 0.10,   "alarm": 0.50,   "comparator": "gt"},
-    "n_balance_tol":      {"alert": None,   "alarm": 12.0,   "comparator": "gt"},
+    # Balance de N: factor de cobertura k. Se marca desbalance si
+    # |N_ent - N_sal| > k · U, con U la incertidumbre combinada (ver abajo).
+    "n_balance_k":        {"alert": None,   "alarm": 1.0,    "comparator": "gt"},
     "ph_delta_tol":       {"alert": 0.30,   "alarm": 0.50,   "comparator": "gt"},
     "temp_delta_tol":     {"alert": 1.0,    "alarm": None,   "comparator": "gt"},
     "o2_consistency_tol": {"alert": None,   "alarm": 10.0,   "comparator": "gt"},
 }
+
+# --- Especificaciones de los tests de N (reactivos comerciales) ---
+# acc_fixed + acc_pct·lectura = error (accuracy) de cada lectura, en mg/L como N.
+# La resolución es referencia (no entra en el cálculo). Editable en BD.
+DEFAULT_TEST_SPECS: dict[str, dict] = {
+    "nh4_n": {"resolution": 0.01,  "acc_fixed": 0.04,  "acc_pct": 0.04},
+    "no2_n": {"resolution": 0.001, "acc_fixed": 0.020, "acc_pct": 0.04},
+    "no3_n": {"resolution": 0.1,   "acc_fixed": 0.5,   "acc_pct": 0.10},
+}
+# Mapeo de cada lectura del muestreo a su test
+_BALANCE_FIELDS = [
+    ("in_nh4_n", "nh4_n"), ("in_no2_n", "no2_n"), ("in_no3_n", "no3_n"),
+    ("out_nh4_n", "nh4_n"), ("out_no2_n", "no2_n"), ("out_no3_n", "no3_n"),
+]
+
+
+def reading_sigma(value: float, spec: dict) -> float:
+    """Error (accuracy) de una lectura: fijo + %·valor, en mg/L como N."""
+    return spec["acc_fixed"] + spec["acc_pct"] * value
+
+
+def balance_uncertainty(reading: dict, test_specs: Optional[dict] = None) -> Optional[float]:
+    """Incertidumbre combinada U del balance de N (suma en cuadratura de los
+    6 errores de lectura). None si falta alguna de las 6 especies."""
+    specs = test_specs or DEFAULT_TEST_SPECS
+    ssq = 0.0
+    for field, test in _BALANCE_FIELDS:
+        v = reading.get(field)
+        if v is None:
+            return None
+        s = reading_sigma(float(v), specs.get(test) or DEFAULT_TEST_SPECS[test])
+        ssq += s * s
+    return ssq ** 0.5
 
 # Orden de severidad para combinar niveles
 _SEVERITY = {"ok": 0, "alerta": 1, "alarma": 2}
@@ -188,24 +223,38 @@ class BiofilterResult:
     detail: dict = field(default_factory=dict)
 
 
-def evaluate_biofilter(reading: dict, thresholds: Optional[dict] = None) -> BiofilterResult:
+def evaluate_biofilter(reading: dict, thresholds: Optional[dict] = None,
+                       test_specs: Optional[dict] = None) -> BiofilterResult:
     """Evalúa un muestreo de biofiltro (entrada/salida).
 
     `reading` con claves: in_ph, in_temp_c, in_nh4_n, in_no2_n, in_no3_n,
     out_ph, out_temp_c, out_nh4_n, out_no2_n, out_no3_n. Valores None se
     toleran (validaciones que dependen de ellos quedan en "ok").
+
+    Balance de N: se compara la diferencia |N_ent - N_sal| contra k·U, donde U
+    es la incertidumbre combinada (cuadratura de los 6 errores de lectura,
+    cada uno = acc_fixed + acc_pct·valor) y k el factor de cobertura. Por debajo
+    de k·U el desbalance es indistinguible del error de los equipos.
     """
     th = thresholds or DEFAULT_THRESHOLDS
     r = BiofilterResult()
 
-    # --- Balance de nitrógeno (validación) ---
+    # --- Balance de nitrógeno (validación, por incertidumbre de medición) ---
     r.tn_in = total_nitrogen(reading.get("in_nh4_n"), reading.get("in_no2_n"), reading.get("in_no3_n"))
     r.tn_out = total_nitrogen(reading.get("out_nh4_n"), reading.get("out_no2_n"), reading.get("out_no3_n"))
     if r.tn_in is not None and r.tn_out is not None:
-        denom = max(r.tn_in, r.tn_out)
-        rel_diff_pct = abs(r.tn_in - r.tn_out) / denom * 100.0 if denom > 0 else 0.0
-        r.detail["n_balance_diff_pct"] = round(rel_diff_pct, 2)
-        r.n_balance_flag = "sospechoso" if eval_threshold(rel_diff_pct, th["n_balance_tol"]) != "ok" else "ok"
+        diff = abs(r.tn_in - r.tn_out)
+        U = balance_uncertainty(reading, test_specs)
+        k_spec = th.get("n_balance_k") or {}
+        k = k_spec.get("alarm")
+        if k is None:
+            k = 1.0
+        r.detail["n_balance_diff"] = round(diff, 3)
+        if U and U > 0:
+            ratio = diff / U
+            r.detail["n_balance_uncertainty"] = round(U, 3)
+            r.detail["n_balance_ratio"] = round(ratio, 2)
+            r.n_balance_flag = "sospechoso" if ratio > k else "ok"
 
     # --- ΔpH y Δtemp (validación) ---
     if reading.get("in_ph") is not None and reading.get("out_ph") is not None:

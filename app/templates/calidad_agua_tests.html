@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Especificaciones de tests (balance N) – Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    .page { padding: 26px 30px 60px; max-width: 820px; }
+    .crumb { font-size: .8rem; color: #6b7280; margin-bottom: 6px; }
+    .crumb a { color: #2563eb; text-decoration: none; }
+    .page-title { font-size: 1.4rem; font-weight: 750; margin-bottom: 4px; }
+    .page-sub { color: #6b7280; font-size: .86rem; margin-bottom: 18px; }
+    .flash { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46;
+             padding: 11px 15px; border-radius: 10px; font-size: .88rem; margin-bottom: 18px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th, td { padding: 11px 14px; border-bottom: 1px solid #f1f3f5; text-align: left; }
+    thead th { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; font-weight: 700; background: #fafbfc; }
+    tbody tr:last-child td { border-bottom: none; }
+    .tname { font-weight: 650; }
+    input[type=number] { width: 96px; border: 1px solid #d7dbe0; border-radius: 8px; padding: 7px 9px;
+           font-size: .88rem; font-family: inherit; outline: none; text-align: right; font-variant-numeric: tabular-nums; }
+    input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+    .suffix { color: #9ca3af; font-size: .76rem; margin-left: 5px; }
+    .kbox { display: flex; align-items: center; gap: 12px; background: #fff; border: 1px solid #e5e7eb;
+            border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; }
+    .kbox label { font-weight: 700; }
+    .kbox .k-desc { color: #6b7280; font-size: .82rem; }
+    .formula { background: #0f172a; color: #e2e8f0; border-radius: 12px; padding: 14px 16px; font-size: .84rem;
+               font-family: ui-monospace, "Cascadia Code", monospace; margin-bottom: 16px; line-height: 1.6; }
+    .formula .c { color: #93c5fd; }
+    .note { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 11px 14px; font-size: .8rem; color: #4b5563; margin-top: 16px; }
+    .actions { display: flex; gap: 10px; margin-top: 20px; }
+    .btn { border: none; border-radius: 9px; padding: 10px 18px; font-size: .88rem; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+    .btn-primary { background: #2563eb; color: #fff; } .btn-primary:hover { background: #1d4ed8; }
+    .btn-ghost { background: #fff; color: #1a1a2e; border: 1px solid #d7dbe0; } .btn-ghost:hover { border-color: #2563eb; color: #2563eb; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+<div class="page">
+  <div class="crumb"><a href="/views/ui/config">Configuración</a> · Especificaciones de tests (balance N)</div>
+  <div class="page-title">Especificaciones de tests · Balance de nitrógeno</div>
+  <div class="page-sub">El balance de N se valida contra el error de los reactivos, no contra un porcentaje fijo.</div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+  <div class="formula">
+    Por cada lectura:  <span class="c">σ = accuracy fija + (accuracy % × valor)</span><br>
+    Incertidumbre del balance:  <span class="c">U = √(σ² de las 6 lecturas)</span><br>
+    Se marca desbalance si:  <span class="c">|N&nbsp;entrada − N&nbsp;salida| &gt; k × U</span>
+  </div>
+
+  <form method="post" action="/views/ui/calidad-agua/tests">
+    <div class="card">
+      <table>
+        <thead><tr>
+          <th>Test</th>
+          <th>Resolución <span class="suffix">mg/L·N</span></th>
+          <th>Accuracy fija <span class="suffix">mg/L·N</span></th>
+          <th>Accuracy % <span class="suffix">% de lectura</span></th>
+        </tr></thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="tname">{{ r.label }}</td>
+            <td><input type="number" step="any" min="0" name="resolution_{{ r.test }}" value="{{ '%g'|format(r.resolution) }}" /></td>
+            <td><input type="number" step="any" min="0" name="acc_fixed_{{ r.test }}" value="{{ '%g'|format(r.acc_fixed) }}" /></td>
+            <td><input type="number" step="any" min="0" name="acc_pct_{{ r.test }}" value="{{ '%g'|format(r.acc_pct_display) }}" /> <span class="suffix">%</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="kbox">
+      <div>
+        <label for="k">Factor de cobertura k</label>
+        <div class="k-desc">Sensibilidad del chequeo. k = 1: marca si la diferencia supera la incertidumbre.</div>
+      </div>
+      <input type="number" step="any" min="0" id="k" name="k" value="{{ '%g'|format(k) }}" style="width:80px" />
+    </div>
+
+    <div class="note">La resolución es solo referencia (no entra al cálculo). El error usado es la <strong>accuracy</strong>
+      (<em>fija + % de la lectura</em>). Ingresa los valores en <strong>mg/L como N</strong>: p. ej. nitrito 20&nbsp;µg/L → 0,020.
+      Si el datasheet da la accuracy sobre el ion, conviértela a N con el mismo factor.</div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Guardar cambios</button>
+      <a href="/views/ui/config" class="btn btn-ghost">Volver</a>
+    </div>
+  </form>
+</div>
+</div></div>
+</body>
+</html>
