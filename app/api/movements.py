@@ -72,6 +72,15 @@ def list_movements(
 
 @router.post("/", response_model=PondMovementRead)
 def create_movement(movement: PondMovementCreate, db: Session = Depends(get_db)):
+    # Bloqueo por sesión de sexado offline (fuente o destino en sesión)
+    from app.services.sexado_sessions import pond_lock_session
+    for pid in (movement.source_pond_id, movement.destiny_pond_id):
+        if pid is not None and pond_lock_session(db, pid):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Pond {pid} está en sesión de sexado offline (solo lectura hasta sincronizar).",
+            )
+
     # Validaciones de negocio
     from app.models.ponds import Pond
     for pond_field, pond_id in (

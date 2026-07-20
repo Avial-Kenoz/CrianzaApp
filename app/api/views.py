@@ -3061,6 +3061,12 @@ def ui_pond_fish_save(
     action: str = Form("save"),
     db: Session = Depends(get_db),
 ):
+    from app.services.sexado_sessions import pond_lock_session
+    if pond_lock_session(db, pond_id):
+        return RedirectResponse(
+            url=f"/views/ui/ponds/{pond_id}?status=error&msg={quote_plus('Estanque en sesión de sexado offline (solo lectura hasta sincronizar).')}",
+            status_code=303,
+        )
     res = apply_fish_save(
         db, pond_id, fish_id, sex=sex, weight=weight, diameter=diameter,
         development_state=development_state, move_to=move_to, action=action,
@@ -3087,6 +3093,10 @@ def ui_pond_mortality_untagged(
             url=f"/views/ui/ponds/{pond_id}?status={quote_plus(status_value)}&msg={quote_plus(message)}",
             status_code=303,
         )
+
+    from app.services.sexado_sessions import pond_lock_session
+    if pond_lock_session(db, pond_id):
+        return go("error", "Estanque en sesión de sexado offline (solo lectura hasta sincronizar).")
 
     if quantity < 1:
         return go("error", "La cantidad debe ser mayor a 0.")

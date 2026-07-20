@@ -48,3 +48,4 @@ from .pond_oxygen_readings import PondOxygenReading
 from .biofilter_readings import BiofilterReading
 from .water_quality_thresholds import WaterQualityThreshold
 from .water_quality_test_specs import WaterQualityTestSpec
+from .sexado_offline_session import SexadoOfflineSession
