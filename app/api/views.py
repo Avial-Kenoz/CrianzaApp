@@ -2692,10 +2692,14 @@ def _parse_decimal_field(value: Optional[str], field_name: str) -> Optional[Deci
 
 
 def _normalize_pit_tag(value: Optional[str]) -> str:
-    """Normaliza PIT tag como texto (nunca como número)."""
+    """Normaliza PIT tag como texto (nunca como número). Canonicaliza quitando
+    ceros a la izquierda (el lector los antepone: 0007CF009C ≡ 7CF009C, mismo
+    valor hex del tag)."""
     if value is None:
         return ""
-    return str(value).strip().upper()
+    s = str(value).strip().upper()
+    stripped = s.lstrip("0")
+    return stripped or s
 
 
 def _canonical_drug_locked_pit_tag(value: Optional[str]) -> str:
@@ -2719,7 +2723,9 @@ def _check_pit_tag_reuse(pit_tag: str, db: Session) -> dict:
       {"status": "blocked", "message": ...} - alive/depuration fish has this tag
       {"status": "reuse",   "message": ...} - tag exists only on dead fish, reuse allowed with confirmation
     """
-    existing = db.query(Fish).filter(Fish.internal_id == pit_tag).all()
+    pit_tag = _normalize_pit_tag(pit_tag)
+    norm_col = func.upper(func.ltrim(func.trim(Fish.internal_id), "0"))
+    existing = db.query(Fish).filter(norm_col == pit_tag).all()
     if not existing:
         return {"status": "ok"}
     alive = [f for f in existing if f.state in ("alive", "depuration", "faena")]
@@ -2728,9 +2734,9 @@ def _check_pit_tag_reuse(pit_tag: str, db: Session) -> dict:
             "status": "blocked",
             "message": f"El PIT tag {pit_tag} está activo en un pez vivo (id={alive[0].id}). No se puede reutilizar.",
         }
-    indexed = db.query(Fish).filter(Fish.internal_id.op("~")(f"^{re.escape(pit_tag)}_[0-9]+$")).all()
+    indexed = db.query(Fish).filter(norm_col.op("~")(f"^{re.escape(pit_tag)}_[0-9]+$")).all()
     pattern = re.compile(rf"^{re.escape(pit_tag)}_(\d+)$")
-    used = {int(m.group(1)) for f in indexed if (m := pattern.match(f.internal_id))}
+    used = {int(m.group(1)) for f in indexed if (m := pattern.match(_normalize_pit_tag(f.internal_id)))}
     next_idx = 1
     while next_idx in used:
         next_idx += 1
@@ -2747,8 +2753,10 @@ def _check_pit_tag_reuse(pit_tag: str, db: Session) -> dict:
 
 def _archive_dead_fish_tag(pit_tag: str, next_idx: int, db: Session) -> None:
     """Renames the dead base-tag fish to pit_tag_N to free up the tag."""
+    pit_tag = _normalize_pit_tag(pit_tag)
+    norm_col = func.upper(func.ltrim(func.trim(Fish.internal_id), "0"))
     dead = db.query(Fish).filter(
-        Fish.internal_id == pit_tag,
+        norm_col == pit_tag,
         Fish.state.notin_(["alive", "depuration", "faena"])
     ).first()
     if dead:

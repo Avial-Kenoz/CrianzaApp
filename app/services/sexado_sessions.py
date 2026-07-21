@@ -81,7 +81,13 @@ def session_by_token(db: Session, token: str) -> Optional[SexadoOfflineSession]:
 def resolve_fish_by_pit(db: Session, pit: str):
     if not pit:
         return None
-    return db.query(Fish).filter(Fish.internal_id == str(pit).strip().upper()).first()
+    # Canonicaliza el PIT quitando ceros a la izquierda (el lector los antepone:
+    # 0007CF009C ≡ 7CF009C) en ambos lados: la entrada y la columna guardada,
+    # así matchea tags padded ya existentes sin migrar datos.
+    s = str(pit).strip().upper()
+    canon = s.lstrip("0") or s
+    norm_col = func.upper(func.ltrim(func.trim(Fish.internal_id), "0"))
+    return db.query(Fish).filter(norm_col == canon).first()
 
 
 def finalize_session(db: Session, session: SexadoOfflineSession, has_pending: bool) -> None:

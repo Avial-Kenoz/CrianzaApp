@@ -26,7 +26,12 @@ class Fish(Base):
         if value is None:
             return None
         normalized = str(value).strip().upper()
-        return normalized or None
+        if not normalized:
+            return None
+        # El lector de PIT antepone ceros (0007CF009C ≡ 7CF009C, mismo valor hex):
+        # canonicaliza quitándolos. Los sufijos de reuso (_N, _R) no llevan ceros.
+        stripped = normalized.lstrip("0")
+        return stripped or normalized
 
     @validates("internal_id", "secondary_internal_id")
     def _normalize_pit_fields(self, _key, value):
