@@ -3113,6 +3113,110 @@ def ui_pond_fish_save(
     )
 
 
+def apply_register_tagged(db: Session, pond_id: int, pit: str, lot_id=None, sex=None,
+                          weight=None, diameter=None, development_state=None, move_to=None) -> "FishSaveResult":
+    """Registra un PIT nuevo desde el saldo sin marca (crea el pez + movimientos
+    de registration) y opcionalmente lo mueve. Fiel a ui_pond_register_tagged,
+    generalizando el destino a cualquier sexo. Usada por la sync de sexado."""
+    def go(status_value, message):
+        return FishSaveResult(ok=(status_value == "ok"), status=status_value, message=message)
+
+    pond = db.query(Pond).filter(Pond.id == pond_id).first()
+    if not pond:
+        return go("error", "Estanque no encontrado.")
+    pending_event = (db.query(TagDetachmentEvent)
+                     .filter(TagDetachmentEvent.pond_id == pond_id, TagDetachmentEvent.status == "unidentified")
+                     .first())
+    if pending_event:
+        return go("error", "Hay un tag perdido vigente en el estanque; requiere re-tag manual.")
+
+    pit_tag = _normalize_pit_tag(pit)
+    if not pit_tag:
+        return go("error", "Debe ingresar un PIT tag.")
+    tag_check = _check_pit_tag_reuse(pit_tag, db)
+    if tag_check["status"] == "blocked":
+        return go("error", tag_check["message"])
+    if tag_check["status"] == "reuse":
+        return go("error", "El PIT tag requiere confirmación de reutilización (resolver manualmente).")
+
+    available = _get_unregistered_balances_by_lot(pond_id, db)
+    if not available:
+        return go("error", "No hay saldo de peces sin PIT tag para registrar en este estanque.")
+    selected_lot_id = int(lot_id) if lot_id else (next(iter(available)) if len(available) == 1 else None)
+    if selected_lot_id is None:
+        return go("error", "Debe seleccionar el lote para registrar el PIT tag.")
+    if selected_lot_id not in available or available[selected_lot_id] < 1:
+        return go("error", "No hay saldo disponible del lote seleccionado.")
+
+    target_sex = _normalize_sex_value(sex)
+    target_development_state = _normalize_development_state(development_state)
+    try:
+        new_weight = _parse_decimal_field(str(weight) if weight is not None else None, "Peso")
+        new_diameter = _parse_decimal_field(str(diameter) if diameter is not None else None, "Diámetro")
+    except ValueError as exc:
+        return go("error", str(exc))
+    if new_weight is not None and new_weight <= 0:
+        return go("error", "El peso debe ser mayor a 0.")
+    if new_diameter is not None and new_diameter <= 0:
+        return go("error", "El diámetro debe ser mayor a 0.")
+    if target_development_state and not target_sex:
+        return go("error", "Para el estado de desarrollo debe indicar sexo.")
+    if not _is_valid_development_state_for_sex(target_development_state, target_sex):
+        return go("error", "Estado de desarrollo inválido para el sexo.")
+
+    destination = None
+    if move_to:
+        destination = db.query(Pond).filter(Pond.id == int(move_to)).first()
+        if not destination:
+            return go("error", "Destino no válido.")
+        if destination.id == pond_id:
+            return go("error", "El destino debe ser distinto al estanque actual.")
+
+    now = datetime.utcnow()
+    try:
+        fish = Fish(internal_id=pit_tag, lot_id=selected_lot_id, sex=target_sex,
+                    state="depuration" if pond.depuration else "alive",
+                    registration_time=now, depuration_start_time=now if pond.depuration else None,
+                    created_at=now, updated_at=now)
+        db.add(fish); db.flush()
+        out_unreg = PondMovement(fish_id=None, lot_id=selected_lot_id, source_pond_id=pond_id,
+                                 destiny_pond_id=None, fish_quantity=1, movement_reason="registration",
+                                 movement_time=now, created_at=now, updated_at=now)
+        db.add(out_unreg)
+        in_reg = PondMovement(fish_id=fish.id, lot_id=selected_lot_id, source_pond_id=None,
+                              destiny_pond_id=pond_id, fish_quantity=1, movement_reason="registration",
+                              movement_time=now, created_at=now, updated_at=now)
+        db.add(in_reg)
+        if new_weight is not None or new_diameter is not None or target_development_state is not None:
+            db.add(FishSampling(fish_id=fish.id, weight=new_weight, diameter=new_diameter,
+                                development_state=target_development_state, registry_time=now,
+                                created_at=now, updated_at=now))
+        moved = False
+        if destination:
+            mv = PondMovement(fish_id=fish.id, lot_id=selected_lot_id, source_pond_id=pond_id,
+                              destiny_pond_id=destination.id, fish_quantity=1, movement_reason="pond_movement",
+                              movement_time=now, created_at=now, updated_at=now)
+            db.add(mv); moved = True
+            if destination.depuration and not pond.depuration:
+                fish.depuration_start_time = now
+            if destination.depuration:
+                fish.state = "depuration"
+            elif pond.depuration and fish.state == "depuration":
+                fish.state = "alive"; fish.depuration_start_time = None
+        fish.updated_at = now
+        _adjust_biomass_on_movement(out_unreg, db)
+        _adjust_biomass_on_movement(in_reg, db)
+        affected = {pond_id}
+        if moved:
+            _adjust_biomass_on_movement(mv, db); affected.add(destination.id)
+        _refresh_pond_runtime_cache_many(affected, db)
+        db.commit()
+        return go("ok", f"PIT {pit_tag} registrado" + (f" y movido a {destination.name}" if moved else "") + ".")
+    except Exception:
+        db.rollback()
+        return go("error", "No se pudo registrar el PIT tag.")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MORTALIDAD PECES SIN MARCA
 # ══════════════════════════════════════════════════════════════════════════════

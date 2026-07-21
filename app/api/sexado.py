@@ -24,8 +24,9 @@ router = APIRouter(prefix="/api/field/v1/sexado", tags=["sexado"])
 admin_router = APIRouter(prefix="/views/ui/sexado", tags=["sexado-admin"])
 _jinja = Environment(loader=FileSystemLoader(str(Path(__file__).parent.parent / "templates")))
 
-# kinds que siempre van a reconciliación (no se aplican automático)
-CONTINGENCY_KINDS = {"retag", "register", "foreign_tag"}
+# kinds que siempre van a reconciliación (no se aplican automático).
+# 'register' (alta de PIT desde saldo sin marca) SÍ se auto-aplica.
+CONTINGENCY_KINDS = {"retag", "foreign_tag"}
 
 
 class CheckoutIn(BaseModel):
@@ -96,7 +97,7 @@ class SyncIn(BaseModel):
 
 @router.post("/sync")
 def sync(payload: SyncIn):
-    from app.api.views import apply_fish_save  # import perezoso (evita ciclo)
+    from app.api.views import apply_fish_save, apply_register_tagged  # import perezoso (evita ciclo)
     db = SessionLocal()
     try:
         session = sx.session_by_token(db, payload.token)
@@ -141,6 +142,14 @@ def sync(payload: SyncIn):
                     record(op, "pending_review", "Destino no está entre los preconfigurados."); continue
                 ok2, msg2 = sx.apply_untagged_move(db, source_id, op.lot_id, op.quantity, op.move_to)
                 record(op, "applied" if ok2 else "pending_review", msg2); continue
+
+            if op.kind == "register":
+                if op.move_to is not None and op.move_to not in dest_ids:
+                    record(op, "pending_review", "Destino no está entre los preconfigurados."); continue
+                res = apply_register_tagged(db, source_id, op.pit, lot_id=op.lot_id, sex=op.sex,
+                                            weight=op.weight, diameter=op.diameter,
+                                            development_state=op.development_state, move_to=op.move_to)
+                record(op, "applied" if res.ok else "pending_review", res.message); continue
 
             # fish_save: resolver por PIT
             fish = sx.resolve_fish_by_pit(db, op.pit) if op.pit else None

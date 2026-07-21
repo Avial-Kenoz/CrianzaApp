@@ -132,10 +132,38 @@ function findPit(raw) {
   const pit = (raw || "").trim().toUpperCase();
   if (!pit) return;
   const fish = state.fishByPit[pit];
-  if (!fish) { toast("PIT no está en este estanque: " + pit, "err"); return; }
-  openFish(fish);
+  if (fish) { openFish(fish); return; }
+  // PIT no está en la foto
+  const lots = (state.session.untagged || []).filter((b) => b.quantity > 0);
+  if (lots.length) { openRegister(pit); return; }
+  if (confirm("PIT no está en el estanque y no hay peces sin marca para registrar. ¿Enviarlo a reconciliación (tag ajeno / retag)?")) {
+    const op = { client_uuid: uuid(), kind: "foreign_tag", pit: pit, captured_at: new Date().toISOString() };
+    state.queue.push(op); idbPut("queue", op);
+    $("pending-n").textContent = state.queue.length; $("pending-badge").className = "badge warn";
+    $("pit-search").value = ""; renderRecent();
+    toast("Enviado a reconciliación", "ok");
+  }
+}
+function openRegister(pit) {
+  state.registerMode = true;
+  state.current = { pit: pit, id: null };
+  state.form = { sex: null, dev: null };
+  $("f-pit").textContent = pit;
+  $("f-cur").textContent = "🆕 PIT nuevo — registrar desde saldo sin marca";
+  const lots = (state.session.untagged || []).filter((b) => b.quantity > 0);
+  $("f-reglot").innerHTML = lots.map((b) => `<option value="${b.lot_id}">Lote ${b.lot_label} (${b.quantity} disp.)</option>`).join("");
+  $("field-reglot").classList.remove("hidden");
+  $("f-weight").value = ""; $("f-diam").value = "";
+  const dests = state.session.destinations || [];
+  $("f-move").innerHTML = '<option value="">— No mover —</option>' +
+    dests.map((d) => `<option value="${d.id}">${d.name}${d.depuration ? " (depuración)" : ""}</option>`).join("");
+  $("fish-card").classList.remove("hidden");
+  renderSexAndDev(); validate();
+  $("fish-card").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 function openFish(fish) {
+  state.registerMode = false;
+  $("field-reglot").classList.add("hidden");
   state.current = fish;
   state.form = { sex: fish.sex || null, dev: fish.development_state || null };
   $("f-pit").textContent = fish.pit;
@@ -171,30 +199,42 @@ function validate() {
 function setSex(sex) { state.form.sex = sex; if (state.form.dev && !((state.session.dev_state_rules||{})[sex]||[]).includes(state.form.dev)) state.form.dev = null; renderSexAndDev(); validate(); }
 async function saveClassification() {
   if (!validate()) return;
-  const f = state.form, fish = state.current;
+  const f = state.form, fish = state.current, reg = state.registerMode;
   const w = parseFloat($("f-weight").value.replace(",", "."));
   const d = parseFloat($("f-diam").value.replace(",", "."));
   const moveTo = $("f-move").value ? parseInt($("f-move").value, 10) : null;
-  if (!f.sex && !isFinite(w) && !f.dev && !moveTo) { toast("Nada que guardar", "err"); return; }
-  const op = {
-    client_uuid: uuid(), kind: "fish_save", pit: fish.pit, fish_id: fish.id,
-    sex: f.sex, weight: isFinite(w)?w:null, diameter: (f.sex==="f"&&isFinite(d))?d:null,
-    development_state: f.dev, move_to: moveTo, captured_at: new Date().toISOString(),
-  };
+  const pitU = fish.pit.toUpperCase();
+  let op;
+  if (reg) {
+    const lotId = $("f-reglot").value ? parseInt($("f-reglot").value, 10) : null;
+    if (!lotId) { toast("Elige el lote", "err"); return; }
+    op = { client_uuid: uuid(), kind: "register", pit: fish.pit, lot_id: lotId,
+           sex: f.sex, weight: isFinite(w) ? w : null, diameter: (f.sex === "f" && isFinite(d)) ? d : null,
+           development_state: f.dev, move_to: moveTo, captured_at: new Date().toISOString() };
+    const b = (state.session.untagged || []).find((x) => x.lot_id === lotId);
+    if (b) b.quantity -= 1;
+    await idbPut("meta", state.session, "session");
+    if (!moveTo) {  // el pez nuevo queda en la foto local
+      state.fishByPit[pitU] = { id: null, pit: fish.pit, sex: f.sex, development_state: f.dev, weight: isFinite(w) ? w : null, state: "alive" };
+      await idbPut("meta", state.fishByPit, "fishByPit");
+    }
+  } else {
+    if (!f.sex && !isFinite(w) && !f.dev && !moveTo) { toast("Nada que guardar", "err"); return; }
+    op = { client_uuid: uuid(), kind: "fish_save", pit: fish.pit, fish_id: fish.id,
+           sex: f.sex, weight: isFinite(w) ? w : null, diameter: (f.sex === "f" && isFinite(d)) ? d : null,
+           development_state: f.dev, move_to: moveTo, captured_at: new Date().toISOString() };
+    fish.sex = f.sex; fish.development_state = f.dev; if (isFinite(w)) fish.weight = w;
+    if (moveTo) { delete state.fishByPit[pitU]; await idbPut("meta", state.fishByPit, "fishByPit"); }
+  }
   state.queue.push(op);
   await idbPut("queue", op);
-  // actualizar la foto local para reflejar el cambio
-  fish.sex = f.sex; fish.development_state = f.dev; if (isFinite(w)) fish.weight = w;
-  if (moveTo) {  // el pez sale del estanque fuente
-    delete state.fishByPit[fish.pit.toUpperCase()];
-    await idbPut("meta", state.fishByPit, "fishByPit");
-  }
+  state.registerMode = false; $("field-reglot").classList.add("hidden");
   $("fish-card").classList.add("hidden");
   $("pit-search").value = "";
   $("pending-n").textContent = state.queue.length;
   $("pending-badge").className = "badge warn";
   renderRecent();
-  toast("Clasificación guardada" + (_canPersist?"":" (en memoria)"), "ok");
+  toast((reg ? "PIT nuevo registrado" : "Clasificación guardada") + (_canPersist ? "" : " (en memoria)"), "ok");
   $("pit-search").focus();
 }
 
@@ -320,7 +360,7 @@ function wire() {
   $("btn-untagged-back").addEventListener("click", () => show("view-work"));
   $("btn-sync").addEventListener("click", syncQueue);
   $("btn-exit").addEventListener("click", exitSession);
-  $("btn-cancel").addEventListener("click", () => { $("fish-card").classList.add("hidden"); $("pit-search").value=""; $("pit-search").focus(); });
+  $("btn-cancel").addEventListener("click", () => { state.registerMode=false; $("field-reglot").classList.add("hidden"); $("fish-card").classList.add("hidden"); $("pit-search").value=""; $("pit-search").focus(); });
   $("btn-save").addEventListener("click", saveClassification);
   $("seg-f").addEventListener("click", () => setSex("f"));
   $("seg-m").addEventListener("click", () => setSex("m"));
