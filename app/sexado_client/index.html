@@ -52,7 +52,9 @@
     /* Búsqueda */
     .search-row { display: flex; gap: 10px; margin-bottom: 14px; }
     #pit-search { flex: 1; text-transform: uppercase; font-family: ui-monospace, monospace; font-weight: 700; margin-bottom: 0; }
-    .btn-icon { width: 58px; flex: 0 0 58px; border-radius: 12px; background: var(--blue); border: none; color: #fff; font-size: 1.3rem; }
+    .btn-action { flex: 0 0 auto; padding: 0 20px; border-radius: 12px; background: var(--blue); border: none;
+                  color: #fff; font-size: 1rem; font-weight: 750; cursor: pointer; }
+    .btn-action:active { transform: scale(.98); }
 
     /* Ficha del pez */
     .fish { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
@@ -78,9 +80,6 @@
     .recent .r .p { font-family: ui-monospace, monospace; font-weight: 700; }
     .list-title { font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; color: var(--mut); font-weight: 700; margin: 18px 4px 8px; }
 
-    .scanwrap { position: relative; background:#000; border-radius: 16px; overflow: hidden; aspect-ratio: 3/4; }
-    #video { width: 100%; height: 100%; object-fit: cover; }
-    .scan-frame { position: absolute; inset: 18%; border: 3px solid rgba(255,255,255,.85); border-radius: 18px; }
     .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: #0b1220;
              border: 1px solid var(--line); color: var(--txt); padding: 12px 18px; border-radius: 12px;
              font-size: .9rem; box-shadow: 0 8px 30px rgba(0,0,0,.5); opacity: 0; transition: opacity .2s; z-index: 50; max-width: 90%; text-align: center; }
@@ -113,8 +112,8 @@
   <!-- Trabajo -->
   <section id="view-work" class="hidden">
     <div class="search-row">
-      <input id="pit-search" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Buscar PIT…" />
-      <button class="btn-icon" id="btn-scan">📷</button>
+      <input id="pit-search" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Ingresa el PIT…" />
+      <button class="btn-action" id="btn-action">Buscar</button>
     </div>
     <button class="btn btn-ghost" id="btn-untagged" style="margin-bottom:14px">🐟 Mover peces sin marca</button>
 
@@ -174,12 +173,6 @@
     <button class="btn btn-ghost mt" id="btn-untagged-back">Volver</button>
   </section>
 
-  <!-- Escáner -->
-  <section id="view-scan" class="hidden">
-    <div class="scanwrap"><video id="video" playsinline muted></video><div class="scan-frame"></div></div>
-    <p class="muted" style="text-align:center;margin:14px 0">Apunta al QR/código del pez…</p>
-    <button class="btn btn-ghost" id="btn-scan-cancel">Cancelar</button>
-  </section>
 </div>
 
 <div class="toast" id="toast"></div>

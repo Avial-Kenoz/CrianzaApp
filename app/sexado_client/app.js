@@ -40,7 +40,7 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
-function show(v) { ["view-setup","view-work","view-scan","view-untagged"].forEach((x)=>$(x).classList.toggle("hidden", x!==v)); }
+function show(v) { ["view-setup","view-work","view-untagged"].forEach((x)=>$(x).classList.toggle("hidden", x!==v)); }
 let _tt=null; function toast(m, k){ const t=$("toast"); t.textContent=m; t.className="toast show "+(k||""); clearTimeout(_tt); _tt=setTimeout(()=>t.classList.remove("show"),2600); }
 function setNet(){ const on=navigator.onLine; $("net").className="net"+(on?"":" off"); $("net-txt").textContent=on?"en línea":"sin conexión"; }
 function uuid(){ return crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(16).slice(2); }
@@ -114,7 +114,7 @@ function enterWork() {
   $("pending-n").textContent = state.queue.length;
   $("pending-badge").className = "badge" + (state.queue.length ? " warn" : "");
   $("work-hint").textContent = `${state.session.fishCount} peces en la foto. Busca o escanea un PIT.`;
-  renderRecent();
+  renderRecent(); updateActionLabel();
   setTimeout(() => $("pit-search").focus(), 100);
 }
 function renderRecent() {
@@ -140,7 +140,7 @@ function findPit(raw) {
     const op = { client_uuid: uuid(), kind: "foreign_tag", pit: pit, captured_at: new Date().toISOString() };
     state.queue.push(op); idbPut("queue", op);
     $("pending-n").textContent = state.queue.length; $("pending-badge").className = "badge warn";
-    $("pit-search").value = ""; renderRecent();
+    $("pit-search").value = ""; renderRecent(); updateActionLabel();
     toast("Enviado a reconciliación", "ok");
   }
 }
@@ -233,7 +233,7 @@ async function saveClassification() {
   $("pit-search").value = "";
   $("pending-n").textContent = state.queue.length;
   $("pending-badge").className = "badge warn";
-  renderRecent();
+  renderRecent(); updateActionLabel();
   toast((reg ? "PIT nuevo registrado" : "Clasificación guardada") + (_canPersist ? "" : " (en memoria)"), "ok");
   $("pit-search").focus();
 }
@@ -273,30 +273,17 @@ async function moveUntagged(lotId) {
 }
 window._moveUntagged = moveUntagged;
 
-// ---------------------------------------------------------------------------
-// Escáner (canvas + BarcodeDetector; fallback jsQR)
-// ---------------------------------------------------------------------------
-let _stream=null, _scanning=false, _scanTimer=null;
-async function makeDetector() {
-  if ("BarcodeDetector" in window) { try { const fmts=await BarcodeDetector.getSupportedFormats();
-    if (fmts && fmts.includes("qr_code")) { const bd=new BarcodeDetector({formats:["qr_code"]}); return async(c)=>{const r=await bd.detect(c); return r&&r.length?r[0].rawValue:null;}; } } catch(e){} }
-  if (typeof window.jsQR==="function") return (c,ctx,w,h)=>{const img=ctx.getImageData(0,0,w,h); const r=window.jsQR(img.data,w,h); return r&&r.data?r.data:null;};
-  return null;
+// Etiqueta contextual del botón de acción: Buscar (existe) / Registrar (nuevo)
+function updateActionLabel() {
+  const btn = $("btn-action"); if (!btn) return;
+  const pit = ($("pit-search").value || "").trim().toUpperCase();
+  if (pit && !state.fishByPit[pit]) {
+    const lots = ((state.session && state.session.untagged) || []).filter((b) => b.quantity > 0);
+    btn.textContent = lots.length ? "Registrar" : "Buscar";
+  } else {
+    btn.textContent = "Buscar";
+  }
 }
-async function startScan() {
-  const detect = await makeDetector();
-  if (!detect) { toast("Escáner no disponible; escribe el PIT", "err"); return; }
-  try { _stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }); }
-  catch(e){ toast("No se pudo abrir la cámara", "err"); return; }
-  const video=$("video"); video.srcObject=_stream; try{ await video.play(); }catch(e){}
-  show("view-scan");
-  const canvas=document.createElement("canvas"), ctx=canvas.getContext("2d",{willReadFrequently:true});
-  _scanning=true;
-  _scanTimer=setInterval(async()=>{ if(!_scanning)return; const w=video.videoWidth,h=video.videoHeight; if(!w||!h)return;
-    canvas.width=w; canvas.height=h; ctx.drawImage(video,0,0,w,h);
-    try{ const raw=await detect(canvas,ctx,w,h); if(raw){ stopScan(); show("view-work"); findPit(raw); } }catch(e){} }, 220);
-}
-function stopScan(){ _scanning=false; if(_scanTimer){clearInterval(_scanTimer);_scanTimer=null;} if(_stream){_stream.getTracks().forEach(t=>t.stop());_stream=null;} }
 
 // ---------------------------------------------------------------------------
 // Sync / salir
@@ -354,13 +341,13 @@ async function exitSession() {
 // ---------------------------------------------------------------------------
 function wire() {
   $("btn-checkout").addEventListener("click", doCheckout);
-  $("btn-scan").addEventListener("click", startScan);
-  $("btn-scan-cancel").addEventListener("click", () => { stopScan(); show("view-work"); });
+  $("btn-action").addEventListener("click", () => findPit($("pit-search").value));
+  $("pit-search").addEventListener("input", updateActionLabel);
   $("btn-untagged").addEventListener("click", openUntagged);
   $("btn-untagged-back").addEventListener("click", () => show("view-work"));
   $("btn-sync").addEventListener("click", syncQueue);
   $("btn-exit").addEventListener("click", exitSession);
-  $("btn-cancel").addEventListener("click", () => { state.registerMode=false; $("field-reglot").classList.add("hidden"); $("fish-card").classList.add("hidden"); $("pit-search").value=""; $("pit-search").focus(); });
+  $("btn-cancel").addEventListener("click", () => { state.registerMode=false; $("field-reglot").classList.add("hidden"); $("fish-card").classList.add("hidden"); $("pit-search").value=""; updateActionLabel(); $("pit-search").focus(); });
   $("btn-save").addEventListener("click", saveClassification);
   $("seg-f").addEventListener("click", () => setSex("f"));
   $("seg-m").addEventListener("click", () => setSex("m"));

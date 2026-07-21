@@ -1,5 +1,5 @@
 /* Service worker de Sexado offline. Precachea el shell; la API va a red. */
-const CACHE = "sexado-v5";
+const CACHE = "sexado-v6";
 const ASSETS = ["./", "./index.html", "./app.js", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
