@@ -48,22 +48,40 @@ function uuid(){ return crypto.randomUUID?crypto.randomUUID():String(Date.now())
 // ---------------------------------------------------------------------------
 // Setup / checkout
 // ---------------------------------------------------------------------------
+function _label(p) { return p.is_child ? `↳ ${p.parent_name} › ${p.name}` : p.name; }
+
 async function loadPonds() {
   if (!navigator.onLine) { toast("Conéctate para iniciar una sesión", "err"); return; }
   try {
-    const r = await fetch(API + "/bootstrap", { cache: "no-store" });
+    const r = await fetch(SXAPI + "/ponds", { cache: "no-store" });
     const data = await r.json();
-    state.ponds = data.ponds || [];
-    const src = $("src");
-    src.innerHTML = state.ponds.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+    state.ponds = data.ponds || [];   // ya ordenados: unidad → estanque → hijo
+    renderSourceOptions();
     renderDests();
-    src.onchange = renderDests;
+    $("src").onchange = renderDests;
   } catch (e) { toast("No se pudo cargar la lista de estanques", "err"); }
+}
+function renderSourceOptions() {
+  let html = "", unit = null;
+  for (const p of state.ponds) {
+    if (p.locked) continue;                 // no se puede tomar un estanque ya en sesión
+    if (p.unit_name !== unit) { if (unit !== null) html += "</optgroup>"; html += `<optgroup label="${p.unit_name}">`; unit = p.unit_name; }
+    html += `<option value="${p.id}">${_label(p)}</option>`;
+  }
+  if (unit !== null) html += "</optgroup>";
+  $("src").innerHTML = html || '<option value="">— sin estanques disponibles —</option>';
 }
 function renderDests() {
   const srcId = parseInt($("src").value, 10);
-  $("destlist").innerHTML = state.ponds.filter((p) => p.id !== srcId).map((p) =>
-    `<label><input type="checkbox" class="dest" value="${p.id}" /> ${p.name}</label>`).join("");
+  let html = "", unit = null;
+  for (const p of state.ponds) {
+    if (p.id === srcId) continue;
+    if (p.unit_name !== unit) { html += `<div class="dgroup">${p.unit_name}</div>`; unit = p.unit_name; }
+    const dis = p.locked ? "disabled" : "";
+    const note = p.locked ? ' <span class="muted">(en sesión)</span>' : "";
+    html += `<label class="${p.is_child ? "child" : ""}"><input type="checkbox" class="dest" value="${p.id}" ${dis} /> ${_label(p)}${note}</label>`;
+  }
+  $("destlist").innerHTML = html;
 }
 async function doCheckout() {
   const srcId = parseInt($("src").value, 10);

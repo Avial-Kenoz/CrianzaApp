@@ -677,6 +677,12 @@
 
     </div>
 
+    {% if pond_locked %}
+    <div style="background:#fff7ed;border:1px solid #f59e0b;color:#b45309;padding:12px 16px;border-radius:10px;margin-bottom:14px;font-weight:600;">
+      🔒 Estanque en <strong>sesión de sexado offline</strong>{% if lock_info %} por {{ lock_info.operator }}{% if lock_info.since %} desde {{ lock_info.since.strftime('%d/%m %H:%M') }}{% endif %}{% endif %} — <strong>solo lectura</strong> hasta que sincronice. Los cambios se rechazarán.
+    </div>
+    {% endif %}
+
     {% if msg %}
     <div class="flash {{ 'ok' if status == 'ok' else ('warn' if status == 'warn' else 'error') }}" id="flash-msg">{{ msg }}
       {% if status == 'warn' %}

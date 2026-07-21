@@ -415,6 +415,8 @@ def _build_cached_pond_rows(
     all_lot_ids: set[int] = set()
     for pond in ponds:
         all_lot_ids.update(_as_int_list(pond.active_lot_ids))
+        if pond.lot_id:
+            all_lot_ids.add(int(pond.lot_id))  # lote asignado sin recuento (eclosión)
 
     lots_map = {
         lot.id: lot
@@ -447,6 +449,23 @@ def _build_cached_pond_rows(
             if include_unregistered_flags:
                 lot_item["is_unregistered_lot"] = int(lot.id) in unregistered_lot_ids
             active_lots.append(lot_item)
+
+        # Lote asignado por eclosión, aún sin primer recuento (§9.6): se muestra
+        # como pendiente. No está en active_lot_ids porque no hay movimientos con
+        # cantidad; se toma de pond.lot_id y se de-duplica contra los ya listados.
+        assigned_lot_id = int(pond.lot_id) if pond.lot_id else None
+        if assigned_lot_id and assigned_lot_id not in active_lot_ids:
+            assigned_lot = lots_map.get(assigned_lot_id)
+            if assigned_lot:
+                lot_item = {
+                    "id": int(assigned_lot.id),
+                    "name": assigned_lot.name,
+                    "internal_id": assigned_lot.internal_id,
+                    "is_pending_count": True,
+                }
+                if include_unregistered_flags:
+                    lot_item["is_unregistered_lot"] = False
+                active_lots.append(lot_item)
 
         biomass_proj = pond_biomass_proj.get(pond.id) or None
         row = {
@@ -1355,6 +1374,8 @@ def ui_ponds(
         "sanitary_expiry_date": _san_expiry,
         "jaula_quality_conflict_count": jaula_quality_conflict_count,
     }
+    from app.services.sexado_sessions import locked_pond_ids as _locked_ids
+    context["locked_pond_ids"] = list(_locked_ids(db))
     template = jinja_env.get_template("ponds.html")
     html = template.render(context)
     return HTMLResponse(content=html)
@@ -2590,9 +2611,24 @@ def ui_pond_detail(
     )
     caviar_estimated_kg = mature_biomass_kg * caviar_factor
 
+    # Bloqueo por sesión de sexado offline (solo lectura)
+    from app.services.sexado_sessions import pond_lock_session
+    from app.models.users import User as _User
+    _lock = pond_lock_session(db, pond_id)
+    lock_info = None
+    if _lock:
+        _op = db.query(_User).filter(_User.id == _lock.operator_id).first() if _lock.operator_id else None
+        lock_info = {
+            "operator": (" ".join(x for x in [_op.name, _op.lastname] if x) if _op else None) or "—",
+            "since": _lock.created_at,
+            "is_source": (_lock.source_pond_id == pond_id),
+        }
+
     template = jinja_env.get_template("pond_detail.html")
     html = template.render({
         "request": request,
+        "pond_locked": _lock is not None,
+        "lock_info": lock_info,
         "pond": {
             "id": pond.id,
             "name": pond.name,

@@ -204,6 +204,11 @@
       color: #991b1b;
       border: 1px solid #ef4444;
     }
+    .lot-tag-pending {
+      background: #e0f2fe;
+      color: #075985;
+      border: 1px dashed #38bdf8;
+    }
     .no-lots { color: #bbb; font-size: .8rem; }
 
     /* Fish count */
@@ -486,7 +491,7 @@
             {% if cu.active_lots %}
               <div class="lots-list">
                 {% for l in cu.active_lots %}
-                  <span class="lot-tag {% if l.is_unregistered_lot %}lot-tag-unregistered{% endif %}">{{ l.internal_id or l.name }}</span>
+                  <span class="lot-tag {% if l.is_pending_count %}lot-tag-pending{% elif l.is_unregistered_lot %}lot-tag-unregistered{% endif %}"{% if l.is_pending_count %} title="Lote asignado por eclosión, pendiente de primer recuento"{% endif %}>{{ l.internal_id or l.name }}{% if l.is_pending_count %} · pendiente{% endif %}</span>
                 {% endfor %}
               </div>
             {% else %}
@@ -513,7 +518,7 @@
           <td>
             <div class="pond-name">
               <button class="expand-btn" onclick="toggleGroup(this.closest('tr').dataset.groupId)" title="Expandir/colapsar">▶</button>
-              <a class="pond-link parent-label" href="/views/ui/ponds/{{ p.id }}">{{ p.name }}</a>
+              <a class="pond-link parent-label" href="/views/ui/ponds/{{ p.id }}">{{ p.name }}</a>{% if p.id in (locked_pond_ids|default([])) %} <span title="En sesión de sexado offline">🔒</span>{% endif %}
               <span class="group-agg">({{ p.children|length }} sub-estanques)</span>
               <a class="add-child-btn" href="/views/ui/ponds/new?parent_id={{ p.id }}" title="Crear sub-estanque">+ Sub</a>
             </div>
@@ -538,7 +543,7 @@
             {% if p.active_lots %}
               <div class="lots-list">
                 {% for l in p.active_lots %}
-                  <span class="lot-tag">{{ l.internal_id or l.name }}</span>
+                  <span class="lot-tag {% if l.is_pending_count %}lot-tag-pending{% endif %}"{% if l.is_pending_count %} title="Lote asignado por eclosión, pendiente de primer recuento"{% endif %}>{{ l.internal_id or l.name }}{% if l.is_pending_count %} · pendiente{% endif %}</span>
                 {% endfor %}
               </div>
             {% else %}
@@ -559,7 +564,7 @@
           <td>
             <div class="pond-name">
               <span class="child-indent">└</span>
-              <a class="pond-link" href="/views/ui/ponds/{{ c.id }}">{{ c.name }}</a>
+              <a class="pond-link" href="/views/ui/ponds/{{ c.id }}">{{ c.name }}</a>{% if c.id in (locked_pond_ids|default([])) %} <span title="En sesión de sexado offline">🔒</span>{% endif %}
             </div>
             {% if c.code %}<div class="pond-code">{{ c.code }}</div>{% endif %}
           </td>
@@ -592,7 +597,7 @@
             {% if c.active_lots %}
               <div class="lots-list">
                 {% for l in c.active_lots %}
-                  <span class="lot-tag {% if l.is_unregistered_lot and c.unregistered_lot_conflict %}lot-tag-unregistered-error{% elif l.is_unregistered_lot %}lot-tag-unregistered{% endif %}">{{ l.internal_id or l.name }}</span>
+                  <span class="lot-tag {% if l.is_pending_count %}lot-tag-pending{% elif l.is_unregistered_lot and c.unregistered_lot_conflict %}lot-tag-unregistered-error{% elif l.is_unregistered_lot %}lot-tag-unregistered{% endif %}"{% if l.is_pending_count %} title="Lote asignado por eclosión, pendiente de primer recuento"{% endif %}>{{ l.internal_id or l.name }}{% if l.is_pending_count %} · pendiente{% endif %}</span>
                 {% endfor %}
               </div>
             {% else %}
@@ -612,7 +617,7 @@
           data-sortable
             data-name="{{ p.name|lower }} {{ (p.code or '')|lower }} {{ (p.internal_id or '')|lower }}">
           <td>
-            <div class="pond-name"><a class="pond-link" href="/views/ui/ponds/{{ p.id }}">{{ p.name }}</a></div>
+            <div class="pond-name"><a class="pond-link" href="/views/ui/ponds/{{ p.id }}">{{ p.name }}</a>{% if p.id in (locked_pond_ids|default([])) %} <span title="En sesión de sexado offline">🔒</span>{% endif %}</div>
             {% if p.code %}<div class="pond-code">{{ p.code }}</div>{% endif %}
           </td>
           <td>{{ p.pond_type_name or '—' }}</td>
@@ -644,7 +649,7 @@
             {% if p.active_lots %}
               <div class="lots-list">
                 {% for l in p.active_lots %}
-                  <span class="lot-tag {% if l.is_unregistered_lot and p.unregistered_lot_conflict %}lot-tag-unregistered-error{% elif l.is_unregistered_lot %}lot-tag-unregistered{% endif %}">{{ l.internal_id or l.name }}</span>
+                  <span class="lot-tag {% if l.is_pending_count %}lot-tag-pending{% elif l.is_unregistered_lot and p.unregistered_lot_conflict %}lot-tag-unregistered-error{% elif l.is_unregistered_lot %}lot-tag-unregistered{% endif %}"{% if l.is_pending_count %} title="Lote asignado por eclosión, pendiente de primer recuento"{% endif %}>{{ l.internal_id or l.name }}{% if l.is_pending_count %} · pendiente{% endif %}</span>
                 {% endfor %}
               </div>
             {% else %}

@@ -38,6 +38,16 @@ class ReleaseIn(BaseModel):
     token: str
 
 
+@router.get("/ponds")
+def picker_ponds():
+    """Estanques (padres e hijos) para la selección de fuente/destino."""
+    db = SessionLocal()
+    try:
+        return {"ponds": sx.pond_picker_list(db)}
+    finally:
+        db.close()
+
+
 @router.post("/checkout")
 def checkout(payload: CheckoutIn):
     db = SessionLocal()

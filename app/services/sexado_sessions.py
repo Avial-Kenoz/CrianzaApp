@@ -40,6 +40,38 @@ def active_sessions(db: Session):
         SexadoOfflineSession.status.in_(LOCKING_STATUSES)).all()
 
 
+def pond_picker_list(db: Session) -> list[dict]:
+    """Estanques activos (padres e hijos) para elegir fuente/destino, ordenados
+    por unidad de cultivo → estanque (padre) → hijo. Incluye si está bloqueado."""
+    from app.models.cultivation_units import CultivationUnit
+    locked = locked_pond_ids(db)
+    units = {u.id: u.name for u in db.query(CultivationUnit).all()}
+    ponds = db.query(Pond).filter(Pond.state != "inactive").all()
+    by_id = {p.id: p for p in ponds}
+
+    def top_name(p):
+        parent = by_id.get(p.parent_pond_id) if p.parent_pond_id else None
+        return (parent.name if parent else p.name) or ""
+
+    rows = []
+    for p in ponds:
+        parent = by_id.get(p.parent_pond_id) if p.parent_pond_id else None
+        rows.append({
+            "id": p.id, "name": p.name,
+            "is_child": parent is not None,
+            "parent_name": (parent.name if parent else None),
+            "unit_id": p.cultivation_unit_id,
+            "unit_name": units.get(p.cultivation_unit_id, "Sin unidad"),
+            "locked": p.id in locked,
+            "_k": (units.get(p.cultivation_unit_id, "") or "", top_name(p),
+                   1 if parent else 0, p.name or ""),
+        })
+    rows.sort(key=lambda r: r["_k"])
+    for r in rows:
+        r.pop("_k")
+    return rows
+
+
 def session_by_token(db: Session, token: str) -> Optional[SexadoOfflineSession]:
     return db.query(SexadoOfflineSession).filter(
         SexadoOfflineSession.token == token,
@@ -169,8 +201,6 @@ def create_session(db: Session, source_pond_id: int, destination_pond_ids: list[
         return None, "Estanque fuente no existe."
     if source.state == "inactive":
         return None, "Estanque fuente inactivo."
-    if source.parent_pond_id is not None:
-        return None, "El estanque fuente debe ser un estanque padre."
 
     for pid in dests:
         p = db.query(Pond).filter(Pond.id == pid).first()
