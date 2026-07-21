@@ -100,8 +100,12 @@ function enterWork() {
 }
 function renderRecent() {
   const last = state.queue.slice(-6).reverse();
-  $("recent").innerHTML = last.length ? ('<div class="list-title">Últimos clasificados</div>' + last.map((o) =>
-    `<div class="r"><span class="p">${o.pit}</span><span class="done">${o.sex==="f"?"H":"M"} · ${o.development_state||"—"} ✓</span></div>`).join("")) : "";
+  const destName = (id) => ((state.session.destinations || []).find((x) => x.id === id) || {}).name || id;
+  $("recent").innerHTML = last.length ? ('<div class="list-title">Últimos</div>' + last.map((o) => {
+    const cls = [o.sex ? (o.sex === "f" ? "H" : "M") : null, o.development_state, o.move_to ? ("→ " + destName(o.move_to)) : null]
+      .filter(Boolean).join(" · ");
+    return `<div class="r"><span class="p">${o.pit}</span><span class="done">${cls || "guardado"} ✓</span></div>`;
+  }).join("")) : "";
 }
 function findPit(raw) {
   const pit = (raw || "").trim().toUpperCase();
@@ -117,6 +121,9 @@ function openFish(fish) {
   $("f-cur").textContent = `Actual: ${fish.sex? (fish.sex==="f"?"hembra":"macho"):"sin sexar"}` +
     (fish.development_state? ` · estado ${fish.development_state}`:"") + (fish.weight? ` · ${fish.weight} g`:"");
   $("f-weight").value = ""; $("f-diam").value = "";
+  const dests = state.session.destinations || [];
+  $("f-move").innerHTML = '<option value="">— No mover —</option>' +
+    dests.map((d) => `<option value="${d.id}">${d.name}${d.depuration ? " (depuración)" : ""}</option>`).join("");
   $("fish-card").classList.remove("hidden");
   renderSexAndDev(); validate();
   $("fish-card").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -146,16 +153,21 @@ async function saveClassification() {
   const f = state.form, fish = state.current;
   const w = parseFloat($("f-weight").value.replace(",", "."));
   const d = parseFloat($("f-diam").value.replace(",", "."));
-  if (!f.sex && !isFinite(w) && !f.dev) { toast("Nada que guardar", "err"); return; }
+  const moveTo = $("f-move").value ? parseInt($("f-move").value, 10) : null;
+  if (!f.sex && !isFinite(w) && !f.dev && !moveTo) { toast("Nada que guardar", "err"); return; }
   const op = {
     client_uuid: uuid(), kind: "fish_save", pit: fish.pit, fish_id: fish.id,
     sex: f.sex, weight: isFinite(w)?w:null, diameter: (f.sex==="f"&&isFinite(d))?d:null,
-    development_state: f.dev, move_to: null, captured_at: new Date().toISOString(),
+    development_state: f.dev, move_to: moveTo, captured_at: new Date().toISOString(),
   };
   state.queue.push(op);
   await idbPut("queue", op);
   // actualizar la foto local para reflejar el cambio
   fish.sex = f.sex; fish.development_state = f.dev; if (isFinite(w)) fish.weight = w;
+  if (moveTo) {  // el pez sale del estanque fuente
+    delete state.fishByPit[fish.pit.toUpperCase()];
+    await idbPut("meta", state.fishByPit, "fishByPit");
+  }
   $("fish-card").classList.add("hidden");
   $("pit-search").value = "";
   $("pending-n").textContent = state.queue.length;
