@@ -23,7 +23,7 @@ from app.models.ponds import Pond
 from app.models.cultivation_units import CultivationUnit
 from app.models.pond_oxygen_readings import PondOxygenReading
 from app.services import water_quality as wq
-from app.api.water_quality import load_thresholds, ensure_pond_qr_codes
+from app.api.water_quality import load_thresholds, ensure_pond_qr_codes, recent_unit_temp
 
 router = APIRouter(prefix="/api/field/v1", tags=["field"])
 
@@ -121,10 +121,22 @@ def upload_oxygen_readings(payload: OxygenBatchIn):
             .filter(PondOxygenReading.client_uuid.in_(uuids))
             .all()
         }
-        valid_ponds = {
-            pid for (pid,) in db.query(Pond.id).filter(Pond.id.in_(pond_ids)).all()
+        pond_unit = {
+            pid: uid
+            for (pid, uid) in db.query(Pond.id, Pond.cultivation_unit_id)
+            .filter(Pond.id.in_(pond_ids)).all()
         }
+        valid_ponds = set(pond_unit)
         thresholds = load_thresholds(db)
+
+        # Temperatura de la ronda por unidad, tomada del propio lote: la primera
+        # lectura (cronológica) con temperatura medida de cada unidad. Los
+        # estanques que la omiten la heredan (laguna homogénea).
+        batch_temp_by_unit: dict = {}
+        for it in sorted(items, key=lambda x: x.reading_datetime):
+            uid = pond_unit.get(it.pond_id)
+            if uid is not None and it.water_temp_c is not None:
+                batch_temp_by_unit.setdefault(uid, float(it.water_temp_c))
 
         results: List[ItemResult] = []
         created = duplicates = errors = 0
@@ -145,14 +157,26 @@ def upload_oxygen_readings(payload: OxygenBatchIn):
                                           error="pond_id inexistente o inactivo"))
                 continue
 
-            res = wq.evaluate_oxygen(item.do_mg_l, item.water_temp_c, item.saturation_pct,
+            # Herencia de temperatura si la lectura la omite: primero la del
+            # lote para esa unidad, luego la última medida reciente en la BD.
+            temp = item.water_temp_c
+            temp_inherited = False
+            if temp is None:
+                uid = pond_unit.get(item.pond_id)
+                temp = batch_temp_by_unit.get(uid)
+                if temp is None:
+                    temp = recent_unit_temp(db, uid, item.reading_datetime)
+                temp_inherited = temp is not None
+
+            res = wq.evaluate_oxygen(item.do_mg_l, temp, item.saturation_pct,
                                      thresholds=thresholds)
             reading = PondOxygenReading(
                 pond_id=item.pond_id,
                 operator_id=item.operator_id,
                 reading_datetime=item.reading_datetime,
                 do_mg_l=item.do_mg_l,
-                water_temp_c=item.water_temp_c,
+                water_temp_c=temp,
+                water_temp_inherited=temp_inherited,
                 saturation_pct=item.saturation_pct,
                 saturation_computed_pct=res.saturation_computed_pct,
                 consistency_flag=res.consistency_flag,

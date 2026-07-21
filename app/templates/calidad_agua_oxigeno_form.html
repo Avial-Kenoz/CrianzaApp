@@ -81,7 +81,8 @@
 
     <div class="note">La saturación teórica se calcula con temperatura y O₂ (agua dulce, altitud {{ altitude_m }} m).
       Si difiere mucho de la ingresada, la lectura se marca como <strong>terna sospechosa</strong>.
-      Saturación &lt; 70 % genera alerta; &lt; 60 %, alarma.</div>
+      Saturación &lt; 70 % genera alerta; &lt; 60 %, alarma.
+      Si dejas la temperatura vacía, se hereda la de la ronda de esa unidad.</div>
 
     <div class="actions">
       <button type="submit" class="btn btn-primary">Guardar lectura</button>
@@ -90,5 +91,29 @@
   </form>
 </div>
 </div></div>
+<script>
+  // Sanidad de rango físico (espejo de water_quality.oxygen_range_issues):
+  // fuera de rango es casi seguro un error de tipeo -> se pide confirmar.
+  (function () {
+    var RANGE = { do_mg_l: [0, 20, "O₂", "mg/L"], water_temp_c: [0, 30, "temperatura", "°C"],
+                  saturation_pct: [0, 150, "saturación", "%"] };
+    var form = document.querySelector("form.card");
+    form.addEventListener("submit", function (e) {
+      var issues = [];
+      Object.keys(RANGE).forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el || el.value.trim() === "") return;
+        var v = parseFloat(el.value.replace(",", "."));
+        var r = RANGE[id];
+        if (isFinite(v) && (v < r[0] || v > r[1]))
+          issues.push(r[2] + " " + v + " " + r[3] + " (rango " + r[0] + "–" + r[1] + ")");
+      });
+      if (issues.length && !confirm("Valor fuera de rango:\n· " + issues.join("\n· ") +
+          "\n\n¿Guardar de todos modos?")) {
+        e.preventDefault();
+      }
+    });
+  })();
+</script>
 </body>
 </html>

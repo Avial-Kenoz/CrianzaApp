@@ -210,7 +210,7 @@
         {% if p.has_data %}
         <div class="params">
           <div class="param"><div class="k">O₂ disuelto</div><div class="v">{{ fmt(p.reading.do_mg_l, '2', 'mg/L') }}</div></div>
-          <div class="param"><div class="k">Temperatura</div><div class="v">{{ fmt(p.reading.water_temp_c, '1', '°C') }}</div></div>
+          <div class="param"><div class="k">Temperatura</div><div class="v">{{ fmt(p.reading.water_temp_c, '1', '°C') }}{% if p.reading.water_temp_inherited %} <span style="font-size:.72rem;color:#6b7280;font-weight:600">heredada</span>{% endif %}</div></div>
           <div class="param"><div class="k">Saturación</div><div class="v">{{ fmt(p.reading.saturation_pct, '1', '%') }}</div></div>
           <div class="param"><div class="k">Sat. teórica</div><div class="v">{{ fmt(p.reading.saturation_computed_pct, '1', '%') }}</div></div>
           <div class="param"><div class="k">Terna</div><div class="v" style="font-size:.86rem">

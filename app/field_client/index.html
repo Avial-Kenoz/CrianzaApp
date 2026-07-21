@@ -75,6 +75,9 @@
                    font-variant-numeric: tabular-nums; outline: none; }
     .field input:focus { border-color: var(--blue); }
     .field .unit { color: var(--mut); font-weight: 500; font-size: 1rem; }
+    .field .req { color: var(--amber); font-weight: 700; font-size: .78rem; }
+    .temp-hint { margin-top: 7px; font-size: .8rem; color: var(--mut); }
+    .temp-hint.inherit { color: var(--blue); }
     .live { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-bottom: 16px;
             display: flex; align-items: center; justify-content: space-between; }
     .live .k { color: var(--mut); font-size: .82rem; }
@@ -145,8 +148,9 @@
       <input id="in-do" type="number" inputmode="decimal" step="0.01" placeholder="0.00" />
     </div>
     <div class="field">
-      <label>Temperatura <span class="unit">°C</span></label>
+      <label>Temperatura <span class="unit">°C</span> <span class="req hidden" id="temp-req">· obligatoria</span></label>
       <input id="in-temp" type="number" inputmode="decimal" step="0.1" placeholder="0.0" />
+      <div class="temp-hint hidden" id="temp-hint"></div>
     </div>
     <div class="live">
       <div><div class="k">Saturación estimada</div><div class="v" id="live-sat">—</div></div>

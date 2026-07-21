@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Numeric, TIMESTAMP, ForeignKey
+from sqlalchemy import Column, BigInteger, String, Numeric, TIMESTAMP, ForeignKey, Boolean
 from app.db.session import Base
 
 
@@ -24,7 +24,10 @@ class PondOxygenReading(Base):
 
     # Valores ingresados por el operador
     do_mg_l = Column(Numeric(6, 2))            # O2 disuelto absoluto (mg/L)
-    water_temp_c = Column(Numeric(5, 2))       # Temperatura del agua (°C)
+    water_temp_c = Column(Numeric(5, 2))       # Temperatura efectiva usada (°C): medida o heredada
+    # True si water_temp_c se heredó de otro estanque de la misma unidad/ronda
+    # (la laguna es homogénea; el operador mide la temp una vez por ronda).
+    water_temp_inherited = Column(Boolean, nullable=False, default=False)
     saturation_pct = Column(Numeric(6, 2))     # Saturación ingresada (%)
 
     # Derivados del motor

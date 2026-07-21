@@ -32,6 +32,38 @@ from typing import Optional
 SITE_ALTITUDE_M: float = 170.0   # Parral, VII región (Google Earth)
 SITE_SALINITY: float = 0.0       # agua dulce
 
+# --- Rangos físicamente plausibles (sanidad de ingreso) ---
+# Fuera de estos límites la lectura es casi seguro un error de tipeo (p. ej. un
+# O2 de 45 mg/L o una saturación de 426%). No es una alarma biológica: se marca
+# la terna como sospechosa para que el operador confirme y el panel lo destaque.
+PLAUSIBLE_DO_MG_L = (0.0, 20.0)    # O2 disuelto; agua dulce fría satura ~14 mg/L
+PLAUSIBLE_TEMP_C = (0.0, 30.0)     # temperatura del agua del sitio
+PLAUSIBLE_SAT_PCT = (0.0, 150.0)   # saturación (ingresada o teórica)
+
+
+def oxygen_range_issues(do_mg_l: Optional[float], water_temp_c: Optional[float],
+                        saturation_pct: Optional[float],
+                        saturation_computed_pct: Optional[float] = None) -> list[str]:
+    """Lista de valores fuera de rango físico plausible (vacía si todo ok).
+
+    Compartida por el ingreso (form web + PWA), el backfill y el espejo del
+    cliente, para que la regla de sanidad sea única.
+    """
+    issues: list[str] = []
+
+    def _chk(val, lo_hi, label, unit):
+        if val is None:
+            return
+        lo, hi = lo_hi
+        if val < lo or val > hi:
+            issues.append(f"{label} {val:g} {unit} fuera de rango ({lo:g}–{hi:g})")
+
+    _chk(do_mg_l, PLAUSIBLE_DO_MG_L, "O₂", "mg/L")
+    _chk(water_temp_c, PLAUSIBLE_TEMP_C, "temperatura", "°C")
+    _chk(saturation_pct, PLAUSIBLE_SAT_PCT, "saturación", "%")
+    _chk(saturation_computed_pct, PLAUSIBLE_SAT_PCT, "saturación teórica", "%")
+    return issues
+
 # --- Umbrales por defecto (replican el seed de water_quality_thresholds) ---
 # comparator: 'lt' dispara si el valor es menor que el umbral; 'gt' si es mayor.
 DEFAULT_THRESHOLDS: dict[str, dict] = {
@@ -169,11 +201,13 @@ def evaluate_oxygen(do_mg_l: Optional[float], water_temp_c: Optional[float],
         computed = expected_saturation_pct(do_mg_l, water_temp_c, altitude_m)
         res.saturation_computed_pct = round(computed, 2)
 
-    # Consistencia: comparar saturación ingresada vs teórica
+    # Consistencia: (a) valores fuera de rango físico plausible, o
+    # (b) saturación ingresada vs teórica fuera de tolerancia -> sospechoso.
+    suspect = bool(oxygen_range_issues(do_mg_l, water_temp_c, saturation_pct, computed))
     if computed is not None and saturation_pct is not None:
         diff = abs(computed - float(saturation_pct))
-        res.consistency_flag = "sospechoso" if eval_threshold(
-            diff, th["o2_consistency_tol"]) != "ok" else "ok"
+        suspect = suspect or eval_threshold(diff, th["o2_consistency_tol"]) != "ok"
+    res.consistency_flag = "sospechoso" if suspect else "ok"
 
     # Alarma por saturación (prioriza la ingresada; si falta, usa la teórica)
     sat_for_alarm = saturation_pct if saturation_pct is not None else computed

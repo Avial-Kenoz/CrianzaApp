@@ -13,7 +13,7 @@ from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 from urllib.parse import quote_plus
@@ -88,6 +88,34 @@ def load_test_specs(db: Session) -> dict:
     for key, spec in wq.DEFAULT_TEST_SPECS.items():
         out.setdefault(key, spec)
     return out
+
+
+def recent_unit_temp(db: Session, unit_id: int, before_dt: datetime) -> Optional[float]:
+    """Temperatura MEDIDA más reciente de la unidad dentro de la ventana de
+    frescura, anterior o igual a `before_dt`.
+
+    Sirve para heredar la temperatura cuando el operador la omite en un estanque
+    que no es el primero de la ronda: la laguna es homogénea, así que basta la
+    del primer estanque medido. Solo considera temperaturas medidas
+    (water_temp_inherited=False) para no encadenar herencias.
+    """
+    if unit_id is None:
+        return None
+    window_start = before_dt - timedelta(hours=O2_STALE_HOURS)
+    row = (
+        db.query(PondOxygenReading.water_temp_c)
+        .join(Pond, Pond.id == PondOxygenReading.pond_id)
+        .filter(
+            Pond.cultivation_unit_id == unit_id,
+            PondOxygenReading.water_temp_inherited.is_(False),
+            PondOxygenReading.water_temp_c.isnot(None),
+            PondOxygenReading.reading_datetime >= window_start,
+            PondOxygenReading.reading_datetime <= before_dt,
+        )
+        .order_by(PondOxygenReading.reading_datetime.desc())
+        .first()
+    )
+    return float(row[0]) if row and row[0] is not None else None
 
 
 def _active_users(db: Session):
@@ -284,6 +312,16 @@ def oxigeno_create(
         temp = _parse_decimal(water_temp_c)
         sat = _parse_decimal(saturation_pct)
 
+        pond = db.query(Pond).filter(Pond.id == pond_id).first()
+        unit_id = pond.cultivation_unit_id if pond else None
+
+        # Herencia de temperatura: si el operador la omite, se toma la de la
+        # ronda de esa unidad (la laguna es homogénea).
+        temp_inherited = False
+        if temp is None:
+            temp = recent_unit_temp(db, unit_id, rdt)
+            temp_inherited = temp is not None
+
         thresholds = load_thresholds(db)
         res = wq.evaluate_oxygen(do, temp, sat, thresholds=thresholds)
 
@@ -293,6 +331,7 @@ def oxigeno_create(
             reading_datetime=rdt,
             do_mg_l=do,
             water_temp_c=temp,
+            water_temp_inherited=temp_inherited,
             saturation_pct=sat,
             saturation_computed_pct=res.saturation_computed_pct,
             consistency_flag=res.consistency_flag,
@@ -302,9 +341,6 @@ def oxigeno_create(
         )
         db.add(reading)
         db.commit()
-
-        pond = db.query(Pond).filter(Pond.id == pond_id).first()
-        unit_id = pond.cultivation_unit_id if pond else None
 
         msg = f"Lectura de O2 registrada (estado: {res.alarm_level}"
         if res.consistency_flag == "sospechoso":

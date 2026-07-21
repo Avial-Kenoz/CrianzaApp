@@ -104,6 +104,22 @@ function evalThreshold(value, spec) {
   return "ok";
 }
 
+// Rangos físicamente plausibles (espejo de water_quality.oxygen_range_issues).
+// Fuera de estos límites la lectura es casi seguro un error de tipeo: se pide
+// confirmación antes de guardar (no se bloquea).
+const RANGE = { do: [0, 20], temp: [0, 30], sat: [0, 150] };
+function rangeIssues(doV, tempV, satV) {
+  const out = [];
+  const chk = (v, lohi, label, unit) => {
+    if (v == null || !isFinite(v)) return;
+    if (v < lohi[0] || v > lohi[1]) out.push(`${label} ${v} ${unit} (rango ${lohi[0]}–${lohi[1]})`);
+  };
+  chk(doV, RANGE.do, "O₂", "mg/L");
+  chk(tempV, RANGE.temp, "temperatura", "°C");
+  chk(satV, RANGE.sat, "saturación", "%");
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // UI helpers
 // ---------------------------------------------------------------------------
@@ -154,6 +170,29 @@ function markDoneLocal(pondId) {
   lsSet("captura.syncedRound", JSON.stringify(synced));
 }
 
+// Temperatura MEDIDA de la ronda por unidad de cultivo. El primer estanque de
+// una unidad en la ronda debe traer temperatura; los demás la heredan (laguna
+// homogénea). Se guarda por unidad con timestamp; entradas anteriores al inicio
+// de la ronda se ignoran (misma convención que syncedRound).
+function getUnitRoundTemp(unitId) {
+  if (unitId == null) return null;
+  const start = roundStart();
+  const temps = JSON.parse(lsGet("captura.roundTemps") || "{}");
+  const e = temps[unitId];
+  return (e && e.ts >= start && isFinite(e.temp)) ? e.temp : null;
+}
+function setUnitRoundTemp(unitId, temp) {
+  if (unitId == null || !isFinite(temp)) return;
+  const temps = JSON.parse(lsGet("captura.roundTemps") || "{}");
+  const start = roundStart();
+  const e = temps[unitId];
+  // el primer estanque medido de la ronda fija la temperatura de la unidad
+  if (!(e && e.ts >= start)) {
+    temps[unitId] = { temp: temp, ts: new Date().toISOString() };
+    lsSet("captura.roundTemps", JSON.stringify(temps));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Render dashboard
 // ---------------------------------------------------------------------------
@@ -196,13 +235,36 @@ function openCapture(pond) {
   $("cap-pn").textContent = pond.name;
   $("cap-un").textContent = pond.cultivation_unit_name || "";
   $("in-do").value = ""; $("in-temp").value = ""; $("in-obs").value = "";
+
+  // ¿Primer estanque de esta unidad en la ronda? -> temperatura obligatoria.
+  const inheritTemp = getUnitRoundTemp(pond.cultivation_unit_id);
+  const isFirst = inheritTemp == null;
+  $("temp-req").classList.toggle("hidden", !isFirst);
+  const hint = $("temp-hint");
+  if (isFirst) {
+    hint.className = "temp-hint";
+    hint.textContent = "Primer estanque de la unidad: mide la temperatura (la heredan los demás).";
+    hint.classList.remove("hidden");
+    $("in-temp").placeholder = "0.0";
+  } else {
+    hint.className = "temp-hint inherit";
+    hint.textContent = `Se heredará ${inheritTemp} °C de la ronda si la dejas vacía.`;
+    hint.classList.remove("hidden");
+    $("in-temp").placeholder = String(inheritTemp);
+  }
+
   updateLive();
   show("view-cap");
   setTimeout(() => $("in-do").focus(), 100);
 }
 function updateLive() {
   const doV = parseFloat($("in-do").value.replace(",", "."));
-  const tV = parseFloat($("in-temp").value.replace(",", "."));
+  let tV = parseFloat($("in-temp").value.replace(",", "."));
+  // sin temperatura escrita, previsualiza con la heredada de la ronda
+  if (!isFinite(tV) && state.current) {
+    const inh = getUnitRoundTemp(state.current.cultivation_unit_id);
+    if (inh != null) tV = inh;
+  }
   const alt = state.boot && state.boot.site ? state.boot.site.altitude_m : 170;
   const th = state.boot ? state.boot.thresholds : {};
   if (isFinite(doV) && isFinite(tV)) {
@@ -220,16 +282,39 @@ function updateLive() {
 async function saveReading() {
   const doV = parseFloat($("in-do").value.replace(",", "."));
   const tV = parseFloat($("in-temp").value.replace(",", "."));
-  if (!isFinite(doV) && !isFinite(tV)) { toast("Ingresa al menos O₂ o temperatura", "err"); return; }
+  const unitId = state.current.cultivation_unit_id;
+  const inheritTemp = getUnitRoundTemp(unitId);
+  const isFirst = inheritTemp == null;
+
+  if (!isFinite(doV)) { toast("Ingresa el O₂ disuelto", "err"); return; }
+  // Primer estanque de la unidad en la ronda: temperatura obligatoria.
+  if (isFirst && !isFinite(tV)) {
+    toast("Mide la temperatura: es el primer estanque de la unidad en esta ronda", "err");
+    $("in-temp").focus();
+    return;
+  }
+
+  // Confirmación por valores fuera de rango físico (posible error de tipeo).
+  const effTemp = isFinite(tV) ? tV : inheritTemp;
+  const alt = state.boot && state.boot.site ? state.boot.site.altitude_m : 170;
+  const satV = (isFinite(doV) && effTemp != null) ? expectedSaturationPct(doV, effTemp, alt) : null;
+  const issues = rangeIssues(doV, isFinite(tV) ? tV : null, satV);
+  if (issues.length && !confirm("Valor fuera de rango:\n· " + issues.join("\n· ") + "\n\n¿Guardar de todos modos?")) {
+    return;
+  }
+
   const rec = {
     client_uuid: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)),
     pond_id: state.current.id,
     reading_datetime: new Date().toISOString(),
-    do_mg_l: isFinite(doV) ? doV : null,
+    do_mg_l: doV,
+    // Se envía solo la temperatura medida; el servidor hereda la de la ronda
+    // cuando va vacía y marca water_temp_inherited.
     water_temp_c: isFinite(tV) ? tV : null,
     saturation_pct: null,
     observation: $("in-obs").value.trim() || null,
   };
+  if (isFinite(tV)) setUnitRoundTemp(unitId, tV);
   // En memoria PRIMERO (nunca perder la lectura), luego persistir best-effort.
   state.queue.push(rec);
   state.doneThisRound[rec.pond_id] = true;
