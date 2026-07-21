@@ -44,6 +44,9 @@ function show(v) { ["view-setup","view-work","view-untagged"].forEach((x)=>$(x).
 let _tt=null; function toast(m, k){ const t=$("toast"); t.textContent=m; t.className="toast show "+(k||""); clearTimeout(_tt); _tt=setTimeout(()=>t.classList.remove("show"),2600); }
 function setNet(){ const on=navigator.onLine; $("net").className="net"+(on?"":" off"); $("net-txt").textContent=on?"en línea":"sin conexión"; }
 function uuid(){ return crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(16).slice(2); }
+// Canonicaliza el PIT: mayúsculas y sin ceros a la izquierda (el lector los
+// antepone: 0007CF009C ≡ 7CF009C, mismo valor hex del tag).
+function normPit(s){ const u=(s||"").trim().toUpperCase(); const n=u.replace(/^0+/,""); return n || u; }
 
 // ---------------------------------------------------------------------------
 // Setup / checkout
@@ -97,7 +100,7 @@ async function doCheckout() {
                       dev_state_rules: snap.dev_state_rules, untagged: snap.untagged_balances || [],
                       fishCount: (snap.fish||[]).length };
     state.fishByPit = {};
-    (snap.fish || []).forEach((f) => { if (f.pit) state.fishByPit[f.pit.toUpperCase()] = f; });
+    (snap.fish || []).forEach((f) => { if (f.pit) state.fishByPit[normPit(f.pit)] = f; });
     await idbPut("meta", state.session, "session");
     await idbPut("meta", state.fishByPit, "fishByPit");
     toast(`Sesión iniciada: ${snap.source.name} (${state.session.fishCount} peces)`, "ok");
@@ -129,7 +132,7 @@ function renderRecent() {
   }).join("")) : "";
 }
 function findPit(raw) {
-  const pit = (raw || "").trim().toUpperCase();
+  const pit = normPit(raw);
   if (!pit) return;
   const fish = state.fishByPit[pit];
   if (fish) { openFish(fish); return; }
@@ -209,7 +212,7 @@ async function saveClassification() {
     const lotId = $("f-reglot").value ? parseInt($("f-reglot").value, 10) : null;
     if (!lotId) { toast("Elige el lote", "err"); return; }
     op = { client_uuid: uuid(), kind: "register", pit: fish.pit, lot_id: lotId,
-           sex: f.sex, weight: isFinite(w) ? w : null, diameter: (f.sex === "f" && isFinite(d)) ? d : null,
+           sex: f.sex, weight: (isFinite(w) && w > 0) ? w : null, diameter: (f.sex === "f" && isFinite(d) && d > 0) ? d : null,
            development_state: f.dev, move_to: moveTo, captured_at: new Date().toISOString() };
     const b = (state.session.untagged || []).find((x) => x.lot_id === lotId);
     if (b) b.quantity -= 1;
@@ -221,7 +224,7 @@ async function saveClassification() {
   } else {
     if (!f.sex && !isFinite(w) && !f.dev && !moveTo) { toast("Nada que guardar", "err"); return; }
     op = { client_uuid: uuid(), kind: "fish_save", pit: fish.pit, fish_id: fish.id,
-           sex: f.sex, weight: isFinite(w) ? w : null, diameter: (f.sex === "f" && isFinite(d)) ? d : null,
+           sex: f.sex, weight: (isFinite(w) && w > 0) ? w : null, diameter: (f.sex === "f" && isFinite(d) && d > 0) ? d : null,
            development_state: f.dev, move_to: moveTo, captured_at: new Date().toISOString() };
     fish.sex = f.sex; fish.development_state = f.dev; if (isFinite(w)) fish.weight = w;
     if (moveTo) { delete state.fishByPit[pitU]; await idbPut("meta", state.fishByPit, "fishByPit"); }
@@ -276,7 +279,7 @@ window._moveUntagged = moveUntagged;
 // Etiqueta contextual del botón de acción: Buscar (existe) / Registrar (nuevo)
 function updateActionLabel() {
   const btn = $("btn-action"); if (!btn) return;
-  const pit = ($("pit-search").value || "").trim().toUpperCase();
+  const pit = normPit($("pit-search").value);
   if (pit && !state.fishByPit[pit]) {
     const lots = ((state.session && state.session.untagged) || []).filter((b) => b.quantity > 0);
     btn.textContent = lots.length ? "Registrar" : "Buscar";
