@@ -166,6 +166,34 @@ def dismiss_operation(db: Session, op: SexingOfflineOperation, note: str = "") -
     db.commit()
 
 
+def apply_untagged_move(db: Session, source_pond_id: int, lot_id: int,
+                        quantity: int, dest_pond_id: int) -> tuple[bool, str]:
+    """Mueve N peces SIN marca de un lote de la fuente a un destino (movimiento
+    agregado). Reutiliza el ajuste de biomasa/cachés del flujo online."""
+    from app.api.views import _adjust_biomass_on_movement, _refresh_pond_runtime_cache_many
+    if not lot_id or not quantity or int(quantity) <= 0:
+        return False, "Lote o cantidad inválidos."
+    lot_id, quantity = int(lot_id), int(quantity)
+    avail = {b["lot_id"]: b["quantity"] for b in _untagged_balances(db, source_pond_id)}.get(lot_id, 0)
+    if quantity > avail:
+        return False, f"Saldo insuficiente en la fuente (disponible {avail})."
+    # no mezclar lotes sin marca distintos en el destino
+    dest_bal = {b["lot_id"]: b["quantity"] for b in _untagged_balances(db, dest_pond_id)}
+    other = [l for l, q in dest_bal.items() if l != lot_id and q > 0]
+    if other:
+        return False, f"El destino ya tiene peces sin marca de otro lote {sorted(other)}."
+    now = datetime.now()
+    mov = PondMovement(fish_id=None, lot_id=lot_id, source_pond_id=source_pond_id,
+                       destiny_pond_id=dest_pond_id, fish_quantity=quantity,
+                       movement_reason="pond_movement", movement_time=now,
+                       created_at=now, updated_at=now)
+    db.add(mov)
+    _adjust_biomass_on_movement(mov, db)
+    _refresh_pond_runtime_cache_many([source_pond_id, dest_pond_id], db)
+    db.commit()
+    return True, f"Movidos {quantity} peces sin marca (lote {lot_id})."
+
+
 def locked_pond_ids(db: Session) -> set[int]:
     out: set[int] = set()
     for s in active_sessions(db):

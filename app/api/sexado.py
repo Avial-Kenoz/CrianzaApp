@@ -75,7 +75,7 @@ def release(payload: ReleaseIn):
 
 class SexadoOpIn(BaseModel):
     client_uuid: str
-    kind: str = "fish_save"        # fish_save | retag | register | foreign_tag
+    kind: str = "fish_save"        # fish_save | move_untagged | retag | register | foreign_tag
     pit: Optional[str] = None
     fish_id: Optional[int] = None
     sex: Optional[str] = None
@@ -83,6 +83,8 @@ class SexadoOpIn(BaseModel):
     diameter: Optional[float] = None
     development_state: Optional[str] = None
     move_to: Optional[int] = None  # id de estanque destino
+    lot_id: Optional[int] = None   # para move_untagged
+    quantity: Optional[int] = None  # para move_untagged
     captured_at: Optional[datetime] = None
     extra: Optional[dict] = None
 
@@ -118,7 +120,8 @@ def sync(payload: SyncIn):
                 client_uuid=op.client_uuid, session_id=session.id, pond_id=source_id,
                 kind=op.kind, pit=op.pit, fish_id=fish_id,
                 payload={"sex": op.sex, "weight": op.weight, "diameter": op.diameter,
-                         "development_state": op.development_state, "move_to": op.move_to},
+                         "development_state": op.development_state, "move_to": op.move_to,
+                         "lot_id": op.lot_id, "quantity": op.quantity},
                 captured_at=op.captured_at, status=status, result_message=(message or "")[:255],
                 applied_at=(datetime.now() if status == "applied" else None),
                 created_at=datetime.now(),
@@ -132,6 +135,12 @@ def sync(payload: SyncIn):
             if op.kind in CONTINGENCY_KINDS:
                 record(op, "pending_review", f"Contingencia '{op.kind}' para reconciliar.",
                        fish_id=op.fish_id); continue
+
+            if op.kind == "move_untagged":
+                if op.move_to is None or op.move_to not in dest_ids:
+                    record(op, "pending_review", "Destino no está entre los preconfigurados."); continue
+                ok2, msg2 = sx.apply_untagged_move(db, source_id, op.lot_id, op.quantity, op.move_to)
+                record(op, "applied" if ok2 else "pending_review", msg2); continue
 
             # fish_save: resolver por PIT
             fish = sx.resolve_fish_by_pit(db, op.pit) if op.pit else None

@@ -40,7 +40,7 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
-function show(v) { ["view-setup","view-work","view-scan"].forEach((x)=>$(x).classList.toggle("hidden", x!==v)); }
+function show(v) { ["view-setup","view-work","view-scan","view-untagged"].forEach((x)=>$(x).classList.toggle("hidden", x!==v)); }
 let _tt=null; function toast(m, k){ const t=$("toast"); t.textContent=m; t.className="toast show "+(k||""); clearTimeout(_tt); _tt=setTimeout(()=>t.classList.remove("show"),2600); }
 function setNet(){ const on=navigator.onLine; $("net").className="net"+(on?"":" off"); $("net-txt").textContent=on?"en línea":"sin conexión"; }
 function uuid(){ return crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(16).slice(2); }
@@ -94,7 +94,8 @@ async function doCheckout() {
     if (!r.ok) { const e = await r.json().catch(()=>({})); toast(e.error || ("Error " + r.status), "err"); return; }
     const snap = await r.json();
     state.session = { token: snap.token, source: snap.source, destinations: snap.destinations,
-                      dev_state_rules: snap.dev_state_rules, fishCount: (snap.fish||[]).length };
+                      dev_state_rules: snap.dev_state_rules, untagged: snap.untagged_balances || [],
+                      fishCount: (snap.fish||[]).length };
     state.fishByPit = {};
     (snap.fish || []).forEach((f) => { if (f.pit) state.fishByPit[f.pit.toUpperCase()] = f; });
     await idbPut("meta", state.session, "session");
@@ -120,6 +121,8 @@ function renderRecent() {
   const last = state.queue.slice(-6).reverse();
   const destName = (id) => ((state.session.destinations || []).find((x) => x.id === id) || {}).name || id;
   $("recent").innerHTML = last.length ? ('<div class="list-title">Últimos</div>' + last.map((o) => {
+    if (o.kind === "move_untagged")
+      return `<div class="r"><span class="p">sin marca</span><span class="done">Lote ${o.lot_id}: ${o.quantity} → ${destName(o.move_to)} ✓</span></div>`;
     const cls = [o.sex ? (o.sex === "f" ? "H" : "M") : null, o.development_state, o.move_to ? ("→ " + destName(o.move_to)) : null]
       .filter(Boolean).join(" · ");
     return `<div class="r"><span class="p">${o.pit}</span><span class="done">${cls || "guardado"} ✓</span></div>`;
@@ -194,6 +197,41 @@ async function saveClassification() {
   toast("Clasificación guardada" + (_canPersist?"":" (en memoria)"), "ok");
   $("pit-search").focus();
 }
+
+// ---------------------------------------------------------------------------
+// Peces sin marca (movimiento agregado por lote)
+// ---------------------------------------------------------------------------
+function openUntagged() { renderUntagged(); show("view-untagged"); }
+function renderUntagged() {
+  const dests = state.session.destinations || [];
+  const lots = (state.session.untagged || []).filter((b) => b.quantity > 0);
+  if (!lots.length) { $("untagged-list").innerHTML = '<p class="muted">No hay peces sin marca en este estanque.</p>'; return; }
+  const opts = '<option value="">— destino —</option>' + dests.map((d) => `<option value="${d.id}">${d.name}</option>`).join("");
+  $("untagged-list").innerHTML = lots.map((b) => `
+    <div class="fish" style="margin-bottom:10px">
+      <div><b>Lote ${b.lot_label}</b> · <span>${b.quantity}</span> disponibles</div>
+      <div class="field mt"><label>Cantidad a mover</label><input class="num" type="number" inputmode="numeric" min="1" max="${b.quantity}" id="uqty-${b.lot_id}" placeholder="0" /></div>
+      <div class="field"><label>Destino</label><select id="udest-${b.lot_id}">${opts}</select></div>
+      <button class="btn btn-primary" onclick="window._moveUntagged(${b.lot_id})">Mover</button>
+    </div>`).join("");
+}
+async function moveUntagged(lotId) {
+  const b = (state.session.untagged || []).find((x) => x.lot_id === lotId);
+  if (!b) return;
+  const qty = parseInt(($("uqty-"+lotId)||{}).value, 10);
+  const dest = parseInt(($("udest-"+lotId)||{}).value, 10);
+  if (!qty || qty <= 0) { toast("Ingresa la cantidad", "err"); return; }
+  if (qty > b.quantity) { toast("No hay tantos disponibles", "err"); return; }
+  if (!dest) { toast("Elige el destino", "err"); return; }
+  const op = { client_uuid: uuid(), kind: "move_untagged", lot_id: lotId, quantity: qty,
+               move_to: dest, captured_at: new Date().toISOString() };
+  state.queue.push(op); await idbPut("queue", op);
+  b.quantity -= qty; await idbPut("meta", state.session, "session");
+  $("pending-n").textContent = state.queue.length; $("pending-badge").className = "badge warn";
+  renderUntagged(); renderRecent();
+  toast(`Movidos ${qty} sin marca` + (_canPersist?"":" (en memoria)"), "ok");
+}
+window._moveUntagged = moveUntagged;
 
 // ---------------------------------------------------------------------------
 // Escáner (canvas + BarcodeDetector; fallback jsQR)
@@ -278,6 +316,8 @@ function wire() {
   $("btn-checkout").addEventListener("click", doCheckout);
   $("btn-scan").addEventListener("click", startScan);
   $("btn-scan-cancel").addEventListener("click", () => { stopScan(); show("view-work"); });
+  $("btn-untagged").addEventListener("click", openUntagged);
+  $("btn-untagged-back").addEventListener("click", () => show("view-work"));
   $("btn-sync").addEventListener("click", syncQueue);
   $("btn-exit").addEventListener("click", exitSession);
   $("btn-cancel").addEventListener("click", () => { $("fish-card").classList.add("hidden"); $("pit-search").value=""; $("pit-search").focus(); });

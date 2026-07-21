@@ -116,6 +116,7 @@
       <input id="pit-search" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Buscar PIT…" />
       <button class="btn-icon" id="btn-scan">📷</button>
     </div>
+    <button class="btn btn-ghost" id="btn-untagged" style="margin-bottom:14px">🐟 Mover peces sin marca</button>
 
     <div class="fish hidden" id="fish-card">
       <div class="pit" id="f-pit">—</div>
@@ -159,6 +160,13 @@
       <button class="btn btn-ghost" id="btn-exit" style="flex:0 0 34%">Salir</button>
     </div>
     <p class="muted mt" id="work-hint"></p>
+  </section>
+
+  <!-- Peces sin marca -->
+  <section id="view-untagged" class="hidden">
+    <div class="list-title">Peces sin marca — mover a un destino</div>
+    <div id="untagged-list"></div>
+    <button class="btn btn-ghost mt" id="btn-untagged-back">Volver</button>
   </section>
 
   <!-- Escáner -->
