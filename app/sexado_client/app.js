@@ -329,7 +329,15 @@ async function clearSession() {
   await loadPonds(); show("view-setup");
 }
 async function exitSession() {
-  if (state.queue.length && !confirm("Hay lecturas sin sincronizar. ¿Salir de todos modos? (se perderán si no sincronizas)")) return;
+  // Salir siempre pide confirmación (nunca se cierra por tiempo). Con lecturas
+  // en cola, la advertencia es fuerte y nombra el número: salir las pierde.
+  const n = state.queue.length;
+  const src = (state.session && state.session.source && state.session.source.name) || "esta sesión";
+  if (n) {
+    if (!confirm(`⚠️ Tienes ${n} lectura(s) SIN sincronizar de ${src}.\n\nSi sales AHORA se PIERDEN — no hay forma de recuperarlas.\nRecomendado: pulsa Cancelar y luego "Sincronizar".\n\n¿Salir de todos modos y perder ${n} lectura(s)?`)) return;
+  } else {
+    if (!confirm(`¿Finalizar la sesión de ${src}? Los estanques quedarán disponibles para edición online.`)) return;
+  }
   // libera el bloqueo en el servidor si hay conexión
   if (navigator.onLine && state.session) {
     try { await fetch(SXAPI + "/release", { method:"POST", headers:{"Content-Type":"application/json"},

@@ -28,6 +28,38 @@
     .btn { border: none; border-radius: 9px; padding: 10px 18px; font-size: .88rem; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
     .btn-primary { background: #2563eb; color: #fff; } .btn-primary:hover { background: #1d4ed8; }
     .btn-ghost { background: #fff; color: #1a1a2e; border: 1px solid #d7dbe0; } .btn-ghost:hover { border-color: #2563eb; color: #2563eb; }
+    .btn-danger { background: #dc2626; color: #fff; } .btn-danger:hover { background: #b91c1c; }
+
+    /* Severidad en vivo del O2 */
+    input.sev-alerta { border-color: #d97706; background: #fffdf7; box-shadow: 0 0 0 3px rgba(217,119,6,.12); }
+    input.sev-alarma { border-color: #dc2626; background: #fff5f5; box-shadow: 0 0 0 3px rgba(220,38,38,.16); }
+    .o2-status { grid-column: 1 / -1; display: none; align-items: center; gap: 8px; font-size: .84rem;
+                 font-weight: 650; padding: 10px 14px; border-radius: 10px; }
+    .o2-status.show { display: flex; }
+    .o2-status.ok     { display: none; }
+    .o2-status.alerta { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+    .o2-status.alarma { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+    .o2-status .ico { font-size: 1.05rem; }
+
+    /* Modal de confirmación (alarma) */
+    .modal-back { position: fixed; inset: 0; background: rgba(15,23,42,.55); display: none;
+                  align-items: center; justify-content: center; padding: 20px; z-index: 100; }
+    .modal-back.show { display: flex; }
+    .modal { background: #fff; border-radius: 16px; max-width: 440px; width: 100%; padding: 24px;
+             box-shadow: 0 20px 60px rgba(0,0,0,.3); border-top: 5px solid #dc2626; }
+    .modal h3 { font-size: 1.15rem; color: #b91c1c; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .modal .m-sub { font-size: .86rem; color: #4b5563; margin-bottom: 16px; line-height: 1.4; }
+    .modal .m-big { font-size: 1.6rem; font-weight: 800; color: #b91c1c; font-variant-numeric: tabular-nums; }
+    .modal label { font-size: .8rem; font-weight: 650; color: #374151; margin: 14px 0 6px; display: block; }
+    .modal input, .modal select { width: 100%; border: 1px solid #d7dbe0; border-radius: 9px; padding: 10px 12px;
+             font-size: .95rem; font-family: inherit; }
+    .modal .m-err { color: #dc2626; font-size: .8rem; margin-top: 6px; display: none; }
+    .modal .m-err.show { display: block; }
+    .modal .m-actions { display: flex; gap: 10px; margin-top: 20px; }
+    .modal .m-actions .btn { flex: 1; justify-content: center; }
+    .modal .m-stack { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+    .modal .m-stack .btn { width: 100%; justify-content: center; }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
@@ -38,6 +70,8 @@
   <div class="page-sub">Por estanque, cada 2–4 h. Basta con dos de los tres valores; el tercero valida la medición.</div>
 
   <form class="card" method="post" action="/views/ui/calidad-agua/oxigeno">
+    <input type="hidden" name="acknowledged" id="acknowledged" value="" />
+    <input type="hidden" name="corrective_action" id="corrective_action" value="" />
     <div class="grid">
       <div class="field">
         <label for="pond_id">Estanque</label>
@@ -65,6 +99,9 @@
         <label for="saturation_pct">Saturación <span class="hint">%</span></label>
         <input type="number" step="0.1" min="0" id="saturation_pct" name="saturation_pct" placeholder="p. ej. 98.0" />
       </div>
+
+      <div class="o2-status" id="o2-status"><span class="ico"></span><span class="txt"></span></div>
+
       <div class="field">
         <label for="operator_id">Operador <span class="hint">opcional</span></label>
         <select id="operator_id" name="operator_id">
@@ -81,7 +118,11 @@
 
     <div class="note">La saturación teórica se calcula con temperatura y O₂ (agua dulce, altitud {{ altitude_m }} m).
       Si difiere mucho de la ingresada, la lectura se marca como <strong>terna sospechosa</strong>.
-      Saturación &lt; 70 % genera alerta; &lt; 60 %, alarma.
+      Genera <strong>alarma</strong> el O₂ &lt; {{ o2_thresholds.saturation.alarm }} % de saturación
+      o &lt; {{ o2_thresholds.do_mg_l.alarm }} mg/L, o la <strong>temperatura</strong> &gt;
+      {{ o2_thresholds.water_temp.alarm }} °C (estrés térmico); <strong>alerta</strong> bajo
+      {{ o2_thresholds.saturation.alert }} % / {{ o2_thresholds.do_mg_l.alert }} mg/L o sobre
+      {{ o2_thresholds.water_temp.alert }} °C.
       Si dejas la temperatura vacía, se hereda la de la ronda de esa unidad.</div>
 
     <div class="actions">
@@ -91,28 +132,203 @@
   </form>
 </div>
 </div></div>
+<!-- Modal de confirmación ante O₂ en alarma (llamado a la acción) -->
+<div class="modal-back" id="modal-back">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h3><span>⚠</span> <span id="modal-title">Oxígeno muy bajo</span></h3>
+    <div class="m-sub">Valor en zona de alarma para los peces. Confírmalo y registra qué acción tomaste.</div>
+    <div class="m-big" id="modal-big"></div>
+
+    <!-- Paso 1: confirmar el valor o volver a digitarlo -->
+    <div class="m-stack" id="step-confirm">
+      <button type="button" class="btn btn-danger" id="btn-confirm-val">Confirmar</button>
+      <button type="button" class="btn btn-ghost" id="btn-reenter">Digitar nuevo valor para O₂</button>
+    </div>
+
+    <!-- Paso 2: acción correctiva (se revela al confirmar) -->
+    <div id="step-action" class="hidden">
+      <label for="action-sel">¿Qué acción correctiva tomaste?</label>
+      <select id="action-sel">
+        <option value="" selected disabled>Seleccionar…</option>
+        {% for a in corrective_actions %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
+      </select>
+      <div class="m-err" id="action-err">Selecciona una acción.</div>
+      <div class="m-actions">
+        <button type="button" class="btn btn-ghost" id="modal-cancel">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="modal-save">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
-  // Sanidad de rango físico (espejo de water_quality.oxygen_range_issues):
-  // fuera de rango es casi seguro un error de tipeo -> se pide confirmar.
   (function () {
-    var RANGE = { do_mg_l: [0, 20, "O₂", "mg/L"], water_temp_c: [0, 30, "temperatura", "°C"],
+    // --- Umbrales y química inyectados desde el servidor ---
+    var TH = {{ o2_thresholds | tojson }};
+    var ALT = {{ altitude_m }};
+    // Rango FÍSICO (glitch/typo): fuera de esto se pide reingreso. La temp alta
+    // REAL no se valida acá (es alarma biológica, ver TH.water_temp), solo el
+    // glitch imposible (>45 °C o <0).
+    var RANGE = { do_mg_l: [0, 20, "O₂", "mg/L"], water_temp_c: [0, 45, "temperatura", "°C"],
                   saturation_pct: [0, 150, "saturación", "%"] };
+
     var form = document.querySelector("form.card");
-    form.addEventListener("submit", function (e) {
+    var elDo = document.getElementById("do_mg_l");
+    var elTemp = document.getElementById("water_temp_c");
+    var elSat = document.getElementById("saturation_pct");
+    var status = document.getElementById("o2-status");
+    var modalBack = document.getElementById("modal-back");
+
+    function num(el) { if (!el || el.value.trim() === "") return null; var v = parseFloat(el.value.replace(",", ".")); return isFinite(v) ? v : null; }
+
+    // Solubilidad de O2 en saturación (Benson-Krause + altitud) — espejo de
+    // water_quality.do_saturation_mg_l para evaluar en vivo igual que el servidor.
+    function csTemp(t) {
+      var tk = t + 273.15;
+      var lnc = -139.34411 + 1.575701e5/tk - 6.642308e7/(tk*tk) + 1.243800e10/(tk*tk*tk) - 8.621949e11/(tk*tk*tk*tk);
+      var c0 = Math.exp(lnc);
+      var pb = Math.pow(1.0 - 2.25577e-5*ALT, 5.25588);
+      var pwv = Math.exp(11.8571 - 3840.70/tk - 216961.0/(tk*tk));
+      var th = 0.000975 - 1.426e-5*t + 6.436e-8*t*t;
+      var fp = ((pb - pwv)*(1.0 - th*pb)) / ((1.0 - pwv)*(1.0 - th));
+      return c0 * fp;
+    }
+    // Evalúa un valor contra un umbral según su comparador ('lt' O2 bajo / 'gt' temp alta).
+    function evalThr(v, spec) {
+      if (v === null || v === undefined || !spec) return "ok";
+      if ((spec.comparator || "lt") === "gt") {
+        if (spec.alarm != null && v > spec.alarm) return "alarma";
+        if (spec.alert != null && v > spec.alert) return "alerta";
+      } else {
+        if (spec.alarm != null && v < spec.alarm) return "alarma";
+        if (spec.alert != null && v < spec.alert) return "alerta";
+      }
+      return "ok";
+    }
+    var SEV = { ok: 0, alerta: 1, alarma: 2 };
+    function worst() { var o = "ok"; for (var i = 0; i < arguments.length; i++) if (SEV[arguments[i]] > SEV[o]) o = arguments[i]; return o; }
+
+    // ¿Temperatura un glitch de sensor (fuera del rango físico)? No confiable.
+    function tempGlitch(t) { return t !== null && (t < RANGE.water_temp_c[0] || t > RANGE.water_temp_c[1]); }
+
+    // Severidad de la lectura: peor entre O2 mg/L, saturación (%) y temp alta (°C).
+    // Si la temp es glitch, no se usa la saturación teórica ni la alarma de temp.
+    function evaluate() {
+      var dov = num(elDo), t = num(elTemp), sat = num(elSat);
+      var glitch = tempGlitch(t);
+      var satEff = sat;
+      if (satEff === null && dov !== null && t !== null && !glitch) {
+        var cs = csTemp(t); satEff = cs > 0 ? dov / cs * 100.0 : null;
+      }
+      var doLvl = evalThr(dov, TH.do_mg_l), satLvl = evalThr(satEff, TH.saturation);
+      var tempLvl = (t !== null && !glitch) ? evalThr(t, TH.water_temp) : "ok";
+      var o2Lvl = worst(doLvl, satLvl);
+      var reason = (SEV[tempLvl] >= 2 && SEV[o2Lvl] >= 2) ? "Oxígeno bajo y temperatura alta"
+                 : (SEV[tempLvl] >= 2) ? "Temperatura muy alta" : "Oxígeno muy bajo";
+      return { level: worst(o2Lvl, tempLvl), dov: dov, satEff: satEff, t: t,
+               o2Lvl: o2Lvl, tempLvl: tempLvl, reason: reason };
+    }
+
+    function paint() {
+      var r = evaluate();
+      elDo.classList.remove("sev-alerta", "sev-alarma");
+      elTemp.classList.remove("sev-alerta", "sev-alarma");
+      status.className = "o2-status";
+      if (r.level === "ok") return;
+      if (r.o2Lvl !== "ok") elDo.classList.add(r.o2Lvl === "alarma" ? "sev-alarma" : "sev-alerta");
+      if (r.tempLvl !== "ok") elTemp.classList.add(r.tempLvl === "alarma" ? "sev-alarma" : "sev-alerta");
+      status.classList.add("show", r.level);
+      var ico = r.level === "alarma" ? "🔴" : "🟠";
+      var word = r.level === "alarma" ? "ALARMA" : "Alerta";
+      var parts = [];
+      if (r.o2Lvl !== "ok") parts.push("O₂ " + (r.dov !== null ? r.dov + " mg/L" : "—") +
+        (r.satEff !== null ? " · " + r.satEff.toFixed(0) + "% sat" : ""));
+      if (r.tempLvl !== "ok") parts.push("temp " + r.t + " °C");
+      status.querySelector(".ico").textContent = ico;
+      status.querySelector(".txt").textContent = word + ": " + parts.join(" · ") +
+        (r.level === "alarma" ? " — requiere confirmación y acción correctiva" : " — revisa la laguna");
+    }
+    [elDo, elTemp, elSat].forEach(function (el) { el.addEventListener("input", paint); });
+
+    // --- Chequeo de rango físico (typos groseros), como antes ---
+    function rangeIssues() {
       var issues = [];
       Object.keys(RANGE).forEach(function (id) {
         var el = document.getElementById(id);
         if (!el || el.value.trim() === "") return;
         var v = parseFloat(el.value.replace(",", "."));
-        var r = RANGE[id];
-        if (isFinite(v) && (v < r[0] || v > r[1]))
-          issues.push(r[2] + " " + v + " " + r[3] + " (rango " + r[0] + "–" + r[1] + ")");
+        var rr = RANGE[id];
+        if (isFinite(v) && (v < rr[0] || v > rr[1]))
+          issues.push(rr[2] + " " + v + " " + rr[3] + " (rango " + rr[0] + "–" + rr[1] + ")");
       });
-      if (issues.length && !confirm("Valor fuera de rango:\n· " + issues.join("\n· ") +
-          "\n\n¿Guardar de todos modos?")) {
+      return issues;
+    }
+
+    // --- Modal de alarma (camino 2: confirmar o corregir) ---
+    var stepConfirm = document.getElementById("step-confirm");
+    var stepAction = document.getElementById("step-action");
+    var _reenterEl = elDo;
+    function openModal(r) {
+      document.getElementById("modal-title").textContent = r.reason;
+      var big = [];
+      if (r.o2Lvl !== "ok") big.push("O₂ " + r.dov + " mg/L" +
+        (r.satEff !== null ? " · " + r.satEff.toFixed(0) + "% sat" : ""));
+      if (r.tempLvl !== "ok") big.push("Temp " + r.t + " °C");
+      document.getElementById("modal-big").textContent = big.join("     ");
+      document.getElementById("btn-confirm-val").textContent = "Confirmar la lectura";
+      // "Digitar nuevo valor" vuelve al campo que disparó la alarma.
+      _reenterEl = (r.tempLvl !== "ok" && r.o2Lvl === "ok") ? elTemp : elDo;
+      document.getElementById("action-sel").value = "";
+      document.getElementById("action-err").classList.remove("show");
+      stepAction.classList.add("hidden");        // arranca en el paso 1
+      stepConfirm.classList.remove("hidden");
+      modalBack.classList.add("show");
+    }
+    function closeModal() { modalBack.classList.remove("show"); }
+
+    // Confirmar la lectura -> revela la acción correctiva.
+    document.getElementById("btn-confirm-val").addEventListener("click", function () {
+      stepConfirm.classList.add("hidden");
+      stepAction.classList.remove("hidden");
+      document.getElementById("action-sel").focus();
+    });
+    // Digitar nuevo valor -> cierra y vuelve al campo que disparó (al reintentar se re-evalúa).
+    document.getElementById("btn-reenter").addEventListener("click", function () {
+      closeModal(); _reenterEl.focus(); _reenterEl.select();
+    });
+    document.getElementById("modal-cancel").addEventListener("click", closeModal);
+    modalBack.addEventListener("click", function (e) { if (e.target === modalBack) closeModal(); });
+
+    // Guardar (tras elegir acción).
+    document.getElementById("modal-save").addEventListener("click", function () {
+      var action = document.getElementById("action-sel").value;
+      document.getElementById("action-err").classList.toggle("show", !action);
+      if (!action) return;
+      document.getElementById("acknowledged").value = "1";
+      document.getElementById("corrective_action").value = action;
+      closeModal();
+      form.submit();   // ya reconocido: envía sin re-interceptar
+    });
+
+    // --- Interceptar el submit ---
+    var bypass = false;
+    form.addEventListener("submit", function (e) {
+      if (bypass) return;
+      var issues = rangeIssues();
+      if (issues.length && !confirm("Valor fuera de rango:\n· " + issues.join("\n· ") + "\n\n¿Guardar de todos modos?")) {
+        e.preventDefault(); return;
+      }
+      var r = evaluate();
+      if (r.level === "alarma") {
         e.preventDefault();
+        openModal(r);
       }
     });
+    // El botón de confirmar hace form.submit(): marca bypass para no re-interceptar.
+    var _submit = form.submit.bind(form);
+    form.submit = function () { bypass = true; _submit(); };
+
+    paint();
   })();
 </script>
 </body>

@@ -2327,6 +2327,26 @@ def ui_pond_detail(
         l.id: l for l in db.query(Lot).filter(Lot.id.in_(lot_ids)).all()
     } if lot_ids else {}
 
+    # Lote asignado por eclosión, aún sin primer recuento (§9.6 Reproducción): el
+    # estanque tiene `pond.lot_id` pero ese lote todavía no tiene saldo (ni tagged
+    # ni sin-registrar). Se ofrece el primer recuento; una vez hecho, el lote gana
+    # saldo y deja de ser pendiente (misma condición que `is_pending_count` en la lista).
+    pending_first_count = None
+    if pond.lot_id:
+        _pending_lid = int(pond.lot_id)
+        _already_counted = (
+            int(unregistered_balances.get(_pending_lid, 0)) > 0
+            or _pending_lid in set(lot_ids)
+        )
+        if not _already_counted:
+            _pending_lot = db.query(Lot).filter(Lot.id == _pending_lid).first()
+            if _pending_lot:
+                pending_first_count = {
+                    "lot_id": _pending_lid,
+                    "label": _pending_lot.internal_id or _pending_lot.name,
+                    "name": _pending_lot.name,
+                }
+
     fish_ids = [f.id for f in current_fish]
 
     samples_map = {}
@@ -2654,6 +2674,7 @@ def ui_pond_detail(
         "sex_count_u": sex_count_u,
         "females_by_state": females_by_state,
         "can_register_from_untagged": unregistered_count > 0,
+        "pending_first_count": pending_first_count,
         "unregistered_lot_options": unregistered_lot_options,
         "tag_detachment_lot_options": tag_detachment_lot_options,
         "pending_detachment_events": [
@@ -3293,6 +3314,119 @@ def ui_pond_mortality_untagged(
         return go("error", "No se pudo registrar la mortalidad.")
 
 
+@router.post("/ui/ponds/{pond_id}/first-count")
+def ui_pond_first_count(
+    pond_id: int,
+    lot_id: str = Form(...),
+    quantity: int = Form(...),
+    avg_weight_g: str = Form(""),
+    event_date: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Primer recuento de un lote recién eclosionado (§9.6 Reproducción).
+
+    Los alevines ingresaron a la batea vía `pond.lot_id`, sin movimientos ni
+    recuento (los peces son muy delicados para manipular al eclosionar). Esta
+    acción registra el ingreso sin-registrar (`movement_reason='first_count'`)
+    que puebla el estanque: a partir de aquí el lote gana saldo, sube
+    `n_fish_cached` y aparece en `/views/ui/lots`. NO toca el estado del batch:
+    cerrar el Proceso 3 sigue siendo su propia acción (spec §9.7).
+    """
+    def go(status_value: str, message: str):
+        return RedirectResponse(
+            url=f"/views/ui/ponds/{pond_id}?status={quote_plus(status_value)}&msg={quote_plus(message)}",
+            status_code=303,
+        )
+
+    from app.services.sexado_sessions import pond_lock_session
+    if pond_lock_session(db, pond_id):
+        return go("error", "Estanque en sesión de sexado offline (solo lectura hasta sincronizar).")
+
+    if quantity < 1:
+        return go("error", "La cantidad debe ser mayor a 0.")
+
+    try:
+        lot_id_int = int(lot_id)
+    except ValueError:
+        return go("error", "Lote no válido.")
+
+    pond = db.query(Pond).filter(Pond.id == pond_id).first()
+    if not pond:
+        return go("error", "Estanque no encontrado.")
+    if not pond.lot_id or int(pond.lot_id) != lot_id_int:
+        return go("error", "Este lote no está pendiente de primer recuento en este estanque.")
+
+    # Anti doble-recuento: exigir que el lote no tenga saldo aún en el estanque.
+    balances = _get_unregistered_balances_by_lot(pond_id, db)
+    _tagged_count, tagged_lot_ids = _get_current_tagged_count_and_lot_ids(pond_id, db)
+    if int(balances.get(lot_id_int, 0)) > 0 or lot_id_int in tagged_lot_ids:
+        return go("error", "El lote ya tiene recuento en este estanque; el primer recuento no se puede repetir.")
+
+    lot = db.query(Lot).filter(Lot.id == lot_id_int).first()
+    if not lot:
+        return go("error", "El lote no existe.")
+    lot_label = lot.internal_id if lot.internal_id else lot.name
+
+    # Fecha del recuento (opcional; default = ahora)
+    event_dt = datetime.utcnow()
+    if event_date and event_date.strip():
+        try:
+            event_dt = datetime.strptime(event_date.strip(), "%Y-%m-%d")
+        except ValueError:
+            return go("error", "Fecha inválida.")
+
+    # Peso promedio opcional → siembra pond_lot_stats para habilitar biomasa/peso.
+    avg_w = None
+    if avg_weight_g and avg_weight_g.strip():
+        try:
+            avg_w = float(avg_weight_g.strip().replace(",", "."))
+        except ValueError:
+            return go("error", "Peso promedio inválido.")
+        if avg_w <= 0:
+            return go("error", "El peso promedio debe ser mayor a 0.")
+
+    now = datetime.utcnow()
+    try:
+        # Sembrar el peso ANTES del movimiento: así `_adjust_biomass_on_movement`
+        # (que lee `_get_lot_weight_estimate`) puede computar la biomasa del ingreso.
+        if avg_w is not None:
+            pls = (
+                db.query(PondLotStats)
+                .filter(PondLotStats.pond_id == pond_id, PondLotStats.lot_id == lot_id_int)
+                .first()
+            )
+            if pls:
+                pls.avg_weight = round(avg_w, 3)
+                pls.updated_at = now
+            else:
+                db.add(PondLotStats(
+                    pond_id=pond_id, lot_id=lot_id_int,
+                    avg_weight=round(avg_w, 3), n_sampled=0, updated_at=now,
+                ))
+            db.flush()
+
+        mov = PondMovement(
+            fish_id=None,
+            lot_id=lot_id_int,
+            source_pond_id=None,
+            destiny_pond_id=pond_id,
+            fish_quantity=quantity,
+            movement_reason="first_count",
+            movement_time=event_dt,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(mov)
+        db.flush()
+        _adjust_biomass_on_movement(mov, db)
+        _refresh_pond_runtime_cache_many([pond_id], db)
+        db.commit()
+        return go("ok", f"Primer recuento registrado: {quantity} peces del lote {lot_label}.")
+    except Exception:
+        db.rollback()
+        return go("error", "No se pudo registrar el primer recuento.")
+
+
 @router.post("/ui/ponds/{pond_id}/transfer-untagged")
 def ui_pond_transfer_untagged(
     pond_id: int,
@@ -3473,12 +3607,12 @@ def ui_pond_register_tagged(
     if female_destination_pond_id and female_destination_pond_id.strip():
         raw_dest = female_destination_pond_id.strip()
         if not raw_dest.isdigit():
-            return go("error", "Destino de hembras no válido.")
+            return go("error", "Destino de peces no válido.")
         female_destination = db.query(Pond).filter(Pond.id == int(raw_dest)).first()
         if not female_destination:
-            return go("error", "Destino de hembras no encontrado.")
+            return go("error", "Destino de peces no encontrado.")
         if female_destination.id == pond_id:
-            return go("error", "El destino de hembras debe ser distinto al estanque actual.")
+            return go("error", "El destino debe ser distinto al estanque actual.")
 
     now = datetime.utcnow()
     try:
@@ -3534,7 +3668,7 @@ def ui_pond_register_tagged(
             db.add(sample)
 
         moved_female = False
-        if target_sex == "f" and female_destination:
+        if female_destination:
             movement = PondMovement(
                 fish_id=fish.id,
                 lot_id=selected_lot_id,
@@ -3549,7 +3683,7 @@ def ui_pond_register_tagged(
             db.add(movement)
             moved_female = True
 
-            # Transición de estado por depuración para el destino final de la hembra.
+            # Transición de estado por depuración para el destino final del pez marcado.
             if female_destination.depuration and not pond.depuration:
                 fish.depuration_start_time = now
             if female_destination.depuration:
@@ -5725,12 +5859,12 @@ def ui_retag_save(
     if female_destination_pond_id and female_destination_pond_id.strip():
         raw_dest = female_destination_pond_id.strip()
         if not raw_dest.isdigit():
-            return go("error", "Destino de hembras no válido.")
+            return go("error", "Destino de peces no válido.")
         female_destination = db.query(Pond).filter(Pond.id == int(raw_dest)).first()
         if not female_destination:
-            return go("error", "Destino de hembras no encontrado.")
+            return go("error", "Destino de peces no encontrado.")
         if female_destination.id == pond_id:
-            return go("error", "El destino de hembras debe ser distinto al estanque actual.")
+            return go("error", "El destino debe ser distinto al estanque actual.")
 
     now = datetime.utcnow()
     fish_kwargs = {
@@ -5806,7 +5940,7 @@ def ui_retag_save(
 
         moved_female = False
         female_movement = None
-        if target_sex == "f" and female_destination:
+        if female_destination:
             female_movement = PondMovement(
                 fish_id=fish.id,
                 lot_id=selected_lot_id,
@@ -5821,7 +5955,7 @@ def ui_retag_save(
             db.add(female_movement)
             moved_female = True
 
-            # Transición de estado por depuración para el destino final de la hembra.
+            # Transición de estado por depuración para el destino final del pez marcado.
             if female_destination.depuration and not pond.depuration:
                 fish.depuration_start_time = now
             if female_destination.depuration:

@@ -275,6 +275,42 @@ def release_session(db: Session, token: str, status: str = "released") -> bool:
     return True
 
 
+def release_session_by_id(db: Session, session_id: int, note: str = "") -> tuple[bool, str]:
+    """Cierre desde la app (supervisor): libera el candado de una sesión que aún
+    bloquea. Advertencia: el tablet pierde lo que no haya sincronizado, por eso
+    la UI lo confirma explícitamente. Reversible con reactivate_session."""
+    s = db.query(SexadoOfflineSession).filter(SexadoOfflineSession.id == session_id).first()
+    if not s:
+        return False, "Sesión no encontrada."
+    if s.status not in LOCKING_STATUSES:
+        return False, f"La sesión #{session_id} ya está '{s.status}'."
+    s.status = "released"
+    s.released_at = datetime.now()
+    if note:
+        s.notes = ((s.notes or "") + " " + note).strip()
+    db.commit()
+    return True, f"Estanques de la sesión #{session_id} liberados."
+
+
+def reactivate_session(db: Session, session_id: int) -> tuple[bool, str]:
+    """Red de seguridad: vuelve una sesión cerrada (released/synced) a 'active'
+    para que un tablet con lecturas huérfanas pueda volver a sincronizar. Rechaza
+    si sus estanques ya están tomados por otra sesión (evita doble bloqueo)."""
+    s = db.query(SexadoOfflineSession).filter(SexadoOfflineSession.id == session_id).first()
+    if not s:
+        return False, "Sesión no encontrada."
+    if s.status in LOCKING_STATUSES:
+        return False, f"La sesión #{session_id} ya está activa."
+    locked = locked_pond_ids(db)
+    clash = [int(p) for p in (s.pond_ids or []) if int(p) in locked]
+    if clash:
+        return False, f"No se puede reactivar: estanques {sorted(clash)} ya están en otra sesión."
+    s.status = "active"
+    s.released_at = None
+    db.commit()
+    return True, f"Sesión #{session_id} reactivada. El tablet ya puede sincronizar."
+
+
 # ---------------------------------------------------------------------------
 # Snapshot
 # ---------------------------------------------------------------------------

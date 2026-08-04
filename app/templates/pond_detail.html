@@ -381,6 +381,7 @@
     .action-card--sampling  { border-top-color: #0e7490; }
     .action-card--tagloss   { border-top-color: #d97706; }
     .action-card--taggedmove { border-top-color: #2563eb; }
+    .action-card--first-count { border-top-color: #059669; border-top-width: 3px; background: #f0fdf4; }
     .action-card__title {
       font-size: .88rem;
       font-weight: 700;
@@ -394,6 +395,9 @@
     .action-card--sampling  .action-card__title { color: #0e7490; }
     .action-card--tagloss   .action-card__title { color: #92400e; }
     .action-card--taggedmove .action-card__title { color: #1d4ed8; }
+    .action-card--first-count .action-card__title { color: #047857; }
+    .action-card__hint { font-size: .8rem; color: #4b5563; margin: 0 0 4px; line-height: 1.35; }
+    .fc-opt { font-weight: 400; color: #9ca3af; font-size: .78em; }
     .action-card__fields {
       display: flex;
       flex-wrap: wrap;
@@ -448,6 +452,8 @@
     .action-btn--tagloss:hover   { background: #b45309; }
     .action-btn--taggedmove { background: #2563eb; color: #fff; display: inline-block; text-decoration: none; }
     .action-btn--taggedmove:hover { background: #1d4ed8; }
+    .action-btn--first-count { background: #059669; color: #fff; }
+    .action-btn--first-count:hover { background: #047857; }
     .action-card__empty { font-size: .82rem; color: #9ca3af; }
     .action-card__empty--mb { margin-bottom: 10px; }
     .tagloss-pending-wrap { margin-bottom: 10px; }
@@ -665,14 +671,14 @@
 
       <!-- 5. Destino movimiento peces -->
       <div class="card">
-        <div class="label">Destino hembras marcadas</div>
-        <select id="femaleDestPondSelect" class="female-destination-select" aria-label="Destino de hembras marcadas">
+        <div class="label">Destino peces marcados</div>
+        <select id="femaleDestPondSelect" class="female-destination-select" aria-label="Destino de peces marcados">
           <option value="">Mantener en este estanque</option>
           {% for p in all_ponds %}
           <option value="{{ p.id }}">{{ p.name }}</option>
           {% endfor %}
         </select>
-        <div class="female-destination-hint">Se aplicará automáticamente al registrar un pez con sexo Hembra.</div>
+        <div class="female-destination-hint">Se aplicará automáticamente al registrar cualquier pez, sin importar el sexo.</div>
       </div>
 
     </div>
@@ -972,6 +978,40 @@
       <!-- Sidebar derecho: funciones rápidas -->
       <aside class="action-cards is-compact">
 
+      {% if pending_first_count %}
+      <!-- 0) Primer recuento — lote recién eclosionado (§9.6 Reproducción) -->
+      <div class="action-card action-card--first-count">
+        <button type="button" class="action-card__toggle" aria-expanded="true" aria-label="Expandir o colapsar Primer recuento" title="Primer recuento" onclick="toggleActionCard(this)">
+          <div class="action-card__title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            <span class="action-card__title-text">Primer recuento · {{ pending_first_count.label }}</span>
+          </div>
+          <svg class="action-card__chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="action-card__body">
+          <p class="action-card__hint">Lote asignado por eclosión, pendiente de primer recuento. Al registrarlo, los peces ingresan al estanque y el lote aparece en el listado de lotes.</p>
+          <form method="post" action="/views/ui/ponds/{{ pond.id }}/first-count" onsubmit="return confirmFirstCount()">
+            <input type="hidden" name="lot_id" value="{{ pending_first_count.lot_id }}" />
+            <div class="action-card__fields">
+              <div class="action-field-group">
+                <label for="fc-qty">Cantidad de peces</label>
+                <input id="fc-qty" name="quantity" type="number" min="1" step="1" placeholder="Ej: 5000" required />
+              </div>
+              <div class="action-field-group">
+                <label for="fc-weight">Peso prom. (g) <span class="fc-opt">opcional</span></label>
+                <input id="fc-weight" name="avg_weight_g" type="number" min="0" step="0.001" placeholder="Ej: 0.2" />
+              </div>
+              <div class="action-field-group">
+                <label for="fc-date">Fecha <span class="fc-opt">opcional</span></label>
+                <input id="fc-date" name="event_date" type="date" />
+              </div>
+              <button type="submit" class="action-btn action-btn--first-count">Registrar primer recuento</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% endif %}
+
       <!-- 1) Traslado sin Pit-Tag -->
       <div class="action-card action-card--movement is-collapsed">
         <button type="button" class="action-card__toggle" aria-expanded="false" aria-label="Expandir o colapsar Traslado sin Pit-Tag" title="Traslado sin Pit-Tag" onclick="toggleActionCard(this)">
@@ -1261,6 +1301,13 @@
       const dstText = dstSel.options[dstSel.selectedIndex]?.text || 'estanque destino';
       const n = qty.value;
       return confirm(`¿Confirmar traslado de ${n} peces sin marca (${lotText}) hacia ${dstText}?`);
+    }
+
+    function confirmFirstCount() {
+      const qty = document.getElementById('fc-qty');
+      const n = qty ? parseInt(qty.value, 10) : 0;
+      if (!n || n < 1) { alert('Ingresa una cantidad válida de peces.'); return false; }
+      return confirm(`¿Confirmar primer recuento de ${n} peces?\nEl lote ingresará al estanque y aparecerá en el listado de lotes.`);
     }
 
     function confirmMortality() {

@@ -10,7 +10,7 @@ from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import quote_plus
 
 from app.db.session import SessionLocal
@@ -203,12 +203,48 @@ def list_sessions():
 def reconciliacion(request: Request, msg: Optional[str] = None):
     db = SessionLocal()
     try:
-        sessions = (db.query(SexadoOfflineSession)
-                    .filter(SexadoOfflineSession.status == "reconciling")
-                    .order_by(SexadoOfflineSession.created_at).all())
         pond_names = {p.id: p.name for p in db.query(Pond).all()}
         user_names = {u.id: (" ".join(x for x in [u.name, u.lastname] if x) or u.email)
                       for u in db.query(User).all()}
+
+        # Sesiones activas (bloquean estanques, aún sin contingencias): un tablet
+        # trabaja offline contra ellas. El supervisor puede liberarlas si el tablet
+        # tiene problemas (con confirmación, porque el tablet pierde lo no subido).
+        active = (db.query(SexadoOfflineSession)
+                  .filter(SexadoOfflineSession.status == "active")
+                  .order_by(SexadoOfflineSession.created_at).all())
+        active_rows = []
+        for s in active:
+            nops = (db.query(SexingOfflineOperation)
+                    .filter(SexingOfflineOperation.session_id == s.id).count())
+            active_rows.append({
+                "id": s.id,
+                "source": pond_names.get(s.source_pond_id, s.source_pond_id),
+                "operator": user_names.get(s.operator_id, "—"),
+                "ponds": ", ".join(pond_names.get(int(p), str(p)) for p in (s.pond_ids or [])),
+                "created_at": s.created_at,
+                "ops": nops,
+            })
+
+        # Cerradas en las últimas 24 h: reactivables si un tablet quedó con la cola
+        # huérfana (evita tener que tocar la BD a mano).
+        since = datetime.now() - timedelta(hours=24)
+        closed = (db.query(SexadoOfflineSession)
+                  .filter(SexadoOfflineSession.status.in_(["released", "synced"]),
+                          SexadoOfflineSession.released_at.isnot(None),
+                          SexadoOfflineSession.released_at >= since)
+                  .order_by(SexadoOfflineSession.released_at.desc()).all())
+        closed_rows = [{
+            "id": s.id,
+            "source": pond_names.get(s.source_pond_id, s.source_pond_id),
+            "operator": user_names.get(s.operator_id, "—"),
+            "status": s.status,
+            "released_at": s.released_at,
+        } for s in closed]
+
+        sessions = (db.query(SexadoOfflineSession)
+                    .filter(SexadoOfflineSession.status == "reconciling")
+                    .order_by(SexadoOfflineSession.created_at).all())
         blocks = []
         for s in sessions:
             ops = (db.query(SexingOfflineOperation)
@@ -233,8 +269,31 @@ def reconciliacion(request: Request, msg: Optional[str] = None):
                 "pending": rows,
             })
         html = _jinja.get_template("sexado_reconciliacion.html").render(
-            {"request": request, "msg": msg, "blocks": blocks})
+            {"request": request, "msg": msg, "blocks": blocks,
+             "active_rows": active_rows, "closed_rows": closed_rows})
         return HTMLResponse(content=html)
+    finally:
+        db.close()
+
+
+@admin_router.post("/session/{session_id}/release")
+def session_release(session_id: int):
+    """Cierre desde la app (supervisor): libera el candado de una sesión activa."""
+    db = SessionLocal()
+    try:
+        ok, message = sx.release_session_by_id(db, session_id, note="Liberada por supervisor desde la app.")
+        return RedirectResponse(url=f"/views/ui/sexado/reconciliacion?msg={quote_plus(message)}", status_code=303)
+    finally:
+        db.close()
+
+
+@admin_router.post("/session/{session_id}/reactivate")
+def session_reactivate(session_id: int):
+    """Reactiva una sesión cerrada para que un tablet huérfano vuelva a sincronizar."""
+    db = SessionLocal()
+    try:
+        ok, message = sx.reactivate_session(db, session_id)
+        return RedirectResponse(url=f"/views/ui/sexado/reconciliacion?msg={quote_plus(message)}", status_code=303)
     finally:
         db.close()
 

@@ -104,10 +104,45 @@ function evalThreshold(value, spec) {
   return "ok";
 }
 
+// Acciones correctivas (fallback si un bootstrap viejo no las trae).
+const DEFAULT_ACTIONS = [
+  "Encendí aireación / oxígeno",
+  "Revisé / ajusté flujo de agua",
+  "Avisé al supervisor",
+  "Segunda lectura / reingreso",
+  "A verificar (aún sin acción)",
+];
+const SEV = { ok: 0, alerta: 1, alarma: 2 };
+function worstLevel(...ls) { let o = "ok"; for (const l of ls) if (SEV[l] > SEV[o]) o = l; return o; }
+
 // Rangos físicamente plausibles (espejo de water_quality.oxygen_range_issues).
-// Fuera de estos límites la lectura es casi seguro un error de tipeo: se pide
-// confirmación antes de guardar (no se bloquea).
-const RANGE = { do: [0, 20], temp: [0, 30], sat: [0, 150] };
+// Fuera de estos límites la lectura es casi seguro un glitch/typo: se pide
+// confirmación antes de guardar (no se bloquea). La temp alta REAL no se valida
+// acá (es alarma biológica, ver th.water_temp), solo el glitch imposible.
+const RANGE = { do: [0, 20], temp: [0, 45], sat: [0, 150] };
+
+// ¿Temperatura un glitch de sensor (fuera del rango físico)? No confiable.
+function tempGlitch(t) { return t != null && isFinite(t) && (t < RANGE.temp[0] || t > RANGE.temp[1]); }
+
+// Severidad de la lectura: peor entre O2 absoluto (mg/L), saturación (%) y
+// temperatura alta (°C). El mg/L dispara aunque falte temp. Si la temp es glitch,
+// no se usa la saturación teórica ni la alarma de temp.
+function evaluateLevel(doV, effTemp) {
+  const alt = state.boot && state.boot.site ? state.boot.site.altitude_m : 170;
+  const th = state.boot ? state.boot.thresholds : {};
+  const glitch = tempGlitch(effTemp);
+  let sat = null;
+  if (isFinite(doV) && effTemp != null && isFinite(effTemp) && !glitch)
+    sat = expectedSaturationPct(doV, effTemp, alt);
+  const doLvl = isFinite(doV) ? evalThreshold(doV, th.o2_do_mg_l) : "ok";
+  const satLvl = sat != null ? evalThreshold(sat, th.o2_saturation) : "ok";
+  const tempLvl = (effTemp != null && isFinite(effTemp) && !glitch) ? evalThreshold(effTemp, th.water_temp) : "ok";
+  const o2Lvl = worstLevel(doLvl, satLvl);
+  const reason = (SEV[tempLvl] >= 2 && SEV[o2Lvl] >= 2) ? "Oxígeno bajo y temperatura alta"
+               : (SEV[tempLvl] >= 2) ? "Temperatura muy alta" : "Oxígeno muy bajo";
+  return { level: worstLevel(o2Lvl, tempLvl), sat: sat, o2Lvl: o2Lvl, tempLvl: tempLvl, reason: reason };
+}
+
 function rangeIssues(doV, tempV, satV) {
   const out = [];
   const chk = (v, lohi, label, unit) => {
@@ -265,19 +300,19 @@ function updateLive() {
     const inh = getUnitRoundTemp(state.current.cultivation_unit_id);
     if (inh != null) tV = inh;
   }
-  const alt = state.boot && state.boot.site ? state.boot.site.altitude_m : 170;
-  const th = state.boot ? state.boot.thresholds : {};
-  if (isFinite(doV) && isFinite(tV)) {
-    const sat = expectedSaturationPct(doV, tV, alt);
-    $("live-sat").textContent = sat.toFixed(1) + " %";
-    const lvl = evalThreshold(sat, th.o2_saturation);
-    const pill = $("live-alarm");
-    pill.className = "pill p-" + lvl;
-    pill.textContent = lvl === "ok" ? "OK" : (lvl === "alerta" ? "Alerta" : "Alarma");
-  } else {
-    $("live-sat").textContent = "—";
-    $("live-alarm").className = "pill p-none"; $("live-alarm").textContent = "—";
+  const r = evaluateLevel(doV, isFinite(tV) ? tV : null);
+  const inDo = $("in-do"), inTemp = $("in-temp"), pill = $("live-alarm");
+  inDo.classList.remove("sev-alerta", "sev-alarma");
+  inTemp.classList.remove("sev-alerta", "sev-alarma");
+  $("live-sat").textContent = r.sat != null ? r.sat.toFixed(1) + " %" : "—";
+  if (!isFinite(doV) && !isFinite(tV)) {
+    pill.className = "pill p-none"; pill.textContent = "—"; return;
   }
+  // Dispara por O2 bajo (mg/L, aunque falte temp) o por temperatura alta.
+  pill.className = "pill p-" + r.level;
+  pill.textContent = r.level === "ok" ? "OK" : (r.level === "alerta" ? "Alerta" : "Alarma");
+  if (r.o2Lvl !== "ok") inDo.classList.add(r.o2Lvl === "alarma" ? "sev-alarma" : "sev-alerta");
+  if (r.tempLvl !== "ok") inTemp.classList.add(r.tempLvl === "alarma" ? "sev-alarma" : "sev-alerta");
 }
 async function saveReading() {
   const doV = parseFloat($("in-do").value.replace(",", "."));
@@ -313,9 +348,23 @@ async function saveReading() {
     water_temp_c: isFinite(tV) ? tV : null,
     saturation_pct: null,
     observation: $("in-obs").value.trim() || null,
+    acknowledged: false,
+    corrective_action: null,
   };
-  if (isFinite(tV)) setUnitRoundTemp(unitId, tV);
-  // En memoria PRIMERO (nunca perder la lectura), luego persistir best-effort.
+
+  // Llamado a la acción: si la lectura está en alarma (O2 bajo o temp alta),
+  // exige reconocerla y registrar la acción correctiva antes de guardar.
+  const r = evaluateLevel(doV, effTemp);
+  if (r.level === "alarma") {
+    openAlarmModal(rec, r, doV, effTemp, isFinite(tV) ? tV : null, unitId);
+    return;
+  }
+  commitReading(rec, isFinite(tV) ? tV : null, unitId);
+}
+
+// Persiste la lectura (memoria primero, luego best-effort a IndexedDB + sync).
+function commitReading(rec, measuredTemp, unitId) {
+  if (measuredTemp != null && isFinite(measuredTemp)) setUnitRoundTemp(unitId, measuredTemp);
   state.queue.push(rec);
   state.doneThisRound[rec.pond_id] = true;
   show("view-dash"); renderDash();
@@ -326,6 +375,57 @@ async function saveReading() {
     toast("Guardado" + (navigator.onLine ? ", sincronizando…" : " (offline)"), "ok");
   }
   if (navigator.onLine) syncQueue();
+}
+
+// --- Modal de alarma (camino 2: confirmar o corregir) ---
+let _alarmRec = null, _alarmTemp = null, _alarmUnit = null, _alarmAction = null, _alarmReenterId = "in-do";
+function openAlarmModal(rec, r, doV, effTemp, measuredTemp, unitId) {
+  _alarmRec = rec; _alarmTemp = measuredTemp; _alarmUnit = unitId; _alarmAction = null;
+  $("am-title").textContent = r.reason;
+  const big = [];
+  if (r.o2Lvl !== "ok") big.push("O₂ " + doV + " mg/L" + (r.sat != null ? " · " + r.sat.toFixed(0) + "% sat" : ""));
+  if (r.tempLvl !== "ok") big.push("Temp " + effTemp + " °C");
+  $("am-big").textContent = big.join("     ");
+  $("am-confirm-val").textContent = "Confirmar la lectura";
+  // "Digitar nuevo valor" vuelve al campo que disparó la alarma.
+  _alarmReenterId = (r.tempLvl !== "ok" && r.o2Lvl === "ok") ? "in-temp" : "in-do";
+  $("am-action-err").classList.remove("show");
+  // Botones de acción (de bootstrap, o fallback)
+  const acts = (state.boot && state.boot.corrective_actions) || DEFAULT_ACTIONS;
+  const box = $("am-actions"); box.innerHTML = "";
+  acts.forEach((a) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = a;
+    b.addEventListener("click", () => {
+      _alarmAction = a;
+      Array.from(box.children).forEach((c) => c.classList.toggle("on", c === b));
+      $("am-action-err").classList.remove("show");
+    });
+    box.appendChild(b);
+  });
+  $("am-step-action").classList.add("hidden");     // arranca en el paso 1
+  $("am-step-confirm").classList.remove("hidden");
+  $("modal-alarm").classList.add("show");
+}
+function closeAlarmModal() { $("modal-alarm").classList.remove("show"); }
+// Confirmar el valor -> revela la acción correctiva.
+function alarmConfirmValue() {
+  $("am-step-confirm").classList.add("hidden");
+  $("am-step-action").classList.remove("hidden");
+}
+// Digitar nuevo valor -> cierra y vuelve al campo que disparó (al reintentar re-evalúa).
+function alarmReenter() {
+  closeAlarmModal();
+  const el = $(_alarmReenterId); el.focus(); el.select();
+}
+// Guardar (tras elegir acción).
+function alarmSave() {
+  $("am-action-err").classList.toggle("show", !_alarmAction);
+  if (!_alarmAction) return;
+  _alarmRec.acknowledged = true;
+  _alarmRec.corrective_action = _alarmAction;
+  closeAlarmModal();
+  commitReading(_alarmRec, _alarmTemp, _alarmUnit);
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +575,11 @@ function wireEvents() {
   $("btn-newround").addEventListener("click", newRound);
   $("btn-cancel").addEventListener("click", () => show("view-dash"));
   $("btn-save").addEventListener("click", saveReading);
+  $("am-confirm-val").addEventListener("click", alarmConfirmValue);
+  $("am-reenter").addEventListener("click", alarmReenter);
+  $("am-cancel").addEventListener("click", closeAlarmModal);
+  $("am-save").addEventListener("click", alarmSave);
+  $("modal-alarm").addEventListener("click", (e) => { if (e.target.id === "modal-alarm") closeAlarmModal(); });
   $("in-do").addEventListener("input", updateLive);
   $("in-temp").addEventListener("input", updateLive);
   window.addEventListener("online", () => { setNet(); syncQueue(); });

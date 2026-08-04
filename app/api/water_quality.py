@@ -37,6 +37,17 @@ jinja_env = Environment(loader=FileSystemLoader(str(template_dir)))
 # Una lectura de O2 se considera vencida si supera este intervalo (cada 2-4 h)
 O2_STALE_HOURS = 4
 
+# Acciones correctivas ofrecidas ante una lectura de O2 en alarma (llamado a la
+# acción). El operador elige una al reconocer la lectura; queda en
+# pond_oxygen_readings.corrective_action. Compartidas por el form web y la PWA.
+CORRECTIVE_ACTIONS = [
+    "Encendí aireación / oxígeno",
+    "Revisé / ajusté flujo de agua",
+    "Avisé al supervisor",
+    "Segunda lectura / reingreso",
+    "A verificar (aún sin acción)",
+]
+
 
 def get_db():
     db = SessionLocal()
@@ -193,13 +204,19 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
 
         o2_latest = _latest_o2_by_pond(db)
         bf_latest = _latest_bf_by_unit(db)
+        # Umbrales actuales: se reinyectan al motor para derivar el motivo
+        # (qué parámetro dispara la tarjeta) sin persistir nada.
+        thresholds = load_thresholds(db)
 
         units_data = []
         totals = {"ok": 0, "alerta": 0, "alarma": 0, "sin_dato": 0}
         for u in units:
             u_ponds = ponds_by_unit.get(u.id, [])
             levels = []
-            n_alarm = n_alert = n_nodata = n_stale = 0
+            # Motivos de la unidad como tuplas (Reason, etiqueta de ubicación):
+            # el estanque para O₂, "Biofiltro" para el muestreo de la unidad.
+            unit_reasons = []
+            n_alarm = n_alert = n_nodata = n_stale = n_alarm_unack = 0
             pond_rows = []
 
             for p in u_ponds:
@@ -214,28 +231,63 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                         levels.append(r.alarm_level)
                         if r.alarm_level == "alarma":
                             n_alarm += 1
+                            # Alarma cuya lectura no fue reconocida por el operador:
+                            # necesita atención del supervisor.
+                            if not r.acknowledged:
+                                n_alarm_unack += 1
                         elif r.alarm_level == "alerta":
                             n_alert += 1
+                    for rs in wq.oxygen_reasons(r.do_mg_l, r.water_temp_c,
+                                                r.saturation_pct, thresholds):
+                        unit_reasons.append((rs, p.name))
                 pond_rows.append({
                     "pond_id": p.id, "pond_name": p.name, "reading": r,
                     "alarm_level": (r.alarm_level if r else None),
                     "consistency_flag": (r.consistency_flag if r else None),
                     "hours_ago": hours, "stale": stale, "has_data": r is not None,
+                    # Nivel por campo, para destacar la celda fuera de rango.
+                    "levels": (wq.oxygen_field_levels(r.do_mg_l, r.water_temp_c,
+                                                      r.saturation_pct, thresholds) if r else {}),
                 })
 
             bf = bf_latest.get(u.id)
             has_bf = bf is not None
+            bf_levels = {}
             if bf is None:
                 n_nodata += 1
-            elif bf.alarm_level:
-                levels.append(bf.alarm_level)
-                if bf.alarm_level == "alarma":
-                    n_alarm += 1
-                elif bf.alarm_level == "alerta":
-                    n_alert += 1
+            else:
+                if bf.alarm_level:
+                    levels.append(bf.alarm_level)
+                    if bf.alarm_level == "alarma":
+                        n_alarm += 1
+                    elif bf.alarm_level == "alerta":
+                        n_alert += 1
+                bf_vals = {
+                    "in_ph": bf.in_ph, "in_temp_c": bf.in_temp_c,
+                    "in_nh4_n": bf.in_nh4_n, "in_no2_n": bf.in_no2_n, "in_no3_n": bf.in_no3_n,
+                    "out_ph": bf.out_ph, "out_temp_c": bf.out_temp_c,
+                    "out_nh4_n": bf.out_nh4_n, "out_no2_n": bf.out_no2_n, "out_no3_n": bf.out_no3_n,
+                    "n_balance_flag": bf.n_balance_flag,
+                    "ph_delta_flag": bf.ph_delta_flag,
+                    "temp_delta_flag": bf.temp_delta_flag,
+                }
+                for rs in wq.biofilter_reasons(bf_vals, thresholds):
+                    unit_reasons.append((rs, "Biofiltro"))
+                bf_levels = wq.biofilter_field_levels(bf_vals, thresholds)
 
             rollup = wq.worst_level(*levels) if levels else "sin_dato"
             totals[rollup] = totals.get(rollup, 0) + 1
+            # Motivo dominante de la unidad (el más crítico) + cuántos otros hay.
+            reason = None
+            if unit_reasons:
+                unit_reasons.sort(key=lambda t: wq.reason_rank(t[0]), reverse=True)
+                top, loc = unit_reasons[0]
+                reason = {
+                    "text": f"{loc} · {top.text}",
+                    "kind": top.kind,
+                    "level": top.level,
+                    "extra": len(unit_reasons) - 1,
+                }
             units_data.append({
                 "unit_id": u.id,
                 "unit_name": u.name,
@@ -243,11 +295,14 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 "n_ponds": len(u_ponds),
                 "has_bf": has_bf,
                 "n_alarm": n_alarm,
+                "n_alarm_unack": n_alarm_unack,
                 "n_alert": n_alert,
                 "n_nodata": n_nodata,
                 "n_stale": n_stale,
                 "pond_rows": pond_rows,
                 "bf": bf,
+                "bf_levels": bf_levels,
+                "reason": reason,
             })
 
         context = {
@@ -277,6 +332,7 @@ def oxigeno_form(request: Request, pond_id: Optional[int] = None):
             .order_by(Pond.name)
             .all()
         )
+        th = load_thresholds(db)
         context = {
             "request": request,
             "ponds": [{"id": p.id, "name": p.name} for p in ponds],
@@ -284,6 +340,10 @@ def oxigeno_form(request: Request, pond_id: Optional[int] = None):
             "selected_pond": pond_id,
             "now_local": datetime.now().strftime("%Y-%m-%dT%H:%M"),
             "altitude_m": wq.SITE_ALTITUDE_M,
+            # Umbrales para evaluar en vivo (color + confirmación) del lado cliente.
+            "o2_thresholds": {"do_mg_l": th["o2_do_mg_l"], "saturation": th["o2_saturation"],
+                              "water_temp": th.get("water_temp")},
+            "corrective_actions": CORRECTIVE_ACTIONS,
         }
         html = jinja_env.get_template("calidad_agua_oxigeno_form.html").render(context)
         return HTMLResponse(content=html)
@@ -300,6 +360,8 @@ def oxigeno_create(
     saturation_pct: Optional[str] = Form(None),
     operator_id: Optional[str] = Form(None),
     observation: Optional[str] = Form(None),
+    acknowledged: Optional[str] = Form(None),
+    corrective_action: Optional[str] = Form(None),
 ):
     db = SessionLocal()
     try:
@@ -336,6 +398,11 @@ def oxigeno_create(
             saturation_computed_pct=res.saturation_computed_pct,
             consistency_flag=res.consistency_flag,
             alarm_level=res.alarm_level,
+            # El acknowledgment solo aplica a lecturas en alarma; en ok/alerta se
+            # ignora lo que mande el cliente para no marcar como "reconocidas"
+            # lecturas que no lo requieren.
+            acknowledged=(res.alarm_level == "alarma" and bool(acknowledged)),
+            corrective_action=((corrective_action or None) if res.alarm_level == "alarma" else None),
             observation=(observation or None),
             created_at=datetime.now(),
         )
@@ -343,6 +410,8 @@ def oxigeno_create(
         db.commit()
 
         msg = f"Lectura de O2 registrada (estado: {res.alarm_level}"
+        if res.alarm_level == "alarma" and reading.corrective_action:
+            msg += f", acción: {reading.corrective_action}"
         if res.consistency_flag == "sospechoso":
             msg += ", terna sospechosa"
         msg += ")."
@@ -452,17 +521,22 @@ def biofiltro_create(
 # ---------------------------------------------------------------------------
 # Metadatos de presentación: etiqueta y grupo (biológico vs validación).
 THRESHOLD_META = {
+    "o2_do_mg_l":         {"label": "O₂ disuelto absoluto", "group": "bio"},
     "o2_saturation":      {"label": "Saturación de O₂", "group": "bio"},
     "nh3_n":              {"label": "Amonio no ionizado (NH₃-N)", "group": "bio"},
     "nitrite_n":          {"label": "Nitrito (NO₂-N)", "group": "bio"},
+    "water_temp":         {"label": "Temperatura del agua (alarma por alta)", "group": "bio"},
     "ph_delta_tol":       {"label": "ΔpH entrada→salida", "group": "val"},
     "temp_delta_tol":     {"label": "Δtemperatura entrada→salida", "group": "val"},
     "o2_consistency_tol": {"label": "Consistencia terna O₂/temp/saturación", "group": "val"},
 }
 # n_balance_k se edita en la página de especificaciones de test, no aquí.
-THRESHOLD_ORDER = ["o2_saturation", "nh3_n", "nitrite_n",
+THRESHOLD_ORDER = ["o2_do_mg_l", "o2_saturation", "water_temp", "nh3_n", "nitrite_n",
                    "ph_delta_tol", "temp_delta_tol", "o2_consistency_tol"]
-_COMPARATOR_TEXT = {"lt": "dispara si es menor que", "gt": "dispara si es mayor que"}
+_COMPARATOR_TEXT = {
+    "lt": "dispara si es menor que",
+    "gt": "dispara si es mayor que",
+}
 
 
 def _num(v):

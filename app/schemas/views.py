@@ -5,6 +5,7 @@ class LotSummary(BaseModel):
     id: int
     name: str
     internal_id: Optional[str] = None
+    is_pending_count: Optional[bool] = False  # lote asignado por eclosión, sin 1er recuento
 
     class Config:
         from_attributes = True

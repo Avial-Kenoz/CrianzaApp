@@ -37,8 +37,22 @@ SITE_SALINITY: float = 0.0       # agua dulce
 # O2 de 45 mg/L o una saturación de 426%). No es una alarma biológica: se marca
 # la terna como sospechosa para que el operador confirme y el panel lo destaque.
 PLAUSIBLE_DO_MG_L = (0.0, 20.0)    # O2 disuelto; agua dulce fría satura ~14 mg/L
-PLAUSIBLE_TEMP_C = (0.0, 30.0)     # temperatura del agua del sitio
+# Cota FÍSICA de la temperatura = detección de glitch de sensor (p. ej. 950 °C).
+# Fuera de esto la lectura no es un dato real: se marca "sospechosa" y no se
+# confía en ella (no se computa saturación ni se dispara la alarma de temp).
+# NO es la banda biológica: una temp alta REAL (26–40 °C) es una EMERGENCIA que
+# sí debe alarmar (umbral 'water_temp'), no un glitch. Por eso el tope es amplio.
+PLAUSIBLE_TEMP_C = (0.0, 45.0)
 PLAUSIBLE_SAT_PCT = (0.0, 150.0)   # saturación (ingresada o teórica)
+# Máximo almacenable en pond_oxygen_readings.saturation_computed_pct = Numeric(6,2).
+# Más allá (temp absurda → saturación 1e20+) NO se guarda, para no desbordar la BD.
+SAT_COMPUTED_STORAGE_MAX = 9999.99
+
+
+def temp_is_glitch(temp: Optional[float]) -> bool:
+    """True si la temperatura está fuera del rango físico plausible (glitch de
+    sensor): no es un dato confiable."""
+    return temp is not None and (temp < PLAUSIBLE_TEMP_C[0] or temp > PLAUSIBLE_TEMP_C[1])
 
 
 def oxygen_range_issues(do_mg_l: Optional[float], water_temp_c: Optional[float],
@@ -47,7 +61,8 @@ def oxygen_range_issues(do_mg_l: Optional[float], water_temp_c: Optional[float],
     """Lista de valores fuera de rango físico plausible (vacía si todo ok).
 
     Compartida por el ingreso (form web + PWA), el backfill y el espejo del
-    cliente, para que la regla de sanidad sea única.
+    cliente, para que la regla de sanidad sea única. Detecta glitches/typos; la
+    alarma biológica (O2 bajo / temp alta) va por los umbrales, no por acá.
     """
     issues: list[str] = []
 
@@ -68,6 +83,13 @@ def oxygen_range_issues(do_mg_l: Optional[float], water_temp_c: Optional[float],
 # comparator: 'lt' dispara si el valor es menor que el umbral; 'gt' si es mayor.
 DEFAULT_THRESHOLDS: dict[str, dict] = {
     "o2_saturation":      {"alert": 70.0,   "alarm": 60.0,   "comparator": "lt"},
+    # O2 disuelto absoluto (mg/L): piso intuitivo e independiente de la
+    # temperatura. Dispara aunque falte temp/saturación. Editable en BD.
+    "o2_do_mg_l":         {"alert": 6.0,    "alarm": 5.0,    "comparator": "lt"},
+    # Temperatura del agua (°C): ALARMA BIOLÓGICA por temp alta. El esturión es
+    # pez de agua fría; sobre ~24 °C hay estrés térmico y el agua retiene menos
+    # O2. Dispara con valores MAYORES al umbral (comparator 'gt'). Editable.
+    "water_temp":         {"alert": 23.0,   "alarm": 25.0,   "comparator": "gt"},
     "nh3_n":              {"alert": 0.0125, "alarm": 0.025,  "comparator": "gt"},
     "nitrite_n":          {"alert": 0.10,   "alarm": 0.50,   "comparator": "gt"},
     # Balance de N: factor de cobertura k. Se marca desbalance si
@@ -181,7 +203,10 @@ def expected_saturation_pct(do_mg_l: float, temp_c: float,
 class OxygenResult:
     saturation_computed_pct: Optional[float] = None
     consistency_flag: str = "ok"          # ok | sospechoso
-    alarm_level: str = "ok"               # ok | alerta | alarma
+    alarm_level: str = "ok"               # ok | alerta | alarma (peor de los tres)
+    sat_level: str = "ok"                 # nivel por saturación (%)
+    do_level: str = "ok"                  # nivel por O2 absoluto (mg/L)
+    temp_level: str = "ok"                # nivel por temperatura alta (°C)
 
 
 def evaluate_oxygen(do_mg_l: Optional[float], water_temp_c: Optional[float],
@@ -196,23 +221,44 @@ def evaluate_oxygen(do_mg_l: Optional[float], water_temp_c: Optional[float],
     th = thresholds or DEFAULT_THRESHOLDS
     res = OxygenResult()
 
-    computed = None
-    if do_mg_l is not None and water_temp_c is not None:
-        computed = expected_saturation_pct(do_mg_l, water_temp_c, altitude_m)
-        res.saturation_computed_pct = round(computed, 2)
+    # ¿La temperatura es un glitch de sensor (fuera del rango físico)? No es un
+    # dato confiable: no se computa saturación ni se dispara la alarma de temp.
+    temp_glitch = temp_is_glitch(water_temp_c)
 
-    # Consistencia: (a) valores fuera de rango físico plausible, o
-    # (b) saturación ingresada vs teórica fuera de tolerancia -> sospechoso.
+    computed = None
+    if do_mg_l is not None and water_temp_c is not None and not temp_glitch:
+        val = expected_saturation_pct(do_mg_l, water_temp_c, altitude_m)
+        # Defensa extra: si aun así la saturación no cabe en la columna, no se guarda.
+        if math.isfinite(val) and abs(val) <= SAT_COMPUTED_STORAGE_MAX:
+            computed = val
+            res.saturation_computed_pct = round(val, 2)
+
+    # Consistencia (validación): valores fuera de rango físico (incl. glitch de
+    # temp) o saturación ingresada vs teórica fuera de tolerancia -> sospechoso.
     suspect = bool(oxygen_range_issues(do_mg_l, water_temp_c, saturation_pct, computed))
     if computed is not None and saturation_pct is not None:
         diff = abs(computed - float(saturation_pct))
         suspect = suspect or eval_threshold(diff, th["o2_consistency_tol"]) != "ok"
     res.consistency_flag = "sospechoso" if suspect else "ok"
 
-    # Alarma por saturación (prioriza la ingresada; si falta, usa la teórica)
-    sat_for_alarm = saturation_pct if saturation_pct is not None else computed
+    # Alarma biológica: peor nivel entre saturación (%), O2 absoluto (mg/L) y
+    # temperatura alta (°C). La saturación prioriza la INGRESADA; solo cae a la
+    # teórica si la temperatura es confiable (no glitch), para que una temp sin
+    # sentido no DEGRADE una alarma vía una saturación teórica falsa. El O2
+    # absoluto es un piso independiente de la temperatura: siempre aplica.
+    sat_for_alarm = saturation_pct
+    if sat_for_alarm is None and not temp_glitch:
+        sat_for_alarm = computed
     if sat_for_alarm is not None:
-        res.alarm_level = eval_threshold(float(sat_for_alarm), th["o2_saturation"])
+        res.sat_level = eval_threshold(float(sat_for_alarm), th["o2_saturation"])
+    if do_mg_l is not None:
+        do_spec = th.get("o2_do_mg_l") or DEFAULT_THRESHOLDS["o2_do_mg_l"]
+        res.do_level = eval_threshold(float(do_mg_l), do_spec)
+    # Temperatura alta: solo si es confiable (no glitch).
+    if water_temp_c is not None and not temp_glitch:
+        temp_spec = th.get("water_temp") or DEFAULT_THRESHOLDS["water_temp"]
+        res.temp_level = eval_threshold(float(water_temp_c), temp_spec)
+    res.alarm_level = worst_level(res.sat_level, res.do_level, res.temp_level)
 
     return res
 
@@ -316,3 +362,142 @@ def evaluate_biofilter(reading: dict, thresholds: Optional[dict] = None,
 
     r.alarm_level = worst_level(nh3_level, nitrite_level)
     return r
+
+
+# ---------------------------------------------------------------------------
+# Motivos ("¿por qué está en amarillo/rojo?") para el panel de estado
+# ---------------------------------------------------------------------------
+# Para cada parámetro: etiqueta corta + palabra de dirección, para armar la
+# frase de lectura rápida ("O₂ bajo", "Amonio alto", "Temperatura alta").
+_REASON_LABELS: dict[str, tuple[str, str]] = {
+    "o2_do_mg_l":    ("O₂", "bajo"),
+    "o2_saturation": ("Saturación O₂", "baja"),
+    "water_temp":    ("Temperatura", "alta"),
+    "nh3_n":         ("Amonio", "alto"),
+    "nitrite_n":     ("Nitrito", "alto"),
+}
+# Severidad del motivo: la sospecha de medición (validación) queda por DEBAJO de
+# cualquier alarma biológica, para que el color biológico siga mandando.
+_REASON_SEVERITY = {"ok": 0, "sospechoso": 1, "alerta": 2, "alarma": 3}
+# Desempate cuando dos motivos comparten nivel (mayor = se muestra antes).
+_REASON_PRIORITY = {
+    "o2_do_mg_l": 5, "nh3_n": 5, "o2_saturation": 4, "nitrite_n": 4,
+    "water_temp": 3, "n_balance": 2, "ph_delta": 2, "temp_delta": 2,
+}
+
+
+@dataclass
+class Reason:
+    """Un motivo por el que una lectura no está en verde.
+
+    kind: 'bio' (alarma biológica, tiñe la tarjeta) | 'val' (sospecha de
+    medición; no implica riesgo biológico). level: alarma|alerta|sospechoso.
+    text: frase corta del parámetro (sin el estanque/unidad, que antepone quien
+    renderiza). param: clave estable para desempate y estilos.
+    """
+    kind: str
+    level: str
+    param: str
+    text: str
+
+
+def reason_rank(r: "Reason") -> tuple:
+    """Clave de orden (descendente) para elegir el motivo más crítico."""
+    return (_REASON_SEVERITY.get(r.level, 0), _REASON_PRIORITY.get(r.param, 0))
+
+
+def _sort_reasons(reasons: list["Reason"]) -> list["Reason"]:
+    reasons.sort(key=reason_rank, reverse=True)
+    return reasons
+
+
+def _to_float(v) -> Optional[float]:
+    """Coacción segura a float (los valores ORM llegan como Decimal)."""
+    return None if v is None else float(v)
+
+
+def oxygen_reasons(do_mg_l, water_temp_c, saturation_pct,
+                   thresholds: Optional[dict] = None,
+                   altitude_m: float = SITE_ALTITUDE_M) -> list["Reason"]:
+    """Motivos biológicos de una lectura de O2, del más severo al menos.
+
+    Reusa `evaluate_oxygen` para que los niveles coincidan exactamente con el
+    `alarm_level` persistido (misma decisión, mismos umbrales)."""
+    res = evaluate_oxygen(_to_float(do_mg_l), _to_float(water_temp_c),
+                          _to_float(saturation_pct), thresholds=thresholds,
+                          altitude_m=altitude_m)
+    out: list[Reason] = []
+    for param, level in (("o2_do_mg_l", res.do_level),
+                         ("o2_saturation", res.sat_level),
+                         ("water_temp", res.temp_level)):
+        if level != "ok":
+            label, direction = _REASON_LABELS[param]
+            out.append(Reason("bio", level, param, f"{label} {direction}"))
+    return _sort_reasons(out)
+
+
+def biofilter_reasons(reading: dict, thresholds: Optional[dict] = None) -> list["Reason"]:
+    """Motivos de un muestreo de biofiltro, del más severo al menos.
+
+    Combina alarmas biológicas (amonio no ionizado y nitrito, por punto de
+    entrada/salida) con los flags de validación ya persistidos (balance de N,
+    ΔpH, Δtemp) —estos últimos son sospecha de medición, no riesgo biológico.
+    `reading` es un mapping con las claves in_/out_ y los *_flag persistidos.
+    """
+    th = thresholds or DEFAULT_THRESHOLDS
+    out: list[Reason] = []
+    for point, pt_label in (("in", "entrada"), ("out", "salida")):
+        nh3 = unionized_ammonia_n(_to_float(reading.get(f"{point}_nh4_n")),
+                                  _to_float(reading.get(f"{point}_ph")),
+                                  _to_float(reading.get(f"{point}_temp_c")))
+        lvl = eval_threshold(nh3, th["nh3_n"])
+        if lvl != "ok":
+            out.append(Reason("bio", lvl, "nh3_n", f"Amonio {pt_label} alto"))
+        lvl = eval_threshold(_to_float(reading.get(f"{point}_no2_n")), th["nitrite_n"])
+        if lvl != "ok":
+            out.append(Reason("bio", lvl, "nitrite_n", f"Nitrito {pt_label} alto"))
+    for flag, param, text in (
+        ("n_balance_flag", "n_balance", "Balance N desbalanceado"),
+        ("ph_delta_flag", "ph_delta", "ΔpH anormal"),
+        ("temp_delta_flag", "temp_delta", "Δtemp anormal"),
+    ):
+        if reading.get(flag) == "sospechoso":
+            out.append(Reason("val", "sospechoso", param, text))
+    return _sort_reasons(out)
+
+
+def oxygen_field_levels(do_mg_l, water_temp_c, saturation_pct,
+                        thresholds: Optional[dict] = None,
+                        altitude_m: float = SITE_ALTITUDE_M) -> dict:
+    """Nivel (ok|alerta|alarma) por campo de una lectura de O2, para destacar en
+    el detalle la celda fuera de rango. Consistente con `evaluate_oxygen`."""
+    th = thresholds or DEFAULT_THRESHOLDS
+    res = evaluate_oxygen(_to_float(do_mg_l), _to_float(water_temp_c),
+                          _to_float(saturation_pct), thresholds=th, altitude_m=altitude_m)
+    sat_spec = th.get("o2_saturation") or DEFAULT_THRESHOLDS["o2_saturation"]
+    return {
+        "do_mg_l": res.do_level,
+        "water_temp_c": res.temp_level,
+        "saturation_pct": eval_threshold(_to_float(saturation_pct), sat_spec),
+        "saturation_computed_pct": eval_threshold(res.saturation_computed_pct, sat_spec),
+    }
+
+
+def biofilter_field_levels(reading: dict, thresholds: Optional[dict] = None) -> dict:
+    """Nivel por celda para destacar en el detalle del biofiltro: nitrito y
+    amonio no ionizado, en entrada y salida (alarmas biológicas por valor).
+
+    Las validaciones por diferencia (ΔpH / Δtemp / balance N) no colorean celdas
+    individuales —el valor suelto no está "fuera de rango"—: se comunican con los
+    pills de validación de la fila inferior."""
+    th = thresholds or DEFAULT_THRESHOLDS
+    nh3_spec = th.get("nh3_n") or DEFAULT_THRESHOLDS["nh3_n"]
+    no2_spec = th.get("nitrite_n") or DEFAULT_THRESHOLDS["nitrite_n"]
+    out = {}
+    for point, nh3_key in (("in", "nh3_n_in"), ("out", "nh3_n_out")):
+        out[f"{point}_no2_n"] = eval_threshold(_to_float(reading.get(f"{point}_no2_n")), no2_spec)
+        nh3 = unionized_ammonia_n(_to_float(reading.get(f"{point}_nh4_n")),
+                                  _to_float(reading.get(f"{point}_ph")),
+                                  _to_float(reading.get(f"{point}_temp_c")))
+        out[nh3_key] = eval_threshold(nh3, nh3_spec)
+    return out

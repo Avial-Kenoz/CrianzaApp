@@ -102,6 +102,33 @@
     .toast.show { opacity: 1; }
     .toast.ok { border-color: var(--green); } .toast.err { border-color: var(--red); }
     .empty { color: var(--mut); text-align: center; padding: 30px; }
+
+    /* Severidad en vivo del O2 */
+    .field input.sev-alerta { border-color: var(--amber); }
+    .field input.sev-alarma { border-color: var(--red); box-shadow: 0 0 0 3px rgba(239,68,68,.22); }
+
+    /* Modal de alarma (llamado a la acción) */
+    .modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.62); display: none;
+                  align-items: center; justify-content: center; padding: 18px; z-index: 80; }
+    .modal-back.show { display: flex; }
+    .modal { background: var(--panel); border: 1px solid var(--line); border-top: 5px solid var(--red);
+             border-radius: 18px; width: 100%; max-width: 460px; padding: 20px; }
+    .modal h3 { color: #fca5a5; font-size: 1.15rem; margin-bottom: 6px; display: flex; gap: 8px; align-items: center; }
+    .modal .m-sub { color: var(--mut); font-size: .86rem; margin-bottom: 14px; line-height: 1.4; }
+    .modal .m-big { font-size: 1.5rem; font-weight: 800; color: #fecaca; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+    .modal label { display: block; font-size: .8rem; color: var(--mut); font-weight: 650; margin: 14px 0 6px; }
+    .modal input { width: 100%; background: var(--bg); border: 2px solid var(--line); border-radius: 12px;
+                   color: var(--txt); font-size: 1.3rem; font-weight: 700; text-align: center; padding: 12px; outline: none; }
+    .modal input:focus { border-color: var(--red); }
+    .act-list { display: flex; flex-direction: column; gap: 8px; }
+    .act-list button { text-align: left; background: var(--panel2); border: 2px solid var(--line); color: var(--txt);
+                       border-radius: 12px; padding: 13px 14px; font-size: .95rem; font-weight: 650; cursor: pointer; }
+    .act-list button.on { border-color: var(--green); background: rgba(34,197,94,.18); color: #bbf7d0; }
+    .m-err { color: #fca5a5; font-size: .8rem; margin-top: 6px; display: none; }
+    .m-err.show { display: block; }
+    .m-actions { margin-top: 18px; }
+    .modal .m-stack { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+    .modal .m-stack .btn { width: 100%; flex: none; }
   </style>
 </head>
 <body>
@@ -172,6 +199,32 @@
     <div class="scan-hint" id="scan-hint">Apunta al QR del estanque…</div>
     <button class="btn btn-ghost" id="btn-scan-cancel">Cancelar</button>
   </section>
+</div>
+
+<!-- Modal de confirmación ante O₂ en alarma (llamado a la acción) -->
+<div class="modal-back" id="modal-alarm">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h3><span>⚠</span> <span id="am-title">Oxígeno muy bajo</span></h3>
+    <div class="m-sub">Valor en zona de alarma para los peces. Confírmalo y registra qué acción tomaste.</div>
+    <div class="m-big" id="am-big">—</div>
+
+    <!-- Paso 1: confirmar el valor o volver a digitarlo -->
+    <div class="m-stack" id="am-step-confirm">
+      <button class="btn" id="am-confirm-val" style="background:var(--red)">Confirmar</button>
+      <button class="btn btn-ghost" id="am-reenter">Digitar nuevo valor para O₂</button>
+    </div>
+
+    <!-- Paso 2: acción correctiva (se revela al confirmar) -->
+    <div id="am-step-action" class="hidden">
+      <label>¿Qué acción correctiva tomaste?</label>
+      <div class="act-list" id="am-actions"></div>
+      <div class="m-err" id="am-action-err">Selecciona una acción.</div>
+      <div class="row m-actions">
+        <button class="btn btn-ghost" id="am-cancel" style="flex:0 0 42%">Cancelar</button>
+        <button class="btn" id="am-save" style="background:var(--red)">Guardar</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>

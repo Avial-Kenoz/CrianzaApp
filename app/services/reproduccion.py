@@ -464,6 +464,8 @@ def save_lot(db: Session, batch_id: int, name: str, code: str) -> None:
         db.flush()
         batch.lot_id = lot.id
     batch.updated_at = now
+    # Si ya había unidades eclosionadas, enlaza el lote recién definido a sus bateas.
+    _link_lot_to_hatched_ponds(db, batch)
     db.commit()
 
 
@@ -516,6 +518,31 @@ def split_unit(db: Session, unit_id: int, targets: list, notes: str | None = Non
     db.commit()
 
 
+def _link_lot_to_hatched_ponds(db: Session, batch: IncubatorBatch) -> None:
+    """Enlaza el lote del Proceso 3 a las bateas donde ya eclosionaron unidades (§9.6).
+
+    Los peces "ingresan al estanque bajo el lote", pero **sin recuento**
+    (`awaiting_first_count`): por eso solo se asigna `pond.lot_id`, sin crear
+    movimientos ni poblar caches (el recuento se hace en la acción de primer
+    recuento, fuera del Proceso 3). No hace commit (lo hace el caller).
+    """
+    if not batch or not batch.lot_id:
+        return
+    hatched = (
+        db.query(IncubatorUnit)
+        .filter(
+            IncubatorUnit.incubator_batch_id == batch.id,
+            IncubatorUnit.status == "hatched",
+            IncubatorUnit.target_pond_id.isnot(None),
+        )
+        .all()
+    )
+    for u in hatched:
+        pond = db.get(Pond, u.target_pond_id)
+        if pond and pond.lot_id != batch.lot_id:
+            pond.lot_id = batch.lot_id
+
+
 def hatch_unit(db: Session, unit_id: int, target_pond_id: int) -> None:
     """Cierra una incubadora por eclosión (§9.6)."""
     unit = db.get(IncubatorUnit, unit_id)
@@ -530,13 +557,14 @@ def hatch_unit(db: Session, unit_id: int, target_pond_id: int) -> None:
     unit.hatched_at = now
     unit.updated_at = now
     db.flush()  # SessionLocal es autoflush=False: forzar para que el conteo siguiente lo vea
+    batch = db.get(IncubatorBatch, unit.incubator_batch_id)
+    # Enlaza el lote a la batea de destino (si ya está definido); recuento pendiente.
+    _link_lot_to_hatched_ponds(db, batch)
     # Si todas las unidades eclosionaron → batch a awaiting_first_count
     remaining = _active_units(db, unit.incubator_batch_id)
-    if not remaining:
-        batch = db.get(IncubatorBatch, unit.incubator_batch_id)
-        if batch.status == "monitoring":
-            batch.status = "awaiting_first_count"
-            batch.updated_at = now
+    if not remaining and batch.status == "monitoring":
+        batch.status = "awaiting_first_count"
+        batch.updated_at = now
     db.commit()
 
 
@@ -549,6 +577,8 @@ def complete_batch(db: Session, batch_id: int) -> None:
         raise ReproduccionError("Aún hay incubadoras activas sin eclosionar.")
     if not batch.lot_id:
         raise ReproduccionError("Debe definir el lote (nombre y código) antes de cerrar.")
+    # Backstop: garantiza el enlace lote↔batea antes de cerrar el proceso.
+    _link_lot_to_hatched_ponds(db, batch)
     batch.status = "completed"
     batch.updated_at = datetime.now()
     db.commit()

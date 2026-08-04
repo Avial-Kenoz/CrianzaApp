@@ -23,7 +23,9 @@ from app.models.ponds import Pond
 from app.models.cultivation_units import CultivationUnit
 from app.models.pond_oxygen_readings import PondOxygenReading
 from app.services import water_quality as wq
-from app.api.water_quality import load_thresholds, ensure_pond_qr_codes, recent_unit_temp
+from app.api.water_quality import (
+    load_thresholds, ensure_pond_qr_codes, recent_unit_temp, CORRECTIVE_ACTIONS,
+)
 
 router = APIRouter(prefix="/api/field/v1", tags=["field"])
 
@@ -34,6 +36,15 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+# Límites de las columnas Numeric de pond_oxygen_readings (precisión, escala).
+# do_mg_l/saturación = Numeric(6,2) → |v| ≤ 9999.99 ; temp = Numeric(5,2) → ≤ 999.99.
+def _fits_numeric_columns(do_mg_l, water_temp_c, saturation_pct, saturation_computed_pct) -> bool:
+    def _ok(v, max_abs):
+        return v is None or abs(float(v)) <= max_abs
+    return (_ok(do_mg_l, 9999.99) and _ok(water_temp_c, 999.99)
+            and _ok(saturation_pct, 9999.99) and _ok(saturation_computed_pct, 9999.99))
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +78,7 @@ def bootstrap():
                 for p in ponds
             ],
             "thresholds": load_thresholds(db),
+            "corrective_actions": CORRECTIVE_ACTIONS,
         }
     finally:
         db.close()
@@ -84,6 +96,10 @@ class OxygenReadingIn(BaseModel):
     saturation_pct: Optional[float] = None
     operator_id: Optional[int] = None
     observation: Optional[str] = None
+    # Llamado a la acción ante alarma: el operador reconoció la lectura y anotó
+    # la acción correctiva (solo se persisten si la lectura resulta en alarma).
+    acknowledged: Optional[bool] = False
+    corrective_action: Optional[str] = None
 
 
 class OxygenBatchIn(BaseModel):
@@ -170,6 +186,18 @@ def upload_oxygen_readings(payload: OxygenBatchIn):
 
             res = wq.evaluate_oxygen(item.do_mg_l, temp, item.saturation_pct,
                                      thresholds=thresholds)
+
+            # Defensa anti-desborde: si algún valor no cabe en su columna Numeric
+            # (glitch de sensor: O2/temp/saturación absurdos), la lectura se OMITE
+            # como error individual sin tocar la BD. Así un dato malo no aborta la
+            # transacción ni frena la sincronización del resto del lote.
+            if not _fits_numeric_columns(item.do_mg_l, temp, item.saturation_pct,
+                                         res.saturation_computed_pct):
+                errors += 1
+                results.append(ItemResult(client_uuid=item.client_uuid, status="error",
+                                          error="valores fuera de rango de almacenamiento (lectura omitida)"))
+                continue
+
             reading = PondOxygenReading(
                 pond_id=item.pond_id,
                 operator_id=item.operator_id,
@@ -181,6 +209,8 @@ def upload_oxygen_readings(payload: OxygenBatchIn):
                 saturation_computed_pct=res.saturation_computed_pct,
                 consistency_flag=res.consistency_flag,
                 alarm_level=res.alarm_level,
+                acknowledged=(res.alarm_level == "alarma" and bool(item.acknowledged)),
+                corrective_action=(item.corrective_action if res.alarm_level == "alarma" else None),
                 observation=(item.observation or None),
                 client_uuid=item.client_uuid,
                 created_at=datetime.now(),

@@ -36,6 +36,10 @@
     .empty { background: #fff; border: 1px dashed #d7dbe0; border-radius: 14px; padding: 40px; text-align: center; color: #9ca3af; }
     .note { font-size: .8rem; color: #6b7280; margin-top: 14px; }
     form { display: inline; }
+    .section-title { font-size: 1.05rem; font-weight: 750; margin: 26px 0 4px; }
+    .section-sub { color: #6b7280; font-size: .82rem; margin-bottom: 12px; }
+    .btn-danger { background: #fff; color: #dc2626; border: 1px solid #f0b4b4; } .btn-danger:hover { background: #dc2626; color: #fff; }
+    .s-head .spacer { margin-left: auto; }
   </style>
 </head>
 <body>
@@ -47,6 +51,27 @@
 
   {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
 
+  {% if active_rows %}
+  <div class="section-title">Sesiones activas (estanques bloqueados)</div>
+  <div class="section-sub">Un tablet está trabajando offline contra estos estanques. <strong>Libera solo si el tablet tiene problemas</strong> y no podrá sincronizar: se perderá lo que tenga sin subir.</div>
+  {% for a in active_rows %}
+  <div class="session">
+    <div class="s-head">
+      <span class="src">{{ a.source }}</span>
+      <span class="meta">Operador: {{ a.operator }}</span>
+      <span class="meta">Sesión #{{ a.id }}{% if a.created_at %} · {{ a.created_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</span>
+      <span class="meta">Bloquea: {{ a.ponds }}</span>
+      <span class="meta">{{ a.ops }} op. en servidor</span>
+      <form class="spacer" method="post" action="/views/ui/sexado/session/{{ a.id }}/release"
+            onsubmit="return confirm('¿Liberar los estanques de la sesión #{{ a.id }} ({{ a.source }})?\n\nEl tablet PERDERÁ cualquier lectura que no haya sincronizado. Úsalo solo si el tablet no puede sincronizar.');">
+        <button class="btn btn-danger">Liberar estanques</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  <div class="section-title">Contingencias por reconciliar</div>
   {% for b in blocks %}
   <div class="session">
     <div class="s-head">
@@ -93,6 +118,33 @@
   {% endfor %}
 
   {% if not blocks %}<div class="empty">No hay contingencias pendientes. 🎉</div>{% endif %}
+
+  {% if closed_rows %}
+  <div class="section-title">Reactivar sesión reciente</div>
+  <div class="section-sub">Si un tablet quedó con lecturas sin sincronizar tras cerrarse la sesión, reactívala para que pueda volver a sincronizar <strong>sin perder datos</strong>. Solo sesiones cerradas en las últimas 24 h.</div>
+  <div class="session">
+    <table>
+      <thead><tr><th>Sesión</th><th>Fuente</th><th>Operador</th><th>Estado</th><th>Cerrada</th><th>Acción</th></tr></thead>
+      <tbody>
+        {% for c in closed_rows %}
+        <tr>
+          <td>#{{ c.id }}</td>
+          <td>{{ c.source }}</td>
+          <td>{{ c.operator }}</td>
+          <td>{{ c.status }}</td>
+          <td>{{ c.released_at.strftime('%d/%m/%Y %H:%M') if c.released_at else '—' }}</td>
+          <td>
+            <form method="post" action="/views/ui/sexado/session/{{ c.id }}/reactivate"
+                  onsubmit="return confirm('¿Reactivar la sesión #{{ c.id }} ({{ c.source }})?\n\nVolverá a bloquear sus estanques para que el tablet pueda sincronizar.');">
+              <button class="btn btn-amber">Reactivar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
 
   <div class="note"><strong>Reintentar</strong>: reaplica la operación (útil tras corregir la posición del pez, hacer el retag o el movimiento intermedio desde la app).
     <strong>Revivir y reintentar</strong>: si el pez fue declarado muerto por error, lo reactiva y reaplica.

@@ -35,5 +35,11 @@ class PondOxygenReading(Base):
     consistency_flag = Column(String(20))            # ok | sospechoso
     alarm_level = Column(String(20))                 # ok | alerta | alarma
 
+    # Llamado a la acción ante una lectura en alarma: el operador reconoce el
+    # valor (re-ingreso) y registra qué acción correctiva tomó. `acknowledged`
+    # queda False en lecturas ok/alerta que no requieren reconocimiento.
+    acknowledged = Column(Boolean, nullable=False, default=False)
+    corrective_action = Column(String(120))          # acción tomada (o None)
+
     observation = Column(String(255))
     created_at = Column(TIMESTAMP)

@@ -41,6 +41,14 @@
     .alerta .u-status { color: #b45309; } .alerta .big-dot { background: #d97706; }
     .alarma .u-status { color: #b91c1c; } .alarma .big-dot { background: #dc2626; }
     .sin_dato .u-status { color: #6b7280; } .sin_dato .big-dot { background: #9ca3af; }
+    /* Motivo dominante: la lectura rápida de "dónde poner atención". */
+    .u-reason { margin-top: 12px; display: inline-flex; align-items: center; gap: 7px;
+                font-size: .82rem; font-weight: 700; padding: 6px 11px; border-radius: 9px; line-height: 1.2; }
+    .u-reason .r-ico { font-size: .74rem; }
+    .u-reason .r-more { font-weight: 600; opacity: .75; font-size: .74rem; }
+    .r-bio-alarma { background: #fef2f2; color: #b91c1c; }
+    .r-bio-alerta { background: #fffbeb; color: #b45309; }
+    .r-val-sospechoso { background: #f3f4f6; color: #4b5563; }
     .u-meta { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
     .chip { font-size: .74rem; font-weight: 650; padding: 3px 9px; border-radius: 999px; background: #f3f4f6; color: #4b5563; }
     .chip.warn { background: #fef2f2; color: #dc2626; } .chip.amber { background: #fffbeb; color: #b45309; }
@@ -73,6 +81,7 @@
     .pill-alarm { background: #fef2f2; color: #dc2626; } .pill-none { background: #f3f4f6; color: #9ca3af; }
     .pill-warn { background: #fff7ed; color: #c2410c; }
     .meta { color: #9ca3af; font-size: .78rem; } .stale { color: #b45309; }
+    .action-row { margin-top: 12px; }
     .params { display: grid; grid-template-columns: repeat(auto-fill, minmax(115px, 1fr)); gap: 10px; margin-top: 12px; }
     .param { background: #fff; border: 1px solid #eef0f2; border-radius: 10px; padding: 9px 11px; }
     .param .k { font-size: .68rem; text-transform: uppercase; letter-spacing: .03em; color: #9ca3af; font-weight: 700; }
@@ -83,6 +92,13 @@
     .bf-table th:first-child, .bf-table td:first-child { text-align: left; font-weight: 650; }
     .bf-table thead th { font-size: .7rem; text-transform: uppercase; color: #6b7280; letter-spacing: .04em; }
     .bf-table .col-in { color: #2563eb; } .bf-table .col-out { color: #059669; }
+    /* Destaque de valor fuera de rango (celda de tabla o card de parámetro). */
+    .hl.hl-alarma { color: #b91c1c; font-weight: 800; }
+    .hl.hl-alerta { color: #b45309; font-weight: 800; }
+    .bf-table td .hl.hl-alarma, .bf-table td .hl.hl-alerta { padding: 1px 6px; border-radius: 6px; }
+    .bf-table td .hl.hl-alarma { background: #fef2f2; } .bf-table td .hl.hl-alerta { background: #fffbeb; }
+    .param.p-alarma { border-color: #fecaca; background: #fff5f5; }
+    .param.p-alerta { border-color: #fde68a; background: #fffdf5; }
     .flags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; font-size: .82rem; color: #6b7280; }
     .no-data { color: #9ca3af; font-size: .86rem; padding: 6px 0; }
     .no-data a, .sub-card a { color: #2563eb; text-decoration: none; }
@@ -99,6 +115,10 @@
 {%- endmacro %}
 {% macro fmt(v, dec=2, unit='') -%}
   {% if v is not none %}{{ ('%.'+dec|string+'f')|format(v) }}{% if unit %} <small>{{ unit }}</small>{% endif %}{% else %}<span class="meta">—</span>{% endif %}
+{%- endmacro %}
+{# fmt con destaque de celda fuera de rango (level: ok|alerta|alarma) #}
+{% macro fmt_hl(v, dec, unit, level) -%}
+  {% if v is not none %}<span class="hl {{ 'hl-'+level if level and level != 'ok' else '' }}">{{ ('%.'+dec|string+'f')|format(v) }}{% if unit %} <small>{{ unit }}</small>{% endif %}</span>{% else %}<span class="meta">—</span>{% endif %}
 {%- endmacro %}
 
 <div class="page">
@@ -131,10 +151,17 @@
         {% if u.rollup == 'ok' %}Todo en orden{% elif u.rollup == 'alerta' %}En alerta
         {% elif u.rollup == 'alarma' %}En alarma{% else %}Sin datos{% endif %}
       </div>
+      {% if u.reason %}
+      <div class="u-reason r-{{ u.reason.kind }}-{{ u.reason.level }}">
+        <span class="r-ico">{% if u.reason.kind == 'val' %}⚑{% else %}▲{% endif %}</span>
+        <span>{{ u.reason.text }}{% if u.reason.extra %} <span class="r-more">+{{ u.reason.extra }} más</span>{% endif %}</span>
+      </div>
+      {% endif %}
       <div class="u-meta">
         <span class="chip">{{ u.n_ponds }} estanque{{ 's' if u.n_ponds != 1 else '' }}</span>
         <span class="chip {{ '' if u.has_bf else 'muted' }}">biofiltro {{ '✓' if u.has_bf else '—' }}</span>
         {% if u.n_alarm %}<span class="chip warn">{{ u.n_alarm }} en alarma</span>{% endif %}
+        {% if u.n_alarm_unack %}<span class="chip warn">⚠ {{ u.n_alarm_unack }} sin acción</span>{% endif %}
         {% if u.n_alert %}<span class="chip amber">{{ u.n_alert }} en alerta</span>{% endif %}
       </div>
       {% if u.n_nodata or u.n_stale %}
@@ -180,10 +207,10 @@
             <tr><td>pH</td><td>{{ fmt(bf.in_ph, '2') }}</td><td>{{ fmt(bf.out_ph, '2') }}</td></tr>
             <tr><td>Temperatura</td><td>{{ fmt(bf.in_temp_c, '1', '°C') }}</td><td>{{ fmt(bf.out_temp_c, '1', '°C') }}</td></tr>
             <tr><td>Amonio (NH₄-N)</td><td>{{ fmt(bf.in_nh4_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_nh4_n, '3', 'mg/L') }}</td></tr>
-            <tr><td>Nitrito (NO₂-N)</td><td>{{ fmt(bf.in_no2_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_no2_n, '3', 'mg/L') }}</td></tr>
+            <tr><td>Nitrito (NO₂-N)</td><td>{{ fmt_hl(bf.in_no2_n, '3', 'mg/L', u.bf_levels.get('in_no2_n')) }}</td><td>{{ fmt_hl(bf.out_no2_n, '3', 'mg/L', u.bf_levels.get('out_no2_n')) }}</td></tr>
             <tr><td>Nitrato (NO₃-N)</td><td>{{ fmt(bf.in_no3_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_no3_n, '3', 'mg/L') }}</td></tr>
             <tr><td>N total</td><td>{{ fmt(bf.tn_in, '2', 'mg/L') }}</td><td>{{ fmt(bf.tn_out, '2', 'mg/L') }}</td></tr>
-            <tr><td>NH₃-N no ionizado</td><td>{{ fmt(bf.nh3_n_in, '4', 'mg/L') }}</td><td>{{ fmt(bf.nh3_n_out, '4', 'mg/L') }}</td></tr>
+            <tr><td>NH₃-N no ionizado</td><td>{{ fmt_hl(bf.nh3_n_in, '4', 'mg/L', u.bf_levels.get('nh3_n_in')) }}</td><td>{{ fmt_hl(bf.nh3_n_out, '4', 'mg/L', u.bf_levels.get('nh3_n_out')) }}</td></tr>
           </tbody>
         </table>
         <div class="flags">
@@ -209,13 +236,22 @@
         </div>
         {% if p.has_data %}
         <div class="params">
-          <div class="param"><div class="k">O₂ disuelto</div><div class="v">{{ fmt(p.reading.do_mg_l, '2', 'mg/L') }}</div></div>
-          <div class="param"><div class="k">Temperatura</div><div class="v">{{ fmt(p.reading.water_temp_c, '1', '°C') }}{% if p.reading.water_temp_inherited %} <span style="font-size:.72rem;color:#6b7280;font-weight:600">heredada</span>{% endif %}</div></div>
-          <div class="param"><div class="k">Saturación</div><div class="v">{{ fmt(p.reading.saturation_pct, '1', '%') }}</div></div>
-          <div class="param"><div class="k">Sat. teórica</div><div class="v">{{ fmt(p.reading.saturation_computed_pct, '1', '%') }}</div></div>
+          <div class="param {{ 'p-'+p.levels.get('do_mg_l') if p.levels.get('do_mg_l', 'ok') != 'ok' else '' }}"><div class="k">O₂ disuelto</div><div class="v">{{ fmt_hl(p.reading.do_mg_l, '2', 'mg/L', p.levels.get('do_mg_l')) }}</div></div>
+          <div class="param {{ 'p-'+p.levels.get('water_temp_c') if p.levels.get('water_temp_c', 'ok') != 'ok' else '' }}"><div class="k">Temperatura</div><div class="v">{{ fmt_hl(p.reading.water_temp_c, '1', '°C', p.levels.get('water_temp_c')) }}{% if p.reading.water_temp_inherited %} <span style="font-size:.72rem;color:#6b7280;font-weight:600">heredada</span>{% endif %}</div></div>
+          <div class="param {{ 'p-'+p.levels.get('saturation_pct') if p.levels.get('saturation_pct', 'ok') != 'ok' else '' }}"><div class="k">Saturación</div><div class="v">{{ fmt_hl(p.reading.saturation_pct, '1', '%', p.levels.get('saturation_pct')) }}</div></div>
+          <div class="param {{ 'p-'+p.levels.get('saturation_computed_pct') if p.levels.get('saturation_computed_pct', 'ok') != 'ok' else '' }}"><div class="k">Sat. teórica</div><div class="v">{{ fmt_hl(p.reading.saturation_computed_pct, '1', '%', p.levels.get('saturation_computed_pct')) }}</div></div>
           <div class="param"><div class="k">Terna</div><div class="v" style="font-size:.86rem">
             {% if p.consistency_flag == 'sospechoso' %}<span class="pill pill-warn">Sospechosa</span>{% else %}<span class="pill pill-ok">OK</span>{% endif %}</div></div>
         </div>
+        {% if p.alarm_level == 'alarma' %}
+        <div class="action-row">
+          {% if p.reading.acknowledged and p.reading.corrective_action %}
+          <span class="pill pill-ok">✓ Acción tomada: {{ p.reading.corrective_action }}</span>
+          {% else %}
+          <span class="pill pill-alarm">⚠ Sin acción registrada — requiere seguimiento</span>
+          {% endif %}
+        </div>
+        {% endif %}
         {% else %}
         <div class="no-data">Sin lecturas de O₂. <a href="/views/ui/calidad-agua/oxigeno/nueva?pond_id={{ p.pond_id }}">Registrar la primera →</a></div>
         {% endif %}
