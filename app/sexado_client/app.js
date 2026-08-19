@@ -4,6 +4,10 @@
 
 const API = "/api/field/v1";
 const SXAPI = "/api/field/v1/sexado";
+// Versión visible en la barra: sirve para saber de un vistazo si un tablet
+// quedó con código viejo, en vez de deducirlo por síntomas. Subir junto con
+// CACHE en sw.js.
+const APP_VERSION = "v13";
 
 // ---------------------------------------------------------------------------
 // IndexedDB (best-effort: nunca rechaza)
@@ -37,10 +41,12 @@ const state = {
   current: null,       // pez en clasificación
   form: { sex: null, dev: null },
   ponds: [],           // para el setup
+  conflicts: [],       // pendientes devueltos por el sync, a resolver acá mismo
+  punted: [],          // ids que el operador mandó al supervisor (siguen vivos en el server)
 };
 
 const $ = (id) => document.getElementById(id);
-function show(v) { ["view-setup","view-work","view-untagged"].forEach((x)=>$(x).classList.toggle("hidden", x!==v)); }
+function show(v) { ["view-setup","view-work","view-untagged","view-conflicts"].forEach((x)=>$(x).classList.toggle("hidden", x!==v)); }
 let _tt=null; function toast(m, k){ const t=$("toast"); t.textContent=m; t.className="toast show "+(k||""); clearTimeout(_tt); _tt=setTimeout(()=>t.classList.remove("show"),2600); }
 function setNet(){ const on=navigator.onLine; $("net").className="net"+(on?"":" off"); $("net-txt").textContent=on?"en línea":"sin conexión"; }
 function uuid(){ return crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(16).slice(2); }
@@ -86,6 +92,60 @@ function renderDests() {
   }
   $("destlist").innerHTML = html;
 }
+// Un equipo que soltó su token (o un tablet distinto) se quedaba sin forma de
+// llegar a los conflictos de una sesión viva: había que ir al escritorio.
+async function loadOpenSessions() {
+  const box = $("resume-box");
+  if (!box) return;
+  box.innerHTML = ""; box.classList.add("hidden");
+  if (!navigator.onLine) return;
+  try {
+    const r = await fetch(SXAPI + "/sessions");
+    if (!r.ok) return;
+    const rows = await r.json();
+    if (!rows.length) return;
+    let html = '<div class="list-title" style="margin-top:0">Sesiones abiertas</div>';
+    for (const s of rows) {
+      const det = s.pending_count
+        ? `${s.pending_count} conflicto(s) por resolver`
+        : (s.status === "reconciling" ? "en reconciliación" : "en curso");
+      html += `<div class="resume">
+        <div><b>${s.source_name}</b><div class="muted">Sesión #${s.id} · ${det}</div></div>
+        <button class="btn btn-primary" data-token="${s.token}">Retomar</button>
+      </div>`;
+    }
+    box.innerHTML = html;
+    box.classList.remove("hidden");
+    box.querySelectorAll("button[data-token]").forEach(
+      (b) => b.addEventListener("click", () => doResume(b.dataset.token)));
+  } catch (e) { /* sin red: se muestra solo el checkout normal */ }
+}
+
+async function doResume(token) {
+  try {
+    const r = await fetch(SXAPI + "/resume", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+    if (!r.ok) { const e = await r.json().catch(()=>({})); toast(e.error || ("Error " + r.status), "err"); return; }
+    const snap = await r.json();
+    await adoptSnapshot(snap);
+    state.conflicts = snap.conflicts || [];
+    state.punted = [];
+    toast(`Sesión retomada: ${snap.source.name}`, "ok");
+    if (pendingForMe().length) enterConflicts(); else enterWork();
+  } catch (e) { toast("No se pudo retomar la sesión", "err"); }
+}
+
+// Checkout y resume comparten el mismo snapshot: se guarda en un solo lugar.
+async function adoptSnapshot(snap) {
+  state.session = { token: snap.token, id: snap.session_id, source: snap.source,
+                    destinations: snap.destinations, dev_state_rules: snap.dev_state_rules,
+                    untagged: snap.untagged_balances || [], fishCount: (snap.fish||[]).length };
+  state.fishByPit = {};
+  (snap.fish || []).forEach((f) => { if (f.pit) state.fishByPit[normPit(f.pit)] = f; });
+  await idbPut("meta", state.session, "session");
+  await idbPut("meta", state.fishByPit, "fishByPit");
+}
+
 async function doCheckout() {
   const srcId = parseInt($("src").value, 10);
   const dests = Array.from(document.querySelectorAll(".dest:checked")).map((c) => parseInt(c.value, 10));
@@ -96,13 +156,7 @@ async function doCheckout() {
       body: JSON.stringify({ source_pond_id: srcId, destination_pond_ids: dests }) });
     if (!r.ok) { const e = await r.json().catch(()=>({})); toast(e.error || ("Error " + r.status), "err"); return; }
     const snap = await r.json();
-    state.session = { token: snap.token, source: snap.source, destinations: snap.destinations,
-                      dev_state_rules: snap.dev_state_rules, untagged: snap.untagged_balances || [],
-                      fishCount: (snap.fish||[]).length };
-    state.fishByPit = {};
-    (snap.fish || []).forEach((f) => { if (f.pit) state.fishByPit[normPit(f.pit)] = f; });
-    await idbPut("meta", state.session, "session");
-    await idbPut("meta", state.fishByPit, "fishByPit");
+    await adoptSnapshot(snap);
     toast(`Sesión iniciada: ${snap.source.name} (${state.session.fishCount} peces)`, "ok");
     enterWork();
   } catch (e) { toast("No se pudo iniciar la sesión", "err"); }
@@ -111,6 +165,8 @@ async function doCheckout() {
 // ---------------------------------------------------------------------------
 // Trabajo
 // ---------------------------------------------------------------------------
+function enterWorkFromConflicts() { updateConflictsButton(); show("view-work"); }
+
 function enterWork() {
   show("view-work");
   $("sess-badge").textContent = state.session ? ("Estanque: " + state.session.source.name) : "Sin sesión";
@@ -296,7 +352,12 @@ async function syncQueue() {
   if (_syncing) return;
   if (!state.session) { toast("No hay sesión", "err"); return; }
   if (!navigator.onLine) { toast("Sin conexión para sincronizar", "err"); return; }
-  if (state.queue.length === 0) { toast("Nada por sincronizar"); return; }
+  if (state.queue.length === 0) {
+    // cola vacía no significa "nada que hacer": puede haber conflictos esperando
+    await checkSessionAlive({ allowJump: true });
+    if (!pendingForMe().length) toast("Nada por sincronizar");
+    return;
+  }
   _syncing = true;
   try {
     const r = await fetch(SXAPI + "/sync", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -312,21 +373,200 @@ async function syncQueue() {
     renderRecent();
     const c = res.counts;
     let msg = `Sincronizado: ${c.applied} aplicadas`;
-    if (c.pending_review) msg += `, ${c.pending_review} a reconciliar`;
+    if (c.pending_review) msg += `, ${c.pending_review} con conflicto`;
     toast(msg, c.pending_review?"":"ok");
     if (res.session_status === "synced") {
       toast("Sesión cerrada. Estanque liberado.", "ok");
       await clearSession();
+    } else if (res.session_status === "reconciling") {
+      state.conflicts = res.conflicts || [];
+      enterConflicts();
     }
   } catch(e){ toast("Sincronización pendiente: " + e.message, "err"); }
   finally { _syncing=false; }
 }
+// ---------------------------------------------------------------------------
+// Conflictos (PR-S3): se resuelven en el tablet, sin pasar por la bandeja
+// ---------------------------------------------------------------------------
+// El texto de "reintentar" cambia según el motivo: "Reintentar" a secas no le
+// dice al operador qué va a pasar. En el caso más común (el PIT ya está vivo en
+// la base) reintentar NO crea nada, le sobrescribe la medición al pez existente.
+const RETRY_LABEL = {
+  pit_active_on_live_fish: "Es el mismo pez — actualizar con esta medición",
+  fish_moved_away: "Aplicar igual (el pez ya se movió)",
+  destination_not_allowed: "Reintentar el movimiento",
+  invalid_measurement: "Reintentar",
+};
+function retryLabel(c){ return RETRY_LABEL[c.reason_code] || "Reintentar"; }
+
+function payloadLine(p) {
+  const bits = [];
+  if (p.sex) bits.push("sexo " + p.sex);
+  if (p.development_state) bits.push("estado " + p.development_state);
+  if (p.weight != null) bits.push(p.weight + " g");
+  if (p.diameter != null) bits.push("ø " + p.diameter);
+  if (p.move_to != null) bits.push("mover→" + destName(p.move_to));
+  return bits.join(" · ") || "sin datos";
+}
+function destName(id) {
+  const d = ((state.session && state.session.destinations) || []).find((x) => x.id === Number(id));
+  return d ? d.name : ("#" + id);
+}
+
+function pendingForMe() { return state.conflicts.filter((c) => !state.punted.includes(c.id)); }
+
+function renderConflicts() {
+  const box = $("cf-list");
+  const mine = pendingForMe();
+  const punted = state.conflicts.length - mine.length;
+  if (!mine.length) {
+    box.innerHTML = `<p class="muted">No quedan conflictos para resolver acá.</p>
+      <button class="btn btn-primary mt" id="btn-cf-done">Cerrar sesión${punted ? ` (${punted} para el supervisor)` : ""}</button>`;
+    $("btn-cf-done").addEventListener("click", finishConflicts);
+    $("cf-hint").textContent = punted ? `${punted} quedan en la bandeja del supervisor.` : "";
+    return;
+  }
+  let html = "";
+  for (const c of mine) {
+    html += `<div class="cf sev-${c.severity}">
+      <div class="cf-h"><span class="p">${c.pit || "—"}</span><span class="sev ${c.severity}">${c.severity_label}</span></div>
+      <div class="cf-msg">${c.message || ""}</div>
+      <div class="cf-pay">${payloadLine(c.payload || {})}</div>
+      <div class="cf-loss">Si descartas: ${c.severity_loss}</div>
+      <div class="cf-acts">
+        <button class="btn btn-primary" data-op="${c.id}" data-act="retry">${retryLabel(c)}</button>
+        <button class="btn btn-ghost" data-op="${c.id}" data-act="dismiss">Descartar</button>
+        <button class="btn btn-scan" data-op="${c.id}" data-act="supervisor">Dejar para el supervisor</button>
+      </div>
+    </div>`;
+  }
+  box.innerHTML = html;
+  box.querySelectorAll("button[data-op]").forEach((b) => b.addEventListener("click", onConflictBtn));
+  $("cf-hint").textContent = `${mine.length} conflicto(s) por resolver`
+    + (punted ? ` · ${punted} para el supervisor` : "");
+}
+
+async function finishConflicts() {
+  const punted = state.conflicts.length - pendingForMe().length;
+  await clearSession();
+  toast(punted ? `Sesión entregada: ${punted} para el supervisor.` : "Sesión cerrada.", "ok");
+}
+
+// Descartar un conflicto de trazabilidad borra el único rastro de un pez que
+// alguien tuvo en la mano: se pide un segundo toque que nombra la consecuencia.
+function onConflictBtn(ev) {
+  const btn = ev.currentTarget;
+  const opId = Number(btn.dataset.op);
+  const act = btn.dataset.act;
+  const c = state.conflicts.find((x) => x.id === opId);
+  if (act === "dismiss" && c && c.severity === "traceability" && btn.dataset.armed !== "1") {
+    btn.dataset.armed = "1";
+    btn.classList.add("btn-armed");
+    btn.textContent = "Toca de nuevo: este pez queda sin registro";
+    setTimeout(() => { if (btn.dataset.armed === "1") {
+      btn.dataset.armed = ""; btn.classList.remove("btn-armed"); btn.textContent = "Descartar"; } }, 5000);
+    return;
+  }
+  resolveConflict(opId, act);
+}
+
+async function resolveConflict(opId, action) {
+  if (!state.session) return;
+  if (!navigator.onLine) { toast("Sin conexión para resolver", "err"); return; }
+  try {
+    const r = await fetch(`${SXAPI}/conflicts/${opId}/resolve`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: state.session.token, action }) });
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(res.error || ("Error " + r.status), "err"); return; }
+    state.conflicts = res.conflicts || [];
+    if (res.ok && action === "supervisor" && !state.punted.includes(opId)) state.punted.push(opId);
+    toast(res.ok ? (res.message || "Resuelto") : (res.message || "No se pudo"), res.ok ? "ok" : "err");
+    await afterConflictChange(res.session_status);
+  } catch (e) { toast("No se pudo resolver: " + e.message, "err"); }
+}
+
+async function afterConflictChange(sessionStatus) {
+  updateConflictsButton();
+  // sin pendientes reales el servidor ya cerró la sesión y liberó el estanque
+  if (!state.conflicts.length && sessionStatus === "synced") {
+    toast("Todo resuelto. Sesión cerrada y estanque liberado.", "ok");
+    await clearSession();
+    return;
+  }
+  renderConflicts();
+}
+
+// Retomar una sesión guardada. Con conexión se le pregunta al servidor en qué
+// estado está: si quedaron conflictos, se abre esa vista; y si el servidor ya la
+// cerró se avisa en vez de dejar al operador trabajar contra un token muerto
+// (pasó el 19/08/2026: un día entero de capturas contra una sesión cerrada).
+async function resumeSession() {
+  enterWork();
+  await checkSessionAlive({ allowJump: true });
+}
+
+// Le pregunta al servidor si la sesión guardada sigue viva. NO puede correr una
+// sola vez al arrancar: un tablet que despierta abre la app antes de que el
+// Wi-Fi se asocie, y ese es justo el momento en que la pregunta no se puede
+// hacer. Por eso también se dispara al recuperar conexión.
+// `allowJump` solo en el arranque: saltar a la vista de conflictos mientras el
+// operador está midiendo un pez sería peor que esperar.
+async function checkSessionAlive(opts) {
+  const allowJump = !!(opts && opts.allowJump);
+  if (!state.session || !state.session.token) return;
+  if (!navigator.onLine) return;
+  try {
+    const r = await fetch(`${SXAPI}/conflicts?token=${encodeURIComponent(state.session.token)}`);
+    // 404 = el servidor no conoce este token. Es el caso MÁS grave (no solo
+    // cerrado: inexistente), así que avisa igual que si estuviera cerrada.
+    if (r.status === 404) { warnDeadSession(); return; }
+    if (!r.ok) return;
+    const res = await r.json();
+    const alive = (res.session_status === "active" || res.session_status === "reconciling");
+    if (res.session_status === "reconciling") {
+      state.conflicts = res.conflicts || [];
+      updateConflictsButton();
+      if (pendingForMe().length && allowJump) { enterConflicts(); return; }
+    }
+    if (!alive) { warnDeadSession(); return; }
+    $("nopersist").classList.add("hidden");   // sesión sana: se retira el aviso
+  } catch (e) { /* sin red: se sigue trabajando offline */ }
+}
+
+// Banner de sesión muerta. Con lecturas en cola el mensaje es lo contrario de
+// "salí": salir las borra, hay que pedir la reactivación de la sesión.
+function warnDeadSession() {
+  const n = state.queue.length;
+  const num = state.session && state.session.id ? " #" + state.session.id : "";
+  $("nopersist").textContent = n
+    ? `⚠ El servidor cerró esta sesión${num}. NO salgas: tienes ${n} lectura(s) sin subir. Pide que la reactiven.`
+    : `⚠ El servidor cerró esta sesión${num}. Sal y abre una nueva.`;
+  $("nopersist").classList.remove("hidden");
+}
+
+// Puerta de entrada manual: sin esto, si el chequeo del arranque cae sin red,
+// el operador se queda en la vista de trabajo sin forma de llegar a resolver.
+function updateConflictsButton() {
+  const b = $("btn-conflicts");
+  if (!b) return;
+  const n = pendingForMe().length;
+  b.classList.toggle("hidden", n === 0);
+  b.textContent = `⚠ ${n} conflicto(s) por resolver`;
+}
+
+function enterConflicts() {
+  $("sess-badge").textContent = "Conflictos por resolver";
+  renderConflicts();
+  show("view-conflicts");
+}
+
 async function clearSession() {
   state.session=null; state.fishByPit={}; state.queue=[]; state.current=null;
   await idbDel("meta","session"); await idbDel("meta","fishByPit");
   for (const o of await idbAll("queue")) await idbDel("queue", o.client_uuid);
   $("sess-badge").textContent="Sin sesión";
-  await loadPonds(); show("view-setup");
+  await loadPonds(); await loadOpenSessions(); show("view-setup");
 }
 async function exitSession() {
   // Salir siempre pide confirmación (nunca se cierra por tiempo). Con lecturas
@@ -356,6 +596,8 @@ function wire() {
   $("pit-search").addEventListener("input", updateActionLabel);
   $("btn-untagged").addEventListener("click", openUntagged);
   $("btn-untagged-back").addEventListener("click", () => show("view-work"));
+  $("btn-conflicts").addEventListener("click", enterConflicts);
+  $("btn-cf-back").addEventListener("click", enterWorkFromConflicts);
   $("btn-sync").addEventListener("click", syncQueue);
   $("btn-exit").addEventListener("click", exitSession);
   $("btn-cancel").addEventListener("click", () => { state.registerMode=false; $("field-reglot").classList.add("hidden"); $("fish-card").classList.add("hidden"); $("pit-search").value=""; updateActionLabel(); $("pit-search").focus(); });
@@ -363,13 +605,14 @@ function wire() {
   $("seg-f").addEventListener("click", () => setSex("f"));
   $("seg-m").addEventListener("click", () => setSex("m"));
   $("pit-search").addEventListener("keydown", (e) => { if (e.key === "Enter") findPit($("pit-search").value); });
-  window.addEventListener("online", () => { setNet(); });
+  window.addEventListener("online", () => { setNet(); checkSessionAlive(); });
   window.addEventListener("offline", setNet);
 }
 async function init() {
   window.addEventListener("error", (e) => toast("Error: " + (e.message || "script"), "err"));
   window.addEventListener("unhandledrejection", (e) => toast("Error: " + ((e.reason&&e.reason.message)||e.reason||"async"), "err"));
   wire(); setNet();
+  $("app-ver").textContent = APP_VERSION;
   try {
     _db = await openDB();
     state.queue = await idbAll("queue");
@@ -379,8 +622,8 @@ async function init() {
   _canPersist = (await idbPut("meta", { t: Date.now() }, "__probe__")) === true;
   const np=$("nopersist"); if (np) np.classList.toggle("hidden", _canPersist);
 
-  if (state.session && state.session.token) { enterWork(); }
-  else { await loadPonds(); show("view-setup"); }
+  if (state.session && state.session.token) { await resumeSession(); }
+  else { await loadPonds(); await loadOpenSessions(); show("view-setup"); }
 
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
 }

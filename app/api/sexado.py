@@ -112,11 +112,15 @@ def sync(payload: SyncIn):
         results = []
         counts = {"applied": 0, "duplicate": 0, "pending_review": 0, "error": 0}
 
-        def record(op, status, message, fish_id=None):
+        def record(op, status, message, fish_id=None, reason=None):
             counts[status] = counts.get(status, 0) + 1
             results.append({"client_uuid": op.client_uuid, "status": status, "message": message})
             if status == "duplicate":
                 return
+            # el motivo se guarda como código: el tablet lo usa para avisarle al
+            # operador qué pierde si descarta (ver conflict_severity)
+            if reason is None and status == "pending_review":
+                reason = sx.reason_from_message(message)
             db.add(SexingOfflineOperation(
                 client_uuid=op.client_uuid, session_id=session.id, pond_id=source_id,
                 kind=op.kind, pit=op.pit, fish_id=fish_id,
@@ -124,6 +128,7 @@ def sync(payload: SyncIn):
                          "development_state": op.development_state, "move_to": op.move_to,
                          "lot_id": op.lot_id, "quantity": op.quantity},
                 captured_at=op.captured_at, status=status, result_message=(message or "")[:255],
+                reason_code=reason,
                 applied_at=(datetime.now() if status == "applied" else None),
                 created_at=datetime.now(),
             ))
@@ -135,7 +140,7 @@ def sync(payload: SyncIn):
 
             if op.kind in CONTINGENCY_KINDS:
                 record(op, "pending_review", f"Contingencia '{op.kind}' para reconciliar.",
-                       fish_id=op.fish_id); continue
+                       fish_id=op.fish_id, reason=sx.REASON_CONTINGENCY); continue
 
             if op.kind == "move_untagged":
                 if op.move_to is None or op.move_to not in dest_ids:
@@ -174,24 +179,117 @@ def sync(payload: SyncIn):
                 # falla de validación (p. ej. pez ya no está en el estanque) -> reconciliar
                 record(op, "pending_review", res.message, fish_id=fish.id)
 
-        has_pending = counts["pending_review"] > 0
-        sx.finalize_session(db, session, has_pending)
+        sx.finalize_session(db, session, counts["pending_review"] > 0)
 
-        return {"session_status": session.status, "counts": counts, "results": results}
+        out = {"session_status": session.status, "counts": counts, "results": results}
+        if session.status == "reconciling":
+            # el tablet abre la vista de conflictos con esto, sin otra vuelta a la red
+            out["conflicts"] = _conflicts_payload(db, session)["conflicts"]
+        return out
+    finally:
+        db.close()
+
+
+class ConflictActionIn(BaseModel):
+    token: str
+    action: str          # retry | dismiss | supervisor
+
+
+def _conflicts_payload(db, session) -> dict:
+    ops = (db.query(SexingOfflineOperation)
+           .filter(SexingOfflineOperation.session_id == session.id,
+                   SexingOfflineOperation.status == "pending_review")
+           .order_by(SexingOfflineOperation.id).all())
+    return {"session_status": session.status,
+            "conflicts": [sx.conflict_row(db, op) for op in ops]}
+
+
+@router.get("/conflicts")
+def list_conflicts(token: str):
+    """Conflictos que el tablet tiene que resolver antes de cerrar la sesión."""
+    db = SessionLocal()
+    try:
+        session = sx.session_by_token_any(db, token)
+        if not session:
+            return JSONResponse(status_code=404, content={"error": "Sesión no encontrada."})
+        return _conflicts_payload(db, session)
+    finally:
+        db.close()
+
+
+@router.post("/conflicts/{op_id}/resolve")
+def resolve_conflict(op_id: int, payload: ConflictActionIn):
+    """Resuelve un conflicto desde el tablet: reintentar, descartar o dejarlo
+    para el supervisor. Cuando no queda ninguno, la sesión se cierra sola y el
+    estanque se libera."""
+    db = SessionLocal()
+    try:
+        session = sx.session_by_token_any(db, payload.token)
+        if not session:
+            return JSONResponse(status_code=404, content={"error": "Sesión no encontrada."})
+        op = db.query(SexingOfflineOperation).filter(
+            SexingOfflineOperation.id == op_id).first()
+        # la op tiene que ser de ESTA sesión: el token no da acceso a la bandeja ajena
+        if not op or op.session_id != session.id:
+            return JSONResponse(status_code=404,
+                                content={"error": "Operación no encontrada en esta sesión."})
+
+        ok, message = sx.resolve_conflict(db, op, payload.action)
+        # 'supervisor' deja la pendiente viva a propósito: no cierra la sesión
+        if ok and payload.action != "supervisor":
+            sx.close_session_if_clean(db, session)
+        db.refresh(session)
+        out = _conflicts_payload(db, session)
+        out.update({"ok": ok, "message": message, "op_id": op_id})
+        return out
     finally:
         db.close()
 
 
 @router.get("/sessions")
 def list_sessions():
-    """Sesiones activas (para supervisión y para soltar candados colgados)."""
+    """Sesiones que siguen bloqueando estanques (activas o en reconciliación).
+
+    La usa el tablet en la pantalla de setup para ofrecer retomar una sesión
+    abandonada: si un equipo suelta su token (o se cambia de equipo), sin esto
+    los conflictos de esa sesión solo se pueden tocar desde el escritorio.
+    """
     db = SessionLocal()
     try:
-        return [{
-            "id": s.id, "token": s.token, "operator_id": s.operator_id,
-            "source_pond_id": s.source_pond_id, "pond_ids": s.pond_ids,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-        } for s in sx.active_sessions(db)]
+        out = []
+        for s in sx.active_sessions(db):
+            pond = db.query(Pond).filter(Pond.id == s.source_pond_id).first()
+            out.append({
+                "id": s.id, "token": s.token, "operator_id": s.operator_id,
+                "source_pond_id": s.source_pond_id, "pond_ids": s.pond_ids,
+                "source_name": (pond.name if pond else str(s.source_pond_id)),
+                "status": s.status,
+                "pending_count": sx.pending_count(db, s.id),
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            })
+        return out
+    finally:
+        db.close()
+
+
+class ResumeIn(BaseModel):
+    token: str
+
+
+@router.post("/resume")
+def resume(payload: ResumeIn):
+    """Retoma una sesión que sigue bloqueando: devuelve el mismo snapshot que el
+    checkout, más los conflictos que hayan quedado esperando."""
+    db = SessionLocal()
+    try:
+        session = sx.session_by_token(db, payload.token)
+        if not session:
+            return JSONResponse(status_code=404,
+                                content={"error": "Sesión no encontrada o ya cerrada."})
+        snap = sx.build_source_snapshot(db, session)
+        snap["conflicts"] = _conflicts_payload(db, session)["conflicts"]
+        snap["session_status"] = session.status
+        return snap
     finally:
         db.close()
 
@@ -242,31 +340,30 @@ def reconciliacion(request: Request, msg: Optional[str] = None):
             "released_at": s.released_at,
         } for s in closed]
 
-        sessions = (db.query(SexadoOfflineSession)
-                    .filter(SexadoOfflineSession.status == "reconciling")
-                    .order_by(SexadoOfflineSession.created_at).all())
+        # Toda sesión con pendientes, no solo las 'reconciling': si una se cierra
+        # con operaciones vivas (pasó el 19/08/2026), sus conflictos quedaban
+        # invisibles acá y solo se podían tocar por endpoint directo.
+        pending_ids = [r[0] for r in
+                       db.query(SexingOfflineOperation.session_id)
+                       .filter(SexingOfflineOperation.status == "pending_review")
+                       .distinct().all() if r[0] is not None]
+        sessions = ((db.query(SexadoOfflineSession)
+                     .filter(SexadoOfflineSession.id.in_(pending_ids))
+                     .order_by(SexadoOfflineSession.created_at).all())
+                    if pending_ids else [])
         blocks = []
         for s in sessions:
             ops = (db.query(SexingOfflineOperation)
                    .filter(SexingOfflineOperation.session_id == s.id,
                            SexingOfflineOperation.status == "pending_review")
                    .order_by(SexingOfflineOperation.id).all())
-            rows = []
-            for op in ops:
-                fish = sx.resolve_fish_by_pit(db, op.pit) if op.pit else None
-                rows.append({
-                    "id": op.id, "pit": op.pit, "kind": op.kind,
-                    "message": op.result_message, "payload": op.payload or {},
-                    "captured_at": op.captured_at,
-                    "fish_state": (fish.state if fish else None),
-                    "fish_found": fish is not None,
-                })
             blocks.append({
                 "session_id": s.id,
                 "source": pond_names.get(s.source_pond_id, s.source_pond_id),
                 "operator": user_names.get(s.operator_id, "—"),
                 "created_at": s.created_at,
-                "pending": rows,
+                "status": s.status,
+                "pending": [sx.conflict_row(db, op) for op in ops],
             })
         html = _jinja.get_template("sexado_reconciliacion.html").render(
             {"request": request, "msg": msg, "blocks": blocks,

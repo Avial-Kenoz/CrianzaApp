@@ -35,12 +35,31 @@ def _stop_pond_cache_scheduler() -> None:
     shutdown_scheduler()
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+class NoCacheStatic(StaticFiles):
+    """StaticFiles que obliga a revalidar el shell de la PWA en cada carga.
+
+    Sin `Cache-Control`, el navegador aplica caché heurístico y el service
+    worker se queda con la copia vieja: el 19/08/2026 un tablet siguió corriendo
+    código de días atrás pese a reinstalar la app, sin ninguna señal visible.
+    `no-cache` no significa "no guardar": guarda igual, pero revalida contra el
+    servidor, así que un 304 sigue siendo barato en LAN y el modo offline no se
+    ve afectado.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 # PWA de captura en terreno (SPA offline, mismo origen). Sirve app/field_client
 # en /captura; el service worker en /captura/sw.js controla ese ámbito.
-app.mount("/captura", StaticFiles(directory=str(Path(__file__).parent / "field_client"), html=True), name="captura")
+app.mount("/captura", NoCacheStatic(directory=str(Path(__file__).parent / "field_client"), html=True), name="captura")
 # PWA de sexado offline (clasificación/movimientos por estanque)
-app.mount("/sexado_offline", StaticFiles(directory=str(Path(__file__).parent / "sexado_client"), html=True), name="sexado_offline")
+app.mount("/sexado_offline", NoCacheStatic(directory=str(Path(__file__).parent / "sexado_client"), html=True), name="sexado_offline")
 
 
 app.include_router(fish_router)

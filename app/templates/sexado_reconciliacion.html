@@ -27,6 +27,11 @@
     .kind { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .7rem; font-weight: 700; background: #fff7ed; color: #c2410c; }
     .reason { color: #b45309; font-size: .82rem; }
     .payload { color: #6b7280; font-size: .78rem; }
+    .sev { display: inline-block; padding: .05rem .4rem; border-radius: 999px;
+           font-size: .7rem; font-weight: 700; margin-right: .3rem; white-space: nowrap; }
+    .sev-duplicate { background: #dcfce7; color: #166534; }
+    .sev-data { background: #fef3c7; color: #92400e; }
+    .sev-traceability { background: #fee2e2; color: #991b1b; }
     .st-dead { color: #dc2626; font-weight: 700; } .st-alive { color: #059669; }
     .acts { display: flex; gap: 6px; flex-wrap: wrap; }
     .btn { border: none; border-radius: 8px; padding: 6px 11px; font-size: .78rem; font-weight: 650; cursor: pointer; }
@@ -77,7 +82,7 @@
     <div class="s-head">
       <span class="src">{{ b.source }}</span>
       <span class="meta">Operador: {{ b.operator }}</span>
-      <span class="meta">Sesión #{{ b.session_id }}{% if b.created_at %} · {{ b.created_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</span>
+      <span class="meta">Sesión #{{ b.session_id }}{% if b.created_at %} · {{ b.created_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}{% if b.status != 'reconciling' %} · <b>sesión {{ b.status }}</b>{% endif %}</span>
       <span class="meta">{{ b.pending|length }} pendiente(s)</span>
     </div>
     <table>
@@ -87,7 +92,7 @@
         <tr>
           <td class="pit">{{ op.pit or '—' }}</td>
           <td><span class="kind">{{ op.kind }}</span></td>
-          <td class="reason">{{ op.message }}</td>
+          <td class="reason"><span class="sev sev-{{ op.severity }}">{{ op.severity_label }}</span> {{ op.message }}</td>
           <td class="payload">
             {% set p = op.payload %}
             {% if p.sex %}sexo {{ p.sex }} {% endif %}

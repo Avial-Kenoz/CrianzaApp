@@ -25,6 +25,7 @@ class SexingOfflineOperation(Base):
     captured_at = Column(TIMESTAMP)     # hora de captura en terreno
     status = Column(String(20), nullable=False, default="pending_review")  # applied|duplicate|pending_review|error
     result_message = Column(String(255))
+    reason_code = Column(String(40))    # motivo estructurado del conflicto (clasifica el riesgo de descartar)
     resolution = Column(JSON)           # se completa al reconciliar (PR-S2b)
     applied_at = Column(TIMESTAMP)
     created_at = Column(TIMESTAMP)

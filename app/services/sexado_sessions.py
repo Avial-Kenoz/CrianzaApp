@@ -78,6 +78,14 @@ def session_by_token(db: Session, token: str) -> Optional[SexadoOfflineSession]:
         SexadoOfflineSession.status.in_(LOCKING_STATUSES)).first()
 
 
+def session_by_token_any(db: Session, token: str) -> Optional[SexadoOfflineSession]:
+    """La sesión del token sin filtrar por estado. La usan los endpoints de
+    conflictos: si el tablet reintenta un resolve tras un corte de red, tiene que
+    poder enterarse de que la sesión ya cerró en vez de comerse un 404 ciego."""
+    return db.query(SexadoOfflineSession).filter(
+        SexadoOfflineSession.token == token).first()
+
+
 def resolve_fish_by_pit(db: Session, pit: str):
     if not pit:
         return None
@@ -90,10 +98,17 @@ def resolve_fish_by_pit(db: Session, pit: str):
     return db.query(Fish).filter(norm_col == canon).first()
 
 
-def finalize_session(db: Session, session: SexadoOfflineSession, has_pending: bool) -> None:
+def finalize_session(db: Session, session: SexadoOfflineSession, has_pending: bool = False) -> None:
     """Tras sincronizar: si quedan contingencias, la sesión pasa a 'reconciling'
-    (sigue bloqueando); si todo quedó limpio, 'synced' y libera el bloqueo."""
-    if has_pending:
+    (sigue bloqueando); si todo quedó limpio, 'synced' y libera el bloqueo.
+
+    Mira los pendientes REALES de la sesión, no solo los del batch que acaba de
+    entrar: un segundo sync sin contingencias nuevas no puede cerrar una sesión
+    que todavía tiene operaciones esperando en la bandeja (pasó el 19/08/2026 y
+    dejó una pendiente invisible). `has_pending` queda como piso por si el
+    llamador ya sabe de pendientes que aún no commiteó.
+    """
+    if has_pending or pending_count(db, session.id) > 0:
         session.status = "reconciling"
     else:
         session.status = "synced"
@@ -166,10 +181,195 @@ def revive_and_retry(db: Session, op: SexingOfflineOperation) -> tuple[bool, str
     return retry_operation(db, op)
 
 
-def dismiss_operation(db: Session, op: SexingOfflineOperation, note: str = "") -> None:
+def dismiss_operation(db: Session, op: SexingOfflineOperation, note: str = "",
+                      by: str = "supervisor") -> None:
+    who = "Descartada en terreno." if by == "field" else "Descartada por supervisor."
     op.status = "dismissed"
-    op.result_message = ("Descartada por supervisor. " + (note or ""))[:255]
+    op.result_message = (who + " " + (note or "")).strip()[:255]
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Clasificación de conflictos: qué pierde el operador si descarta
+# ---------------------------------------------------------------------------
+# El tablet ahora puede resolver conflictos en terreno (PR-S3), así que necesita
+# mostrar el costo del descarte. La severidad NO se congela al sincronizar: se
+# calcula al listar, porque distinguir un re-escaneo inocuo de una medición que
+# se pierde exige comparar la captura contra el pez tal como está hoy en la base.
+
+SEV_DUPLICATE = "duplicate"        # descartar no pierde nada
+SEV_DATA = "data"                  # se pierde una medición; el pez sigue registrado
+SEV_TRACEABILITY = "traceability"  # se pierde el pez o se rompe la cadena de tags
+
+# Motivos que el sync escribe en `reason_code` (códigos estables, no el mensaje).
+REASON_CONTINGENCY = "contingency"
+REASON_PIT_ACTIVE = "pit_active_on_live_fish"
+REASON_PIT_REUSE_CONFIRM = "pit_needs_reuse_confirm"
+REASON_LOST_TAG = "lost_tag_pending"
+REASON_PIT_NOT_FOUND = "pit_not_found"
+REASON_NO_BALANCE = "no_untagged_balance"
+REASON_DEST_NOT_ALLOWED = "destination_not_allowed"
+REASON_FISH_MOVED = "fish_moved_away"
+REASON_FISH_NOT_ACTIVE = "fish_not_active"
+REASON_INVALID_MEASUREMENT = "invalid_measurement"
+
+_SEVERITY_BY_REASON = {
+    REASON_CONTINGENCY: SEV_TRACEABILITY,
+    REASON_PIT_REUSE_CONFIRM: SEV_TRACEABILITY,
+    REASON_LOST_TAG: SEV_TRACEABILITY,
+    REASON_PIT_NOT_FOUND: SEV_TRACEABILITY,
+    REASON_NO_BALANCE: SEV_TRACEABILITY,
+    REASON_FISH_NOT_ACTIVE: SEV_TRACEABILITY,
+    REASON_DEST_NOT_ALLOWED: SEV_DATA,
+    REASON_FISH_MOVED: SEV_DATA,
+    REASON_INVALID_MEASUREMENT: SEV_DATA,
+    # REASON_PIT_ACTIVE se decide comparando contra la base (ver abajo)
+}
+
+SEVERITY_COPY = {
+    SEV_DUPLICATE: {
+        "label": "Duplicado",
+        "loss": "Nada: este pez ya está registrado con estos mismos datos.",
+    },
+    SEV_DATA: {
+        "label": "Dato",
+        "loss": "Se pierde esta medición. El pez sigue registrado y ubicado.",
+    },
+    SEV_TRACEABILITY: {
+        "label": "Trazabilidad",
+        "loss": "Este pez queda sin registro. Si no estás seguro, mandalo al supervisor.",
+    },
+}
+
+
+# Mismos patrones que el backfill de la migración 20260819_01: si cambia la
+# redacción de un mensaje en views.py, el código se corrige acá y en un solo lugar.
+_REASON_PATTERNS = [
+    ("contingencia", REASON_CONTINGENCY),
+    ("activo en un pez vivo", REASON_PIT_ACTIVE),
+    ("no se puede reutilizar", REASON_PIT_ACTIVE),
+    ("confirmación de reutilización", REASON_PIT_REUSE_CONFIRM),
+    ("tag perdido vigente", REASON_LOST_TAG),
+    ("pit no encontrado", REASON_PIT_NOT_FOUND),
+    ("no hay saldo", REASON_NO_BALANCE),
+    ("destino no está entre los preconfigurados", REASON_DEST_NOT_ALLOWED),
+    ("destino no válido", REASON_DEST_NOT_ALLOWED),
+    ("destino debe ser distinto", REASON_DEST_NOT_ALLOWED),
+    ("ya no está en este estanque", REASON_FISH_MOVED),
+    ("no está activo", REASON_FISH_NOT_ACTIVE),
+    ("peso debe ser mayor", REASON_INVALID_MEASUREMENT),
+    ("diámetro debe ser mayor", REASON_INVALID_MEASUREMENT),
+    ("estado de desarrollo", REASON_INVALID_MEASUREMENT),
+    ("debe indicar sexo", REASON_INVALID_MEASUREMENT),
+]
+
+
+def reason_from_message(message: Optional[str]) -> Optional[str]:
+    """Deriva el código de motivo del mensaje que devuelve apply_*. Las capas de
+    aplicación hablan en español libre; esto es el traductor a código estable."""
+    text = (message or "").lower()
+    for needle, code in _REASON_PATTERNS:
+        if needle in text:
+            return code
+    return None
+
+
+def _num_eq(a, b, tol: float = 0.001) -> bool:
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    try:
+        return abs(float(a) - float(b)) <= tol
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_rescan(db: Session, op: SexingOfflineOperation, fish: Fish) -> bool:
+    """¿La captura repite lo que el pez ya tiene? Entonces descartar no pierde nada."""
+    p = op.payload or {}
+    if (p.get("sex") or None) != (fish.sex or None):
+        return False
+    # mismo criterio de "último muestreo" que build_source_snapshot
+    last = (db.query(FishSampling)
+            .filter(FishSampling.fish_id == fish.id)
+            .order_by(func.coalesce(FishSampling.registry_time, FishSampling.created_at).desc(),
+                      FishSampling.id.desc())
+            .first())
+    if last is None:
+        return False
+    if (p.get("development_state") or None) != (last.development_state or None):
+        return False
+    if not _num_eq(p.get("weight"), last.weight):
+        return False
+    if not _num_eq(p.get("diameter"), last.diameter):
+        return False
+    # si además pedía mover, el pez ya tiene que estar en ese destino
+    move_to = p.get("move_to")
+    if move_to is not None and current_pond_id(db, fish.id) != int(move_to):
+        return False
+    return True
+
+
+def current_pond_id(db: Session, fish_id: int) -> Optional[int]:
+    """Estanque donde está el pez hoy (destino de su último movimiento)."""
+    m = (db.query(PondMovement)
+         .filter(PondMovement.fish_id == fish_id)
+         .order_by(PondMovement.movement_time.desc(), PondMovement.id.desc())
+         .first())
+    return m.destiny_pond_id if m else None
+
+
+def conflict_severity(db: Session, op: SexingOfflineOperation) -> str:
+    """Severidad de un conflicto pendiente. Lo desconocido cae en trazabilidad:
+    ante la duda, que el operador vea el aviso más fuerte."""
+    code = op.reason_code
+    if code == REASON_PIT_ACTIVE:
+        fish = resolve_fish_by_pit(db, op.pit) if op.pit else None
+        if fish is None:
+            return SEV_TRACEABILITY
+        return SEV_DUPLICATE if _is_rescan(db, op, fish) else SEV_DATA
+    return _SEVERITY_BY_REASON.get(code, SEV_TRACEABILITY)
+
+
+def conflict_row(db: Session, op: SexingOfflineOperation) -> dict:
+    """Representación de un conflicto para el tablet (y para la bandeja)."""
+    sev = conflict_severity(db, op)
+    fish = resolve_fish_by_pit(db, op.pit) if op.pit else None
+    return {
+        "id": op.id,
+        "pit": op.pit,
+        "kind": op.kind,
+        "reason_code": op.reason_code,
+        "message": op.result_message,
+        "payload": op.payload or {},
+        "captured_at": op.captured_at.isoformat() if op.captured_at else None,
+        "severity": sev,
+        "severity_label": SEVERITY_COPY[sev]["label"],
+        "severity_loss": SEVERITY_COPY[sev]["loss"],
+        "fish_found": fish is not None,
+        "fish_state": (fish.state if fish else None),
+    }
+
+
+# Acciones que el tablet puede ejecutar sobre un conflicto. `revive` (revivir un
+# pez declarado muerto) queda deliberadamente fuera: es corrección de supervisor.
+FIELD_ACTIONS = ("retry", "dismiss", "supervisor")
+
+
+def resolve_conflict(db: Session, op: SexingOfflineOperation, action: str) -> tuple[bool, str]:
+    """Resuelve un conflicto desde el tablet. 'supervisor' lo deja intacto en la
+    bandeja: es la salida para lo que no se puede decidir en el estanque."""
+    if action not in FIELD_ACTIONS:
+        return False, f"Acción '{action}' no válida."
+    if op.status != "pending_review":
+        return False, f"La operación ya está '{op.status}'."
+    if action == "supervisor":
+        return True, "Queda para el supervisor."
+    if action == "dismiss":
+        dismiss_operation(db, op, by="field")
+        return True, "Descartada."
+    return retry_operation(db, op)
 
 
 def apply_untagged_move(db: Session, source_pond_id: int, lot_id: int,
