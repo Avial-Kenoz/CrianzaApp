@@ -53,6 +53,31 @@
     .chip { font-size: .74rem; font-weight: 650; padding: 3px 9px; border-radius: 999px; background: #f3f4f6; color: #4b5563; }
     .chip.warn { background: #fef2f2; color: #dc2626; } .chip.amber { background: #fffbeb; color: #b45309; }
     .chip.muted { background: #f3f4f6; color: #9ca3af; }
+    /* Salud del biofiltro: indicadores derivados, no medidos directamente */
+    .health { margin-top: 16px; padding-top: 14px; border-top: 1px solid #e5e7eb; }
+    .health-title { font-size: .82rem; font-weight: 700; color: #374151; margin-bottom: 10px; }
+    .health-note { font-weight: 500; color: #9ca3af; font-size: .74rem; margin-left: 8px; }
+    .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .hm { background: #f9fafb; border: 1px solid #eef0f2; border-radius: 10px; padding: 11px 13px; }
+    .hm-label { font-size: .74rem; color: #6b7280; font-weight: 600; margin-bottom: 5px; }
+    .hm-value { font-size: 1.22rem; font-weight: 700; color: #111827; }
+    .hm-value.hs-bajo, .hm-value.hb-rezagado { color: #dc2626; }
+    .hm-value.hs-atencion, .hm-value.hb-justo { color: #b45309; }
+    .hm-value.hs-ok, .hm-value.hb-al_dia { color: #15803d; }
+    .hm-unit { font-size: .8rem; font-weight: 600; color: #9ca3af; }
+    .hm-pct { font-size: .76rem; font-weight: 650; margin-left: 8px; }
+    .hm-foot { font-size: .72rem; color: #9ca3af; margin-top: 4px; }
+    .health-reason { margin-top: 10px; font-size: .78rem; font-weight: 600; color: #b45309; }
+    .chip.leaf { background: #ecfdf5; color: #047857; }
+    .photo { margin-top: 10px; border: 1px solid #a7f3d0; background: #f0fdf4;
+             border-radius: 10px; padding: 10px 12px; }
+    .photo.crit { border-color: #fecaca; background: #fef2f2; }
+    .photo-h { font-size: .8rem; font-weight: 700; color: #065f46; margin-bottom: 5px; }
+    .photo.crit .photo-h { color: #b91c1c; }
+    .photo-l { font-size: .78rem; color: #374151; line-height: 1.45; }
+    .photo-l + .photo-l { margin-top: 3px; }
+    .photo-l b { color: #111827; }
+    .photo-m { font-size: .72rem; color: #6b7280; margin-top: 5px; }
     .u-foot { margin-top: 14px; font-size: .78rem; color: #9ca3af; }
     .u-caret { position: absolute; right: 18px; top: 20px; color: #9ca3af; transition: transform .15s; }
     .u-card.active .u-caret { transform: rotate(180deg); color: #2563eb; }
@@ -163,7 +188,46 @@
         {% if u.n_alarm %}<span class="chip warn">{{ u.n_alarm }} en alarma</span>{% endif %}
         {% if u.n_alarm_unack %}<span class="chip warn">⚠ {{ u.n_alarm_unack }} sin acción</span>{% endif %}
         {% if u.n_alert %}<span class="chip amber">{{ u.n_alert }} en alerta</span>{% endif %}
+        {% set h = u.health %}
+        {% if h and h.state == 'bajo' %}<span class="chip warn">salud biofiltro {{ h.pct|round|int }}%</span>
+        {% elif h and h.state == 'atencion' %}<span class="chip amber">salud biofiltro {{ h.pct|round|int }}%</span>
+        {% elif h and h.state == 'no_aplica' %}<span class="chip muted">flujo abierto</span>
+        {% endif %}
+        {% if h and h.balance_state == 'rezagado' %}<span class="chip amber">NOB rezagadas</span>{% endif %}
+        {% if u.photo %}<span class="chip leaf" title="Fotosíntesis activa">🍃 F</span>{% endif %}
       </div>
+      {% set f = u.photo %}
+      {% if f %}
+      {% set dw = f.dawn %}
+      {% set crit = dw and (dw.sat_level != 'ok' or dw.do_level != 'ok') %}
+      <div class="photo{{ ' crit' if crit else '' }}">
+        <div class="photo-h">🍃 Fotosíntesis activa</div>
+        {% if f.ph_alert %}
+        <div class="photo-l">
+          El pH sube en la tarde: sobre <b>pH {{ '%.2f'|format(f.ph_alert) }}</b>
+          el NH₃ cruza la alerta del sitio con el TAN actual ({{ f.nh4_n }} mg/L){%
+          if f.ph_alarm %}; la alarma, sobre pH {{ '%.2f'|format(f.ph_alarm) }}{% endif %}.
+          <b>Mide pH y NAT entre 15:00 y 17:00.</b>
+        </div>
+        {% else %}
+        <div class="photo-l">El pH sube en la tarde y el NH₃ no ionizado se multiplica.
+          <b>Mide pH y NAT entre 15:00 y 17:00.</b></div>
+        {% endif %}
+        {% if dw %}
+        <div class="photo-l">
+          Amanecer en <b>{{ dw.sat_p10 }}%</b> de saturación{% if dw.do_p10 %}
+          ({{ dw.do_p10 }} mg/L){% endif %}{% if dw.margin is not none %},
+          margen de {{ dw.margin }} pts a la alerta{% endif %}.
+          {% if dw.factor_to_alert %}Si la caída nocturna crece
+          {{ dw.factor_to_alert }}× la toca.{% endif %}
+        </div>
+        {% endif %}
+        <div class="photo-m">
+          amplitud {{ f.amplitude }} pts · p90 diurno {{ f.day_p90 }}% ·
+          noche {{ f.night_mean }}% · 7 días, {{ f.n_day }}/{{ f.n_night }} lecturas
+        </div>
+      </div>
+      {% endif %}
       {% if u.n_nodata or u.n_stale %}
       <div class="u-foot">
         {% if u.n_nodata %}{{ u.n_nodata }} componente{{ 's' if u.n_nodata != 1 else '' }} sin dato{% endif %}
@@ -221,6 +285,47 @@
         </div>
         {% else %}
         <div class="no-data">Sin muestreos de biofiltro. <a href="/views/ui/calidad-agua/biofiltro/nueva?unit_id={{ u.unit_id }}">Registrar el primero →</a></div>
+        {% endif %}
+
+        {% set h = u.health %}
+        {% if h %}
+        <div class="health">
+          <div class="health-title">Salud del biofiltro
+            {% if h.n_samples %}<span class="health-note">no se ve en la medición diaria · ventana de {{ h.n_samples }} muestreos</span>{% endif %}
+          </div>
+          {% if h.state == 'no_aplica' %}
+          <div class="no-data">Unidad de flujo abierto: el nitrógeno sale con el agua, no por el biofiltro. No se evalúa.</div>
+          {% elif h.state == 'sin_dato' %}
+          <div class="no-data">{{ h.reason }}.</div>
+          {% else %}
+          <div class="health-grid">
+            <div class="hm">
+              <div class="hm-label">Velocidad de nitrificación</div>
+              <div class="hm-value hs-{{ h.state }}">
+                {{ '%.2f'|format(h.k) }} <span class="hm-unit">h⁻¹</span>
+                {% if h.pct %}<span class="hm-pct">{{ h.pct|round|int }}% de {{ h.ref_kind }}</span>{% endif %}
+              </div>
+              <div class="hm-foot">
+                {% if h.state == 'sin_base' %}Sin referencia con qué comparar todavía
+                {% elif h.ref %}referencia {{ '%.2f'|format(h.ref) }} h⁻¹ ({{ h.ref_kind }}){% endif %}
+              </div>
+            </div>
+            <div class="hm">
+              <div class="hm-label">Balance nitrito (NOB/AOB)</div>
+              <div class="hm-value hb-{{ h.balance_state or 'nd' }}">
+                {% if h.balance %}{{ '%.2f'|format(h.balance) }}{% else %}—{% endif %}
+                <span class="hm-pct">
+                  {%- if h.balance_state == 'al_dia' %}al día
+                  {%- elif h.balance_state == 'justo' %}justo
+                  {%- elif h.balance_state == 'rezagado' %}NOB rezagadas{% endif -%}
+                </span>
+              </div>
+              <div class="hm-foot">bajo 0,95 el nitrito se acumula pasada a pasada</div>
+            </div>
+          </div>
+          {% if h.reason %}<div class="health-reason">▲ {{ h.reason }}</div>{% endif %}
+          {% endif %}
+        </div>
         {% endif %}
       </div>
 

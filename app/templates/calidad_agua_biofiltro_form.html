@@ -25,13 +25,69 @@
     .point { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px 16px 6px; }
     .point h3 { font-size: .82rem; text-transform: uppercase; letter-spacing: .05em; color: #2563eb; margin-bottom: 12px; }
     .point.out h3 { color: #059669; }
-    .p-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+    .p-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
     .note { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 11px 14px;
             font-size: .8rem; color: #4b5563; margin-top: 18px; }
     .actions { display: flex; gap: 10px; margin-top: 22px; }
     .btn { border: none; border-radius: 9px; padding: 10px 18px; font-size: .88rem; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
     .btn-primary { background: #2563eb; color: #fff; } .btn-primary:hover { background: #1d4ed8; }
     .btn-ghost { background: #fff; color: #1a1a2e; border: 1px solid #d7dbe0; } .btn-ghost:hover { border-color: #2563eb; color: #2563eb; }
+    .btn-danger { background: #dc2626; color: #fff; } .btn-danger:hover { background: #b91c1c; }
+    .btn-warn { background: #d97706; color: #fff; } .btn-warn:hover { background: #b45309; }
+
+    /* Micro-lectura bajo cada campo. ALTURA RESERVADA: que aparezca o desaparezca
+       no debe mover el layout mientras el operador digita. */
+    .fx { min-height: 15px; font-size: .72rem; line-height: 15px; color: #9ca3af;
+          font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fx.alerta { color: #b45309; font-weight: 650; }
+    .fx.alarma { color: #b91c1c; font-weight: 650; }
+    .fx.info   { color: #4b5563; }
+
+    /* Severidad por campo. Solo se pinta cuando el valor está "asentado"
+       (blur o pausa de escritura), nunca a media digitación. */
+    input.sev-alerta { border-color: #d97706; background: #fffdf7; }
+    input.sev-alarma { border-color: #dc2626; background: #fff5f5; }
+    input.sev-rango  { border-color: #dc2626; background: #fff5f5; }
+
+    /* Panel de coherencia entre entrada y salida */
+    .coh { margin-top: 6px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fbfcfd;
+           padding: 10px 14px; display: flex; flex-direction: column; gap: 5px; }
+    .coh-line { font-size: .78rem; color: #6b7280; font-variant-numeric: tabular-nums;
+                min-height: 17px; line-height: 17px; }
+    .coh-line b { color: #1a1a2e; font-weight: 650; }
+    .coh-line.ok  { color: #4b5563; }
+    .coh-line.bad { color: #b45309; font-weight: 600; }
+
+    /* Resumen de estado (solo con veredicto asentado) */
+    .bf-status { display: none; align-items: center; gap: 8px; font-size: .84rem; font-weight: 650;
+                 padding: 10px 14px; border-radius: 10px; margin-top: 14px; }
+    .bf-status.show { display: flex; }
+    .bf-status.alerta { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+    .bf-status.alarma { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+    .bf-status.duda   { background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; }
+    .bf-status .ico { font-size: 1.05rem; }
+
+    /* Modal de confirmación al guardar */
+    .modal-back { position: fixed; inset: 0; background: rgba(15,23,42,.55); display: none;
+                  align-items: center; justify-content: center; padding: 20px; z-index: 100; }
+    .modal-back.show { display: flex; }
+    .modal { background: #fff; border-radius: 16px; max-width: 460px; width: 100%; padding: 24px;
+             box-shadow: 0 20px 60px rgba(0,0,0,.3); border-top: 5px solid #dc2626; }
+    .modal.duda { border-top-color: #7c3aed; }
+    .modal h3 { font-size: 1.15rem; color: #b91c1c; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .modal.duda h3 { color: #6d28d9; }
+    .modal .m-sub { font-size: .86rem; color: #4b5563; margin-bottom: 14px; line-height: 1.4; }
+    .modal .m-big { font-size: 1.5rem; font-weight: 800; color: #b91c1c; font-variant-numeric: tabular-nums; }
+    .modal .m-list { list-style: none; font-size: .84rem; color: #4b5563; line-height: 1.6; }
+    .modal .m-list li::before { content: "\00b7 "; color: #9ca3af; }
+    .modal .m-fix { background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 10px;
+                    padding: 12px 14px; margin-top: 14px; font-size: .88rem; color: #5b21b6; }
+    .modal .m-fix b { font-weight: 750; }
+    .modal .m-actions { display: flex; gap: 10px; margin-top: 12px; }
+    .modal .m-actions .btn { flex: 1; justify-content: center; }
+    .modal .m-stack { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+    .modal .m-stack .btn { width: 100%; justify-content: center; }
+    .hidden { display: none !important; }
     @media (max-width: 640px) { .points, .row2 { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -62,21 +118,48 @@
     <div class="points">
       <div class="point in">
         <h3>Entrada</h3>
-        <div class="p-field"><label for="in_ph">pH</label><input type="number" step="0.01" id="in_ph" name="in_ph" /></div>
-        <div class="p-field"><label for="in_temp_c">Temperatura <span class="hint">°C</span></label><input type="number" step="0.1" id="in_temp_c" name="in_temp_c" /></div>
-        <div class="p-field"><label for="in_nh4_n">Amonio <span class="hint">NH₄-N, mg/L</span></label><input type="number" step="0.001" min="0" id="in_nh4_n" name="in_nh4_n" /></div>
-        <div class="p-field"><label for="in_no2_n">Nitrito <span class="hint">NO₂-N, mg/L</span></label><input type="number" step="0.001" min="0" id="in_no2_n" name="in_no2_n" /></div>
-        <div class="p-field"><label for="in_no3_n">Nitrato <span class="hint">NO₃-N, mg/L</span></label><input type="number" step="0.001" min="0" id="in_no3_n" name="in_no3_n" /></div>
+        <div class="p-field"><label for="in_ph">pH</label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_ph" name="in_ph" />
+          <div class="fx" id="fx_in_ph"></div></div>
+        <div class="p-field"><label for="in_temp_c">Temperatura <span class="hint">°C</span></label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_temp_c" name="in_temp_c" />
+          <div class="fx" id="fx_in_temp_c"></div></div>
+        <div class="p-field"><label for="in_nh4_n">Amonio <span class="hint">NH₄-N, mg/L</span></label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_nh4_n" name="in_nh4_n" />
+          <div class="fx" id="fx_in_nh4_n"></div></div>
+        <div class="p-field"><label for="in_no2_n">Nitrito <span class="hint">NO₂-N, mg/L</span></label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_no2_n" name="in_no2_n" />
+          <div class="fx" id="fx_in_no2_n"></div></div>
+        <div class="p-field"><label for="in_no3_n">Nitrato <span class="hint">NO₃-N, mg/L</span></label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_no3_n" name="in_no3_n" />
+          <div class="fx" id="fx_in_no3_n"></div></div>
       </div>
       <div class="point out">
         <h3>Salida</h3>
-        <div class="p-field"><label for="out_ph">pH</label><input type="number" step="0.01" id="out_ph" name="out_ph" /></div>
-        <div class="p-field"><label for="out_temp_c">Temperatura <span class="hint">°C</span></label><input type="number" step="0.1" id="out_temp_c" name="out_temp_c" /></div>
-        <div class="p-field"><label for="out_nh4_n">Amonio <span class="hint">NH₄-N, mg/L</span></label><input type="number" step="0.001" min="0" id="out_nh4_n" name="out_nh4_n" /></div>
-        <div class="p-field"><label for="out_no2_n">Nitrito <span class="hint">NO₂-N, mg/L</span></label><input type="number" step="0.001" min="0" id="out_no2_n" name="out_no2_n" /></div>
-        <div class="p-field"><label for="out_no3_n">Nitrato <span class="hint">NO₃-N, mg/L</span></label><input type="number" step="0.001" min="0" id="out_no3_n" name="out_no3_n" /></div>
+        <div class="p-field"><label for="out_ph">pH</label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="out_ph" name="out_ph" />
+          <div class="fx" id="fx_out_ph"></div></div>
+        <div class="p-field"><label for="out_temp_c">Temperatura <span class="hint">°C</span></label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="out_temp_c" name="out_temp_c" />
+          <div class="fx" id="fx_out_temp_c"></div></div>
+        <div class="p-field"><label for="out_nh4_n">Amonio <span class="hint">NH₄-N, mg/L</span></label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="out_nh4_n" name="out_nh4_n" />
+          <div class="fx" id="fx_out_nh4_n"></div></div>
+        <div class="p-field"><label for="out_no2_n">Nitrito <span class="hint">NO₂-N, mg/L</span></label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="out_no2_n" name="out_no2_n" />
+          <div class="fx" id="fx_out_no2_n"></div></div>
+        <div class="p-field"><label for="out_no3_n">Nitrato <span class="hint">NO₃-N, mg/L</span></label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="out_no3_n" name="out_no3_n" />
+          <div class="fx" id="fx_out_no3_n"></div></div>
       </div>
     </div>
+
+    <div class="coh">
+      <div class="coh-line" id="coh-n">N total — se valida al completar las seis especies.</div>
+      <div class="coh-line" id="coh-d">Δ entrada→salida — se calcula al completar pH y temperatura de ambos puntos.</div>
+    </div>
+
+    <div class="bf-status" id="bf-status"><span class="ico"></span><span class="txt"></span></div>
 
     <div class="row2" style="margin-top:18px">
       <div class="field">
@@ -102,5 +185,552 @@
   </form>
 </div>
 </div></div>
+
+<!-- Modal al guardar: rama "duda de digitación" y rama "alarma biológica" -->
+<div class="modal-back" id="modal-back">
+  <div class="modal" id="modal" role="dialog" aria-modal="true">
+    <h3><span>⚠</span> <span id="modal-title"></span></h3>
+    <div class="m-sub" id="modal-sub"></div>
+    <div class="m-big hidden" id="modal-big"></div>
+    <ul class="m-list hidden" id="modal-list"></ul>
+    <div class="m-fix hidden" id="modal-fix">
+      <div id="modal-fix-q"></div>
+      <div class="m-actions"><button type="button" class="btn btn-primary" id="btn-apply-fix"></button></div>
+    </div>
+    <div class="m-stack">
+      <button type="button" class="btn" id="btn-main"></button>
+      <button type="button" class="btn btn-ghost" id="btn-back">Volver a revisar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    // ---- Datos inyectados por el servidor (los NÚMEROS viven en la BD) ----
+    // `default(...)` a propósito: Jinja recarga las plantillas desde disco pero
+    // uvicorn no recarga los módulos Python, así que entre editar el handler y
+    // reiniciar la app hay una ventana con template nuevo y contexto viejo. Sin
+    // esto, esa ventana es un 500; con esto, el formulario sigue usable y solo
+    // pierde la guía en vivo.
+    var TH    = {{ bf_thresholds | default({}, true) | tojson }};
+    var SPECS = {{ bf_test_specs | default({}, true) | tojson }};
+    var PREV  = {{ prev_by_unit | default({}, true) | tojson }};
+    var SELFTEST = {{ selftest_cases | default(none, true) | tojson }};
+
+    var NUM_FIELDS = ["in_ph", "in_temp_c", "in_nh4_n", "in_no2_n", "in_no3_n",
+                      "out_ph", "out_temp_c", "out_nh4_n", "out_no2_n", "out_no3_n"];
+    // Rango FÍSICAMENTE posible por tipo de medición (detecta el typo grosero,
+    // no el valor biológicamente malo: eso lo dicen los umbrales).
+    var RANGE = { ph: [0, 14, ""], temp_c: [0, 45, "°C"],
+                  nh4_n: [0, 10, "mg/L"], no2_n: [0, 5, "mg/L"], no3_n: [0, 200, "mg/L"] };
+    // Las seis lecturas que entran al balance de N, con su test asociado.
+    var BALANCE_FIELDS = [["in_nh4_n", "nh4_n"], ["in_no2_n", "no2_n"], ["in_no3_n", "no3_n"],
+                          ["out_nh4_n", "nh4_n"], ["out_no2_n", "no2_n"], ["out_no3_n", "no3_n"]];
+    var LABELS = { in_ph: "pH entrada", out_ph: "pH salida",
+                   in_temp_c: "temperatura entrada", out_temp_c: "temperatura salida",
+                   in_nh4_n: "amonio entrada", out_nh4_n: "amonio salida",
+                   in_no2_n: "nitrito entrada", out_no2_n: "nitrito salida",
+                   in_no3_n: "nitrato entrada", out_no3_n: "nitrato salida" };
+
+    var form = document.querySelector("form.card");
+    var unitSel = document.getElementById("cultivation_unit_id");
+    var statusEl = document.getElementById("bf-status");
+    var modalBack = document.getElementById("modal-back");
+
+    function el(id) { return document.getElementById(id); }
+    function suffix(f) { return f.replace(/^(in|out)_/, ""); }
+    function decimals(f) { var s = suffix(f); return s === "ph" ? 2 : (s === "temp_c" ? 1 : 3); }
+    function num(f) {
+      var e = el(f); if (!e || e.value.trim() === "") return null;
+      var v = parseFloat(e.value.trim().replace(",", "."));
+      return isFinite(v) ? v : null;
+    }
+    function fmt(v, d) { return (v === null || v === undefined) ? "—" : v.toFixed(d).replace(".", ","); }
+    // Campo escrito pero ilegible como número. Con type=text el navegador ya no
+    // lo filtra, y un valor así se perdería en silencio al guardar.
+    function isGarbage(f) {
+      var e = el(f);
+      return e.value.trim() !== "" && num(f) === null;
+    }
+
+    // ================= Espejo del motor (app/services/water_quality.py) =======
+    // Solo se repiten las FÓRMULAS; umbrales y specs llegan desde la BD arriba.
+    function totalN(a, b, c) {                       // total_nitrogen
+      if (a === null || b === null || c === null) return null;
+      return a + b + c;
+    }
+    function nh3n(nh4, ph, t) {                      // unionized_ammonia_n (Emerson 1975)
+      if (nh4 === null || ph === null || t === null) return null;
+      var pka = 0.09018 + 2729.92 / (t + 273.15);
+      return nh4 * (1.0 / (1.0 + Math.pow(10.0, pka - ph)));
+    }
+    function sigma(v, spec) { return spec.acc_fixed + spec.acc_pct * v; }   // reading_sigma
+    function balanceU(vals) {                        // balance_uncertainty (cuadratura)
+      var ssq = 0;
+      for (var i = 0; i < BALANCE_FIELDS.length; i++) {
+        var f = BALANCE_FIELDS[i][0], v = vals[f];
+        if (v === null || v === undefined) return null;
+        ssq += Math.pow(sigma(v, SPECS[BALANCE_FIELDS[i][1]]), 2);
+      }
+      return Math.sqrt(ssq);
+    }
+    var SEV = { ok: 0, alerta: 1, alarma: 2 };
+    function evalThr(v, spec) {                      // eval_threshold
+      if (v === null || v === undefined || !spec) return "ok";
+      if ((spec.comparator || "gt") === "lt") {
+        if (spec.alarm !== null && v < spec.alarm) return "alarma";
+        if (spec.alert !== null && v < spec.alert) return "alerta";
+      } else {
+        if (spec.alarm !== null && v > spec.alarm) return "alarma";
+        if (spec.alert !== null && v > spec.alert) return "alerta";
+      }
+      return "ok";
+    }
+    function worst() {
+      var o = "ok";
+      for (var i = 0; i < arguments.length; i++) if (SEV[arguments[i]] > SEV[o]) o = arguments[i];
+      return o;
+    }
+    // Balance de N sobre un juego de valores: {tin,tout,diff,U,ratio,k} o null.
+    function balance(vals) {
+      var tin = totalN(vals.in_nh4_n, vals.in_no2_n, vals.in_no3_n);
+      var tout = totalN(vals.out_nh4_n, vals.out_no2_n, vals.out_no3_n);
+      if (tin === null || tout === null) return null;
+      var U = balanceU(vals);
+      var k = (TH.n_balance_k && TH.n_balance_k.alarm !== null) ? TH.n_balance_k.alarm : 1.0;
+      var diff = Math.abs(tin - tout);
+      return { tin: tin, tout: tout, diff: diff, U: (U && U > 0) ? U : null,
+               ratio: (U && U > 0) ? diff / U : null, k: k };
+    }
+    // ==================== fin del espejo =====================================
+
+    function readAll() {
+      var v = {};
+      NUM_FIELDS.forEach(function (f) { v[f] = num(f); });
+      return v;
+    }
+
+    // ¿Cae fuera de lo físicamente posible? (typo grosero, no juicio biológico)
+    function rangeIssue(f, v) {
+      if (v === null) return null;
+      var r = RANGE[suffix(f)];
+      if (!r) return null;
+      return (v < r[0] || v > r[1])
+        ? { field: f, value: v, lo: r[0], hi: r[1], unit: r[2] } : null;
+    }
+
+    // Candidato a coma corrida: si mover el punto decimal de UNA sola lectura
+    // deja el balance dentro de tolerancia, es casi seguro el error de digitación.
+    // Solo propone; nunca corrige por su cuenta.
+    function culprit(vals) {
+      var base = balance(vals);
+      if (!base || base.ratio === null || base.ratio <= base.k) return null;
+      var best = null;
+      BALANCE_FIELDS.forEach(function (pair) {
+        var f = pair[0], v = vals[f];
+        if (v === null || v === 0) return;
+        [10, 0.1, 100, 0.01].forEach(function (factor) {
+          var alt = {};
+          NUM_FIELDS.forEach(function (k) { alt[k] = vals[k]; });
+          alt[f] = Math.round(v * factor * 1000) / 1000;
+          if (rangeIssue(f, alt[f])) return;      // no proponer un imposible
+          var r = balance(alt);
+          if (r && r.ratio !== null && r.ratio <= r.k && (!best || r.ratio < best.ratio))
+            best = { field: f, value: alt[f], ratio: r.ratio };
+        });
+      });
+      return best;
+    }
+
+    function evaluate() {
+      var v = readAll();
+      var r = { vals: v, fieldLevel: {}, nh3: {}, ranges: [], garbage: [], bio: "ok",
+                val: { balance: null, ph: null, temp: null }, suspicious: [] };
+
+      NUM_FIELDS.forEach(function (f) {
+        if (isGarbage(f)) r.garbage.push(f);
+        var iss = rangeIssue(f, v[f]);
+        if (iss) r.ranges.push(iss);
+      });
+
+      ["in", "out"].forEach(function (p) {
+        r.nh3[p] = nh3n(v[p + "_nh4_n"], v[p + "_ph"], v[p + "_temp_c"]);
+        r.fieldLevel[p + "_nh4_n"] = evalThr(r.nh3[p], TH.nh3_n);
+        r.fieldLevel[p + "_no2_n"] = evalThr(v[p + "_no2_n"], TH.nitrite_n);
+      });
+      r.bio = worst(r.fieldLevel.in_nh4_n, r.fieldLevel.out_nh4_n,
+                    r.fieldLevel.in_no2_n, r.fieldLevel.out_no2_n);
+
+      r.val.balance = balance(v);
+      if (v.in_ph !== null && v.out_ph !== null) {
+        var dph = Math.abs(v.in_ph - v.out_ph);
+        r.val.ph = { delta: dph, level: evalThr(dph, TH.ph_delta_tol) };
+      }
+      if (v.in_temp_c !== null && v.out_temp_c !== null) {
+        var dt = Math.abs(v.in_temp_c - v.out_temp_c);
+        r.val.temp = { delta: dt, level: evalThr(dt, TH.temp_delta_tol) };
+      }
+
+      if (r.val.balance && r.val.balance.ratio !== null && r.val.balance.ratio > r.val.balance.k)
+        r.suspicious.push("balance de N");
+      if (r.val.ph && r.val.ph.level !== "ok") r.suspicious.push("ΔpH");
+      if (r.val.temp && r.val.temp.level !== "ok") r.suspicious.push("Δtemperatura");
+      return r;
+    }
+
+    // ---- "Asentado": el color aparece al salir del campo o tras una pausa. ---
+    // Nadie debe ver rojo mientras escribe el "3" que va camino a "3,5".
+    var unsettled = {};
+    var settleTimer = null;
+    var SETTLE_MS = 600;
+    function isSettled(f) { return !unsettled[f]; }
+    function allSettled(fields) {
+      for (var i = 0; i < fields.length; i++) if (unsettled[fields[i]]) return false;
+      return true;
+    }
+
+    function prevFor(f) {
+      var p = PREV[unitSel.value];
+      return (p && p[f] !== null && p[f] !== undefined) ? p : null;
+    }
+    // Texto "· anterior X" para contrastar contra el último muestreo de la unidad.
+    function prevNote(f) {
+      var p = prevFor(f);
+      return p ? " · anterior " + fmt(p[f], decimals(f)) : "";
+    }
+    // ¿El valor digitado se despega un orden de magnitud del muestreo anterior?
+    // Es la pista más directa de coma corrida cuando el balance no alcanza a verlo.
+    function offByOrder(f, v) {
+      var p = prevFor(f);
+      if (!p || v === null || v === 0 || p[f] <= 0) return false;
+      var r = v / p[f];
+      return r >= 5 || r <= 0.2;
+    }
+
+    function paintField(f, r) {
+      var input = el(f), fx = el("fx_" + f);
+      input.classList.remove("sev-alerta", "sev-alarma", "sev-rango");
+      fx.className = "fx";
+      fx.textContent = "";
+
+      var settled = isSettled(f);
+      var v = r.vals[f];
+
+      // 0. Ilegible como número: se perdería al guardar, hay que avisarlo.
+      if (settled && isGarbage(f)) {
+        input.classList.add("sev-rango");
+        fx.className = "fx alarma";
+        fx.textContent = "no es un número";
+        return;
+      }
+
+      // 1. Fuera de rango físico: manda sobre todo lo demás.
+      var iss = null;
+      for (var i = 0; i < r.ranges.length; i++) if (r.ranges[i].field === f) iss = r.ranges[i];
+      if (iss && settled) {
+        input.classList.add("sev-rango");
+        fx.className = "fx alarma";
+        fx.textContent = "fuera de rango (" + iss.lo + "–" + iss.hi + (iss.unit ? " " + iss.unit : "") + ")";
+        return;
+      }
+
+      // 2. Amonio: mostrar el NH3 no ionizado, que es lo que realmente alarma.
+      if (suffix(f) === "nh4_n" && v !== null) {
+        var p = (f.indexOf("in_") === 0) ? "in" : "out";
+        var nh3 = r.nh3[p];
+        if (nh3 === null) {
+          // Sin pH o temp el motor no puede evaluar amonio: decirlo, no callarlo.
+          var falta = [];
+          if (r.vals[p + "_ph"] === null) falta.push("pH");
+          if (r.vals[p + "_temp_c"] === null) falta.push("temp");
+          fx.className = "fx info";
+          fx.textContent = "NH₃: falta " + falta.join(" y ") + " para evaluar";
+        } else {
+          var lvl = r.fieldLevel[f];
+          var flag = settled && lvl !== "ok";
+          fx.className = "fx " + (flag ? lvl : "info");
+          fx.textContent = "NH₃ " + fmt(nh3, 4) + " mg/L" +
+            (flag ? (lvl === "alarma" ? " · ALARMA" : " · alerta") : "");
+          if (flag) input.classList.add("sev-" + lvl);
+        }
+        return;
+      }
+
+      // 3. Nitrito: color + el umbral que cruzó.
+      if (suffix(f) === "no2_n" && v !== null && settled) {
+        var l2 = r.fieldLevel[f];
+        if (l2 !== "ok") {
+          input.classList.add("sev-" + l2);
+          fx.className = "fx " + l2;
+          fx.textContent = (l2 === "alarma" ? "ALARMA sobre " + fmt(TH.nitrite_n.alarm, 2)
+                                            : "alerta sobre " + fmt(TH.nitrite_n.alert, 2)) + " mg/L";
+          return;
+        }
+      }
+
+      // 4. Campo vacío: pista del muestreo anterior de esta unidad.
+      if (v === null) {
+        var pr = prevFor(f);
+        if (pr) fx.textContent = "ant. " + fmt(pr[f], decimals(f)) +
+                                 (pr.reading_date ? " (" + pr.reading_date + ")" : "");
+      }
+    }
+
+    function paintCoherence(r) {
+      var nLine = el("coh-n"), dLine = el("coh-d");
+      var b = r.val.balance;
+      var nFields = BALANCE_FIELDS.map(function (p) { return p[0]; });
+
+      nLine.className = "coh-line";
+      if (!b) {
+        nLine.textContent = "N total — se valida al completar las seis especies.";
+      } else {
+        var txt = "N total: entrada <b>" + fmt(b.tin, 2) + "</b> · salida <b>" + fmt(b.tout, 2) +
+                  "</b> · Δ <b>" + fmt(b.diff, 2) + "</b> mg/L";
+        if (b.U === null || !allSettled(nFields)) {
+          nLine.innerHTML = txt + (b.U === null ? "" : " — tolerancia ±" + fmt(b.k * b.U, 2));
+        } else {
+          txt += " — tolerancia ±" + fmt(b.k * b.U, 2);
+          if (b.ratio > b.k) {
+            nLine.className = "coh-line bad";
+            nLine.innerHTML = "⚠ " + txt + " — fuera de tolerancia";
+          } else {
+            nLine.className = "coh-line ok";
+            nLine.innerHTML = "✓ " + txt;
+          }
+        }
+      }
+
+      var parts = [], bad = false, pending = false;
+      if (r.val.ph) {
+        var s = allSettled(["in_ph", "out_ph"]);
+        parts.push("ΔpH <b>" + fmt(r.val.ph.delta, 2) + "</b>" +
+                   (s ? (r.val.ph.level !== "ok" ? " ⚠" : " ✓") : ""));
+        if (s && r.val.ph.level !== "ok") bad = true;
+        if (!s) pending = true;
+      }
+      if (r.val.temp) {
+        var s2 = allSettled(["in_temp_c", "out_temp_c"]);
+        parts.push("Δtemp <b>" + fmt(r.val.temp.delta, 1) + "</b> °C" +
+                   (s2 ? (r.val.temp.level !== "ok" ? " ⚠" : " ✓") : ""));
+        if (s2 && r.val.temp.level !== "ok") bad = true;
+        if (!s2) pending = true;
+      }
+      dLine.className = "coh-line" + (bad ? " bad" : ((parts.length && !pending) ? " ok" : ""));
+      dLine.innerHTML = parts.length ? parts.join(" &nbsp;·&nbsp; ")
+        : "Δ entrada→salida — se calcula al completar pH y temperatura de ambos puntos.";
+    }
+
+    function paintStatus(r) {
+      statusEl.className = "bf-status";
+      if (!allSettled(NUM_FIELDS)) return;          // nunca opinar a media escritura
+      var ico, kind, txt;
+      if (r.garbage.length) {
+        kind = "duda"; ico = "✋";
+        txt = "No se entiende el valor de " +
+              r.garbage.map(function (f) { return LABELS[f]; }).join(", ") + ".";
+      } else if (r.ranges.length) {
+        kind = "duda"; ico = "✋";
+        txt = "Revisa " + r.ranges.map(function (i) { return LABELS[i.field]; }).join(", ") +
+              ": valor fuera de rango.";
+      } else if (r.bio !== "ok") {
+        kind = r.bio; ico = (r.bio === "alarma") ? "🔴" : "🟠";
+        var det = [];
+        ["in", "out"].forEach(function (p) {
+          var pl = (p === "in") ? "entrada" : "salida";
+          if (r.fieldLevel[p + "_nh4_n"] !== "ok") det.push("NH₃ " + pl + " " + fmt(r.nh3[p], 4));
+          if (r.fieldLevel[p + "_no2_n"] !== "ok") det.push("nitrito " + pl + " " + fmt(r.vals[p + "_no2_n"], 3));
+        });
+        txt = (r.bio === "alarma" ? "ALARMA: " : "Alerta: ") + det.join(" · ") +
+              (r.bio === "alarma" ? " — pedirá confirmación al guardar" : "");
+        if (r.suspicious.length) txt += " (además " + r.suspicious.join(" y ") + " fuera de tolerancia)";
+      } else if (r.suspicious.length) {
+        kind = "duda"; ico = "🟣";
+        txt = "Se puede guardar, pero " + r.suspicious.join(" y ") +
+              " fuera de tolerancia: conviene verificar la digitación.";
+      } else {
+        return;
+      }
+      statusEl.classList.add("show", kind);
+      statusEl.querySelector(".ico").textContent = ico;
+      statusEl.querySelector(".txt").textContent = txt;
+    }
+
+    function paint() {
+      var r = evaluate();
+      NUM_FIELDS.forEach(function (f) { paintField(f, r); });
+      paintCoherence(r);
+      paintStatus(r);
+      return r;
+    }
+
+    NUM_FIELDS.forEach(function (f) {
+      var input = el(f);
+      input.addEventListener("input", function () {
+        unsettled[f] = true;
+        clearTimeout(settleTimer);
+        settleTimer = setTimeout(function () { unsettled = {}; paint(); }, SETTLE_MS);
+        paint();                                    // los números sí van en vivo
+      });
+      input.addEventListener("blur", function () { delete unsettled[f]; paint(); });
+    });
+    unitSel.addEventListener("change", paint);      // cambia la pista "ant."
+
+    // ---------------- Confirmación al guardar --------------------------------
+    // Dos ramas, en este orden: primero la duda de digitación (no tiene sentido
+    // confirmar una alarma sobre un dato que el sistema cree mal medido) y
+    // recién después la alarma biológica. Ninguna impide guardar.
+    var pendingKind = null;                          // "duda" | "alarma"
+    var bypass = false;
+    var _submit = form.submit.bind(form);
+    form.submit = function () { bypass = true; _submit(); };
+
+    function openDuda(r) {
+      pendingKind = "duda";
+      el("modal").className = "modal duda";
+      el("modal-title").textContent = "Revisa lo digitado";
+      el("modal-sub").textContent = "Estos valores no son imposibles, pero no cuadran entre sí. " +
+        "Lo más común es una coma corrida.";
+      el("modal-big").classList.add("hidden");
+
+      var list = el("modal-list");
+      var items = [];
+      r.garbage.forEach(function (f) {
+        items.push(LABELS[f] + ": \"" + el(f).value.trim() +
+                   "\" no es un número y se guardaría vacío");
+      });
+      r.ranges.forEach(function (i) {
+        items.push(LABELS[i.field] + " " + fmt(i.value, 2) + " está fuera del rango posible (" +
+                   i.lo + "–" + i.hi + ")");
+      });
+      var b = r.val.balance;
+      if (b && b.ratio !== null && b.ratio > b.k)
+        items.push("Balance de N: Δ " + fmt(b.diff, 2) + " mg/L contra ±" + fmt(b.k * b.U, 2) + " esperado");
+      if (r.val.ph && r.val.ph.level !== "ok")
+        items.push("ΔpH " + fmt(r.val.ph.delta, 2) + " sobre " + fmt(TH.ph_delta_tol.alert, 2));
+      if (r.val.temp && r.val.temp.level !== "ok")
+        items.push("Δtemp " + fmt(r.val.temp.delta, 1) + " °C sobre " + fmt(TH.temp_delta_tol.alert, 1));
+      list.innerHTML = items.map(function (t) { return "<li>" + t + "</li>"; }).join("");
+      list.classList.remove("hidden");
+
+      var c = culprit(r.vals);
+      var fix = el("modal-fix");
+      if (c) {
+        fix.classList.remove("hidden");
+        var pf = prevFor(c.field);
+        el("modal-fix-q").innerHTML = "¿<b>" + LABELS[c.field] + "</b> es <b>" + fmt(c.value, 3) +
+          "</b> y no " + fmt(r.vals[c.field], 3) + "?" +
+          (pf ? "<div style=\"margin-top:6px;font-size:.8rem;opacity:.8\">En el muestreo anterior fue " +
+                fmt(pf[c.field], decimals(c.field)) + ".</div>" : "");
+        el("btn-apply-fix").textContent = "Sí, corregir a " + fmt(c.value, 3);
+        el("btn-apply-fix").onclick = function () {
+          el(c.field).value = fmt(c.value, 3);
+          closeModal();
+          paint();
+          el(c.field).focus();
+        };
+      } else {
+        fix.classList.add("hidden");
+      }
+      el("btn-main").className = "btn btn-warn";
+      el("btn-main").textContent = "Guardar así de todos modos";
+      modalBack.classList.add("show");
+    }
+
+    function openAlarma(r) {
+      pendingKind = "alarma";
+      el("modal").className = "modal";
+      var big = [], saltos = [];
+      ["in", "out"].forEach(function (p) {
+        var pl = (p === "in") ? "entrada" : "salida";
+        if (r.fieldLevel[p + "_nh4_n"] === "alarma") {
+          big.push("NH₃ " + pl + " " + fmt(r.nh3[p], 4));
+          if (offByOrder(p + "_nh4_n", r.vals[p + "_nh4_n"]))
+            saltos.push("amonio " + pl + " " + fmt(r.vals[p + "_nh4_n"], 3) + prevNote(p + "_nh4_n"));
+        }
+        if (r.fieldLevel[p + "_no2_n"] === "alarma") {
+          big.push("NO₂-N " + pl + " " + fmt(r.vals[p + "_no2_n"], 3));
+          if (offByOrder(p + "_no2_n", r.vals[p + "_no2_n"]))
+            saltos.push("nitrito " + pl + " " + fmt(r.vals[p + "_no2_n"], 3) + prevNote(p + "_no2_n"));
+        }
+      });
+      el("modal-title").textContent = "Valores en alarma";
+      el("modal-sub").textContent = saltos.length
+        ? "Ojo: el salto contra el muestreo anterior es de un orden de magnitud. " +
+          "Si el valor es correcto, confírmalo y avisa al supervisor."
+        : "El muestreo es coherente, así que estos valores se toman como reales. " +
+          "Confírmalos para guardar y avisa al supervisor.";
+      el("modal-big").classList.remove("hidden");
+      el("modal-big").textContent = big.join("     ");
+      var lst = el("modal-list");
+      if (saltos.length) {
+        lst.innerHTML = saltos.map(function (t) { return "<li>" + t + "</li>"; }).join("");
+        lst.classList.remove("hidden");
+      } else {
+        lst.classList.add("hidden");
+      }
+      el("modal-fix").classList.add("hidden");
+      el("btn-main").className = "btn btn-danger";
+      el("btn-main").textContent = "Confirmar y guardar";
+      modalBack.classList.add("show");
+    }
+
+    function closeModal() { modalBack.classList.remove("show"); pendingKind = null; }
+
+    el("btn-back").addEventListener("click", closeModal);
+    modalBack.addEventListener("click", function (e) { if (e.target === modalBack) closeModal(); });
+    el("btn-main").addEventListener("click", function () {
+      var wasDuda = (pendingKind === "duda");
+      closeModal();
+      if (wasDuda) {
+        // Aceptó los datos como están: queda pendiente la alarma biológica, si la hay.
+        var r = evaluate();
+        if (r.bio === "alarma") { openAlarma(r); return; }
+      }
+      form.submit();
+    });
+
+    form.addEventListener("submit", function (e) {
+      if (bypass) return;
+      unsettled = {};                               // al guardar, todo cuenta como asentado
+      var r = paint();
+      if (r.garbage.length || r.ranges.length || r.suspicious.length) {
+        e.preventDefault(); openDuda(r); return;
+      }
+      if (r.bio === "alarma") { e.preventDefault(); openAlarma(r); return; }
+    });
+
+    // ---- Verificación del espejo (?selftest=1): compara contra el motor -----
+    if (SELFTEST) {
+      var fails = 0;
+      SELFTEST.forEach(function (c, i) {
+        var v = c.reading, exp = c.expected, b = balance(v);
+        var got = {
+          tn_in: totalN(v.in_nh4_n, v.in_no2_n, v.in_no3_n),
+          tn_out: totalN(v.out_nh4_n, v.out_no2_n, v.out_no3_n),
+          nh3_n_in: nh3n(v.in_nh4_n, v.in_ph, v.in_temp_c),
+          nh3_n_out: nh3n(v.out_nh4_n, v.out_ph, v.out_temp_c),
+          n_balance_flag: (b && b.ratio !== null) ? (b.ratio > b.k ? "sospechoso" : "ok") : "ok",
+          alarm_level: worst(evalThr(nh3n(v.in_nh4_n, v.in_ph, v.in_temp_c), TH.nh3_n),
+                             evalThr(nh3n(v.out_nh4_n, v.out_ph, v.out_temp_c), TH.nh3_n),
+                             evalThr(v.in_no2_n, TH.nitrite_n), evalThr(v.out_no2_n, TH.nitrite_n)),
+          n_balance_uncertainty: b ? b.U : null
+        };
+        Object.keys(got).forEach(function (k) {
+          var a = got[k], e2 = exp[k];
+          var same = (typeof a === "number" && typeof e2 === "number")
+            ? Math.abs(a - e2) < 5e-4
+            : (a === e2 || (a === null && (e2 === null || e2 === undefined)));
+          if (!same) { fails++; console.error("[selftest] caso " + i + " · " + k + ": JS=" + a + " Python=" + e2); }
+        });
+      });
+      console.log(fails === 0
+        ? "[selftest] espejo JS ≡ motor Python en " + SELFTEST.length + " casos ✓"
+        : "[selftest] " + fails + " diferencia(s): el espejo JS se desalineó del motor");
+    }
+
+    paint();
+  })();
+</script>
 </body>
 </html>

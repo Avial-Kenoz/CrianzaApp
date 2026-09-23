@@ -39,6 +39,24 @@ CONFIG_SECTIONS = [
         "icon": "🧪",
     },
     {
+        "title": "Registro de molienda y ensilaje",
+        "desc": "Registro oficial PC 03.2: cargas del mes, recepción, inspección semanal e impresión.",
+        "url": "/views/ui/ensilaje/registro",
+        "icon": "📋",
+    },
+    {
+        "title": "Tambores de ensilaje",
+        "desc": "Alta de tambores vacíos y estado de cada uno (abierto, sellado, retirado).",
+        "url": "/views/ui/ensilaje/tambores",
+        "icon": "🛢️",
+    },
+    {
+        "title": "Ácido para ensilaje",
+        "desc": "Ingresos de ácido fórmico, ajustes y disponible calculado.",
+        "url": "/views/ui/ensilaje/acido",
+        "icon": "🧪",
+    },
+    {
         "title": "Gestión de usuarios",
         "desc": "Activa o desactiva usuarios. Los activos aparecen en los selectores de operador.",
         "url": "/views/ui/config/usuarios",

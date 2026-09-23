@@ -501,3 +501,262 @@ def biofilter_field_levels(reading: dict, thresholds: Optional[dict] = None) -> 
                                   _to_float(reading.get(f"{point}_temp_c")))
         out[nh3_key] = eval_threshold(nh3, nh3_spec)
     return out
+
+
+# =============================================================================
+# SALUD DEL BIOFILTRO
+# =============================================================================
+# ADVERTENCIA: todo lo de aqui abajo son coeficientes CALIBRADOS, no constantes
+# fisicas. Lo de mas arriba (Emerson, Benson-Krause) es quimica y no se toca; esto
+# viene de literatura y de una regresion sobre 45 lecturas del norte, y va a
+# cambiar cuando haya mas datos. Se mantienen separados a proposito.
+#
+# La idea: el biofiltro sigue cinetica de primer orden, C_sal = C_ent * e^(-k*tau).
+# Medir k directo exigiria el caudal, que aqui NO se usa: el unico disponible
+# viene de un aforo puntual, caro y variable, y fijarlo daria precision falsa.
+# En su lugar se combina el balance de masa con la cinetica y el caudal se cancela:
+#
+#     N producido = Q * (C_ent - C_sal)
+#     k           = ln(C_ent/C_sal) * Q / V
+#     ------------------------------------------------
+#     k = N_producido / (V * C_logmedia)
+#
+# El N producido sale del alimento registrado. Validado contra el aforo: k por
+# ambos caminos coincide dentro de 4-25% y da el mismo veredicto (Sur Oriente al
+# 20-29% del norte).
+
+NITRIFICATION_THETA = 1.07      # Arrhenius por °C (literatura)
+NITRIFICATION_T_REF = 13.6      # °C de referencia (mediana medida en el norte)
+NITRIFICATION_PH_REF = 7.50     # pH de referencia
+TAN_PER_FEED_N = 0.092          # kg TAN-N por kg de alimento x fraccion proteica
+                                # (Timmons & Ebeling); validado al 2% contra el
+                                # balance de masa del norte.
+MIN_SAMPLES_FOR_HEALTH = 5      # el test de amonio (+-0,04 mg/L fijo) hace que una
+                                # lectura suelta tenga ~30% de error en el delta:
+                                # el indicador SOLO tiene sentido promediado.
+
+
+def nitrification_ph_factor(ph: Optional[float]) -> float:
+    """Correccion de velocidad por pH (Metcalf & Eddy): plana >= 7,2, cae bajo eso.
+
+    El ajuste sobre datos propios sugiere que sigue subiendo entre 7,2 y 8,0
+    (x1,60 por +0,5 de pH), pero es observacional. Se usa el valor conservador de
+    literatura; el experimento de bicarbonato en Sur Oriente distingue cual vale.
+    """
+    if ph is None:
+        return 1.0
+    return 1.0 if ph >= 7.2 else max(0.10, 1.0 - 0.833 * (7.2 - float(ph)))
+
+
+def nitrification_rate_factor(temp_c: Optional[float], ph: Optional[float]) -> float:
+    """Factor de velocidad respecto a las condiciones de referencia. Vale 1 en 13,6 °C / pH 7,50."""
+    t = NITRIFICATION_T_REF if temp_c is None else float(temp_c)
+    return (NITRIFICATION_THETA ** (t - NITRIFICATION_T_REF)
+            * nitrification_ph_factor(ph) / nitrification_ph_factor(NITRIFICATION_PH_REF))
+
+
+def log_mean_concentration(c_in: Optional[float], c_out: Optional[float]) -> Optional[float]:
+    """Concentracion media logaritmica a lo largo del filtro (la que ve la reaccion)."""
+    if not c_in or not c_out or c_in <= 0 or c_out <= 0:
+        return None
+    ci, co = float(c_in), float(c_out)
+    if abs(ci - co) < 1e-9:
+        return ci
+    if co >= ci:                      # sin remocion: no hay media logaritmica util
+        return None
+    return (ci - co) / math.log(ci / co)
+
+
+def feed_nitrogen_kg_day(feed_kg_day: Optional[float], protein_pct: Optional[float]) -> Optional[float]:
+    """N amoniacal que produce una racion diaria (kg N/dia)."""
+    if feed_kg_day is None or protein_pct is None:
+        return None
+    return float(feed_kg_day) * (float(protein_pct) / 100.0) * TAN_PER_FEED_N
+
+
+def purge_nitrogen_kg_day(freshwater_l_s: Optional[float],
+                          pond_nh4_n: Optional[float]) -> float:
+    """N que se lleva la purga, en kg N/dia.
+
+    La laguna recibe agua fresca y descarga el mismo caudal a su propia
+    concentracion. Ese nitrogeno NO pasa por el biofiltro y no debe atribuirsele.
+    Pesa entre 16% y 26% del total segun lo sucia que este el agua.
+    """
+    if not freshwater_l_s or not pond_nh4_n:
+        return 0.0
+    return float(freshwater_l_s) * float(pond_nh4_n) * 86400.0 / 1e6
+
+
+def biofilter_k(n_produced_kg_day: Optional[float], media_volume_m3: Optional[float],
+                c_in: Optional[float], c_out: Optional[float]) -> Optional[float]:
+    """Constante de velocidad volumetrica del biofiltro, en 1/h. Sin caudal.
+
+    Comparable entre unidades de distinto tamano y distinto caudal, que es lo que
+    la eficiencia por si sola no permite.
+    """
+    c_log = log_mean_concentration(c_in, c_out)
+    if not n_produced_kg_day or not media_volume_m3 or not c_log:
+        return None
+    volume_l = float(media_volume_m3) * 1000.0
+    # kg N/dia -> mg/dia ; dividido por (L * mg/L) da 1/dia ; /24 -> 1/h
+    return float(n_produced_kg_day) * 1e6 / (volume_l * c_log) / 24.0
+
+
+def normalized_biofilter_k(k_per_hour: Optional[float], temp_c: Optional[float],
+                           ph: Optional[float]) -> Optional[float]:
+    """k llevado a 13,6 °C y pH 7,50, para poder comparar entre estaciones."""
+    if k_per_hour is None:
+        return None
+    factor = nitrification_rate_factor(temp_c, ph)
+    return k_per_hour / factor if factor else None
+
+
+def nob_aob_balance(nh4_in: Optional[float], nh4_out: Optional[float],
+                    no2_in: Optional[float], no2_out: Optional[float]) -> Optional[float]:
+    """Razon NOB/AOB: si la segunda etapa (nitrito->nitrato) sigue el ritmo de la primera.
+
+    Todo el amonio oxidado pasa obligatoriamente por nitrito, asi que lo que
+    procesan las NOB es el amonio removido menos lo que se acumulo de nitrito.
+
+        >= 1,00  al dia (incluso consumiendo el nitrito que traia el agua)
+        <  0,95  las NOB se rezagan: acumulacion, filtro joven o estresado
+
+    Ojo: el delta de nitrito por si solo esta al borde del ruido del test; esta
+    razon es util porque el termino dominante es el amonio, 25x su propio ruido.
+    """
+    if nh4_in is None or nh4_out is None or no2_in is None or no2_out is None:
+        return None
+    aob = float(nh4_in) - float(nh4_out)
+    if aob <= 0:
+        return None
+    nob = aob - (float(no2_out) - float(no2_in))
+    return nob / aob
+
+
+# =============================================================================
+# FOTOSÍNTESIS  (floración de algas)
+# =============================================================================
+# El oxígeno delata la floración antes que cualquier otra medición: durante el
+# día las algas producen O2 y de noche lo consumen. Lo que importa no es la
+# floración en sí, sino sus dos consecuencias:
+#
+#   1. De tarde el pH sube (las algas consumen CO2) y el amonio NO IONIZADO se
+#      multiplica. De pH 7,0 a 8,5 el factor es ~29x: el mismo TAN que a las
+#      7 AM es inofensivo, a las 4 PM cruza el umbral.
+#   2. De madrugada las algas respiran y hunden el O2 justo cuando ya está en
+#      su mínimo diario.
+#
+# Umbrales calibrados sobre 50 pares unidad-semana (jul-sep 2026): la amplitud
+# diaria tiene mediana 6,6 y percentil 90 en 14,5 puntos de saturación.
+# ---------------------------------------------------------------------------
+PHOTO_DAY_HOURS = (11, 17)       # ventana diurna (inclusive)
+PHOTO_NIGHT_HOURS = (21, 5)      # cruza medianoche
+PHOTO_DAWN_HOURS = (4, 7)        # mínimo diario: las algas ya respiraron toda la noche
+PHOTO_WINDOW_DAYS = 7
+PHOTO_MIN_READINGS = 20          # por ventana; bajo esto el p90 es demasiado ruidoso
+PHOTO_AMPLITUDE_TRIGGER = 15.0   # puntos de saturación (p90 histórico = 14,5)
+PHOTO_P90_TRIGGER = 112.0        # % — sobre el techo de aireación de un estanque
+                                 # mezclado (~107% a 1,4 m de profundidad)
+
+
+def percentile(values: list, p: float) -> Optional[float]:
+    """Percentil por interpolación lineal. `p` en [0, 1]."""
+    if not values:
+        return None
+    v = sorted(values)
+    k = (len(v) - 1) * p
+    i = int(k)
+    if i + 1 >= len(v):
+        return float(v[i])
+    return float(v[i] + (k - i) * (v[i + 1] - v[i]))
+
+
+def ph_for_nh3_limit(nh4_n: Optional[float], temp_c: Optional[float],
+                     limit_nh3_n: Optional[float]) -> Optional[float]:
+    """pH al que el NH3-N no ionizado alcanza `limit_nh3_n`, dado el TAN.
+
+    Es la inversa de `unionized_ammonia_n`: si f = limit/nh4_n, entonces
+    pH = pKa - log10(1/f - 1). Devuelve None si el límite ya se excede con
+    f >= 1 (imposible) o si falta algún dato.
+    """
+    if not nh4_n or nh4_n <= 0 or temp_c is None or not limit_nh3_n:
+        return None
+    fraction = float(limit_nh3_n) / float(nh4_n)
+    if fraction >= 1.0:
+        return None          # ni con todo el TAN no ionizado se llega al límite
+    pka = 0.09018 + 2729.92 / (float(temp_c) + 273.15)
+    return pka - math.log10(1.0 / fraction - 1.0)
+
+
+def photosynthesis_signal(day_sats: list, night_sats: list,
+                          dawn_sats: list, dawn_dos: list,
+                          thresholds: Optional[dict] = None) -> Optional[dict]:
+    """Señal de floración de algas a partir de las saturaciones de O2.
+
+    `day_sats` / `night_sats` / `dawn_sats` son listas de saturación (%) en sus
+    ventanas horarias; `dawn_dos` son los mg/L del amanecer. Devuelve None si
+    no hay lecturas suficientes para evaluar.
+
+    Enciende si la amplitud diaria supera PHOTO_AMPLITUDE_TRIGGER **o** si el
+    percentil 90 diurno supera PHOTO_P90_TRIGGER. Los dos criterios se ganan el
+    puesto: cuando la noche también sube, la amplitud se comprime y sólo el p90
+    ve la floración.
+    """
+    if len(day_sats) < PHOTO_MIN_READINGS or len(night_sats) < PHOTO_MIN_READINGS:
+        return None
+
+    day_mean = sum(day_sats) / len(day_sats)
+    night_mean = sum(night_sats) / len(night_sats)
+    amplitude = day_mean - night_mean
+    day_p90 = percentile(day_sats, 0.90)
+
+    by_amplitude = amplitude >= PHOTO_AMPLITUDE_TRIGGER
+    by_p90 = day_p90 is not None and day_p90 >= PHOTO_P90_TRIGGER
+    if by_amplitude and by_p90:
+        trigger = "ambos"
+    elif by_amplitude:
+        trigger = "amplitud"
+    elif by_p90:
+        trigger = "saturacion"
+    else:
+        trigger = None
+
+    out = {
+        "active": trigger is not None,
+        "trigger": trigger,
+        "amplitude": round(amplitude, 1),
+        "day_p90": round(day_p90, 1) if day_p90 is not None else None,
+        "night_mean": round(night_mean, 1),
+        "n_day": len(day_sats),
+        "n_night": len(night_sats),
+        "dawn": None,
+    }
+
+    # --- riesgo del amanecer -------------------------------------------------
+    # La floración respira de noche. Miramos el percentil 10 del amanecer (no el
+    # mínimo, que es una sola lectura) contra los umbrales de O2 del sitio, y
+    # cuánto tendría que crecer la caída nocturna para tocar la alerta.
+    th = thresholds or {}
+    sat_spec = th.get("o2_saturation") or {}
+    do_spec = th.get("o2_do_mg_l") or {}
+    if len(dawn_sats) >= PHOTO_MIN_READINGS:
+        sat_p10 = percentile(dawn_sats, 0.10)
+        do_p10 = percentile(dawn_dos, 0.10) if len(dawn_dos) >= PHOTO_MIN_READINGS else None
+        sat_alert = sat_spec.get("alert")
+        drop = (day_p90 - sat_p10) if (day_p90 is not None and sat_p10 is not None) else None
+        margin = (sat_p10 - sat_alert) if (sat_p10 is not None and sat_alert is not None) else None
+        factor = None
+        if drop and drop > 0 and margin is not None:
+            factor = 1.0 + margin / drop
+        out["dawn"] = {
+            "sat_p10": round(sat_p10, 1) if sat_p10 is not None else None,
+            "do_p10": round(do_p10, 2) if do_p10 is not None else None,
+            "sat_level": eval_threshold(sat_p10, sat_spec),
+            "do_level": eval_threshold(do_p10, do_spec),
+            "sat_min": round(min(dawn_sats), 1),
+            "drop": round(drop, 1) if drop is not None else None,
+            "margin": round(margin, 1) if margin is not None else None,
+            "factor_to_alert": round(factor, 1) if factor is not None else None,
+            "n": len(dawn_sats),
+        }
+    return out

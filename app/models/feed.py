@@ -41,6 +41,9 @@ class FeedType(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     name = Column(String(120), nullable=False, unique=True)
     active = Column(Integer, default=1, nullable=False)
+    # Datos de etiqueta, usados para estimar el N que produce cada racion
+    protein_pct = Column(Numeric(5, 2), nullable=True)
+    bag_kg = Column(Numeric(8, 3), nullable=True)
     created_at = Column(TIMESTAMP, nullable=True)
     updated_at = Column(TIMESTAMP, nullable=True)
 

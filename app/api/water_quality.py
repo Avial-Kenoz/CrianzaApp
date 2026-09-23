@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, text as sa_text
 from sqlalchemy.orm import Session
 from datetime import datetime, date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -175,6 +175,244 @@ def _latest_bf_by_unit(db: Session) -> dict:
     return out
 
 
+# --- Salud del biofiltro ----------------------------------------------------
+# Dos indicadores que no se ven en la medición diaria: la velocidad de
+# nitrificación (k) y si la segunda etapa sigue el ritmo de la primera (NOB/AOB).
+#
+# k se calcula SIN caudal, combinando el balance de masa con la cinética (ver
+# app/services/water_quality.py). El N producido sale del alimento registrado.
+#
+# Van sobre una ventana móvil, nunca sobre una lectura suelta: el test de amonio
+# tiene ±0,04 mg/L fijo sobre concentraciones de 0,3-0,7, así que una lectura
+# individual trae ~30% de error en el delta y el semáforo parpadearía al azar.
+BF_HEALTH_WINDOW = 8            # muestreos de la ventana actual (~3 semanas)
+BF_HEALTH_MIN_HISTORY = 24      # ~3 meses: bajo esto la "línea base" se solaparía
+                                # con la ventana actual y el % no significaría nada
+BF_HEALTH_OK = 0.85             # fracción de la referencia
+BF_HEALTH_WARN = 0.70
+
+
+FEED_MIN_WINDOW_DAYS = 28       # el alimento se confirma por lotes, no a diario:
+                                # ventanas cortas dan kg/día muy ruidosos
+
+
+def _unit_feed_n_kg_day(db: Session, unit_id: int, since: date, until: date) -> Optional[float]:
+    """N amoniacal producido por el alimento de una unidad, en kg N/día.
+
+    Usa proteína y kilos por saco de feed_types (datos de etiqueta). Devuelve
+    None si la unidad no tiene alimento registrado o falta la config.
+
+    La ventana se ensancha hacia atrás hasta FEED_MIN_WINDOW_DAYS: los eventos de
+    alimento se confirman en tandas, así que un rango corto puede caer entre dos
+    confirmaciones y dar una ración irreal.
+    """
+    days = (until - since).days + 1
+    if days <= 0:
+        return None
+    if days < FEED_MIN_WINDOW_DAYS:
+        since = until - timedelta(days=FEED_MIN_WINDOW_DAYS - 1)
+        days = FEED_MIN_WINDOW_DAYS
+    row = db.execute(sa_text("""
+        SELECT SUM(e.confirmed_bags * ft.bag_kg * ft.protein_pct / 100.0) AS prot_kg
+          FROM feed_execution_events e
+          JOIN ponds p ON p.id = e.pond_id
+          JOIN feed_types ft ON ft.id = e.feed_type_id
+         WHERE p.cultivation_unit_id = :uid
+           AND e.confirmed_at::date BETWEEN :since AND :until
+           AND ft.bag_kg IS NOT NULL AND ft.protein_pct IS NOT NULL
+    """), {"uid": unit_id, "since": since, "until": until}).first()
+    if not row or row.prot_kg is None:
+        return None
+    # prot_kg ya trae alimento x fracción proteica; solo falta el factor TAN
+    return float(row.prot_kg) * wq.TAN_PER_FEED_N / days
+
+
+def _window_k(db: Session, unit, rows) -> Optional[float]:
+    """k normalizado (1/h) sobre un conjunto de muestreos."""
+    usable = [r for r in rows if r.in_nh4_n and r.out_nh4_n
+              and float(r.in_nh4_n) > 0 and float(r.out_nh4_n) > 0]
+    if len(usable) < 2 or not unit.media_volume_m3:
+        return None
+    ci = sum(float(r.in_nh4_n) for r in usable) / len(usable)
+    co = sum(float(r.out_nh4_n) for r in usable) / len(usable)
+    n_kg = _unit_feed_n_kg_day(db, unit.id,
+                               min(r.reading_date for r in usable),
+                               max(r.reading_date for r in usable))
+    if n_kg is not None:
+        # La laguna no es un circuito cerrado: entra agua fresca y sale la misma
+        # purga, llevándose amonio a la concentración de la laguna. Ese N no pasa
+        # por el biofiltro; atribuírselo lo haría ver mejor de lo que es.
+        n_kg = max(0.0, n_kg - wq.purge_nitrogen_kg_day(unit.freshwater_l_s, ci))
+    k = wq.biofilter_k(n_kg, float(unit.media_volume_m3), ci, co)
+    if k is None:
+        return None
+    temps = [float(r.in_temp_c) for r in usable if r.in_temp_c is not None]
+    phs = [float(r.in_ph) for r in usable if r.in_ph is not None]
+    return wq.normalized_biofilter_k(
+        k,
+        sum(temps) / len(temps) if temps else None,
+        sum(phs) / len(phs) if phs else None,
+    )
+
+
+def _biofilter_health_by_unit(db: Session) -> dict:
+    """{unit_id: {...}} con salud (k) y balance de nitrito por unidad.
+
+    La referencia contra la que se juzga k es, por ahora, la MEDIANA de las otras
+    unidades recirculantes: k es comparable entre unidades de distinto tamaño y
+    caudal, que es justamente lo que la eficiencia no permite. La comparación
+    contra la propia historia (que detectaría degradación lenta) se activa sola
+    cuando la unidad acumule BF_HEALTH_MIN_HISTORY muestreos.
+    """
+    out = {}
+    units = db.query(CultivationUnit).all()
+    for u in units:
+        if not u.is_recirculating:
+            # Flujo abierto (Central): el nitrógeno sale con el agua, no por el
+            # filtro. Evaluarlo como recirculante daría un falso "enfermo".
+            out[u.id] = {"state": "no_aplica", "applies": False,
+                         "reason": "Flujo abierto"}
+            continue
+        rows = (db.query(BiofilterReading)
+                .filter(BiofilterReading.cultivation_unit_id == u.id)
+                .order_by(BiofilterReading.reading_date.desc(),
+                          BiofilterReading.id.desc())
+                .all())
+        if not rows:
+            # Unidad sin biofiltro (hatchery, jaula): no hay nada que evaluar y
+            # el panel ya lo muestra como "biofiltro —".
+            continue
+        window, history = rows[:BF_HEALTH_WINDOW], rows[BF_HEALTH_WINDOW:]
+
+        k_now = _window_k(db, u, window)
+        baseline = _window_k(db, u, history) if len(rows) >= BF_HEALTH_MIN_HISTORY else None
+
+        # Balance NOB/AOB sobre la misma ventana (promedio de las medias)
+        usable = [r for r in window if r.in_nh4_n and r.out_nh4_n
+                  and r.in_no2_n is not None and r.out_no2_n is not None]
+        balance = None
+        if usable:
+            n = len(usable)
+            balance = wq.nob_aob_balance(
+                sum(float(r.in_nh4_n) for r in usable) / n,
+                sum(float(r.out_nh4_n) for r in usable) / n,
+                sum(float(r.in_no2_n) for r in usable) / n,
+                sum(float(r.out_no2_n) for r in usable) / n,
+            )
+
+        out[u.id] = {
+            "k": k_now, "baseline": baseline, "applies": True,
+            "no_config": not u.media_volume_m3,
+            "balance": balance,
+            "balance_state": (None if balance is None else
+                              "al_dia" if balance >= 1.0 else
+                              "justo" if balance >= 0.95 else "rezagado"),
+            "n_samples": len(window),
+        }
+
+    # Referencia entre unidades: mediana de las demás con k calculable.
+    for uid, d in out.items():
+        if not d.get("applies"):               # flujo abierto, ya resuelto
+            continue
+        otras = sorted(o["k"] for i, o in out.items()
+                       if i != uid and o.get("applies") and o.get("k"))
+        ref = (otras[len(otras) // 2] if len(otras) % 2 else
+               (otras[len(otras) // 2 - 1] + otras[len(otras) // 2]) / 2) if otras else None
+        # La propia historia manda cuando existe: detecta degradación de esa
+        # unidad aunque todo el plantel esté igual de mal.
+        base, base_kind = (d["baseline"], "su línea base") if d["baseline"] else (ref, "las otras unidades")
+
+        if d["k"] is None:
+            d["state"] = "sin_dato"
+            d["reason"] = ("Falta volumen de medio filtrante" if d["no_config"]
+                           else "Sin alimento registrado o muestreos insuficientes")
+        elif base is None:
+            d["state"], d["reason"] = "sin_base", "Sin referencia para comparar"
+        elif d["k"] >= BF_HEALTH_OK * base:
+            d["state"], d["reason"] = "ok", None
+        elif d["k"] >= BF_HEALTH_WARN * base:
+            d["state"] = "atencion"
+            d["reason"] = f"Nitrificación bajo {base_kind}"
+        else:
+            d["state"] = "bajo"
+            d["reason"] = f"Nitrificación muy por debajo de {base_kind}"
+        d["ref"] = base
+        d["ref_kind"] = base_kind
+        d["pct"] = (d["k"] / base * 100.0) if (d["k"] and base) else None
+    return out
+
+
+def _photosynthesis_by_unit(db: Session, thresholds: dict, now: datetime) -> dict:
+    """Señal de floración de algas por unidad, sobre los últimos 7 días de O2.
+
+    Una sola consulta para todas las unidades. Los estanques de una unidad
+    comparten agua, así que la señal es de unidad: no tiene sentido separar.
+
+    Al resultado del motor le agrega el pH al que el amonio no ionizado cruza
+    los umbrales del sitio, usando el último TAN medido en el biofiltro. Ese
+    par de números es lo que convierte la alerta en algo accionable.
+    """
+    since = now - timedelta(days=wq.PHOTO_WINDOW_DAYS)
+    rows = (
+        db.query(
+            Pond.cultivation_unit_id.label("unit_id"),
+            PondOxygenReading.reading_datetime,
+            PondOxygenReading.do_mg_l,
+            PondOxygenReading.water_temp_c,
+        )
+        .join(Pond, Pond.id == PondOxygenReading.pond_id)
+        .filter(
+            PondOxygenReading.reading_datetime >= since,
+            PondOxygenReading.do_mg_l.isnot(None),
+            PondOxygenReading.water_temp_c.isnot(None),
+        )
+        .all()
+    )
+
+    d0, d1 = wq.PHOTO_DAY_HOURS
+    n0, n1 = wq.PHOTO_NIGHT_HOURS
+    a0, a1 = wq.PHOTO_DAWN_HOURS
+    buckets: dict = {}
+    for r in rows:
+        do = float(r.do_mg_l)
+        tc = float(r.water_temp_c)
+        if not (0 < do < 20) or not (2 < tc < 30):
+            continue
+        sat = do / wq.do_saturation_mg_l(tc) * 100.0
+        h = r.reading_datetime.hour
+        b = buckets.setdefault(r.unit_id, {"day": [], "night": [], "dawn_s": [], "dawn_o": []})
+        if d0 <= h <= d1:
+            b["day"].append(sat)
+        if h >= n0 or h <= n1:          # la ventana nocturna cruza medianoche
+            b["night"].append(sat)
+        if a0 <= h <= a1:
+            b["dawn_s"].append(sat)
+            b["dawn_o"].append(do)
+
+    # Último TAN y temperatura del biofiltro, para traducir el pH a toxicidad
+    tan_by_unit: dict = {}
+    for br in _latest_bf_by_unit(db).values():
+        if br is not None and br.in_nh4_n is not None:
+            tan_by_unit[br.cultivation_unit_id] = (
+                float(br.in_nh4_n),
+                float(br.in_temp_c) if br.in_temp_c is not None else None,
+            )
+
+    nh3_spec = thresholds.get("nh3_n") or {}
+    out: dict = {}
+    for unit_id, b in buckets.items():
+        sig = wq.photosynthesis_signal(b["day"], b["night"], b["dawn_s"],
+                                       b["dawn_o"], thresholds)
+        if not sig or not sig["active"]:
+            continue
+        tan, tan_temp = tan_by_unit.get(unit_id, (None, None))
+        sig["nh4_n"] = tan
+        sig["ph_alert"] = wq.ph_for_nh3_limit(tan, tan_temp, nh3_spec.get("alert"))
+        sig["ph_alarm"] = wq.ph_for_nh3_limit(tan, tan_temp, nh3_spec.get("alarm"))
+        out[unit_id] = sig
+    return out
+
+
 def _o2_hours_ago(reading, now: datetime):
     if reading is None or reading.reading_datetime is None:
         return None, False
@@ -204,9 +442,11 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
 
         o2_latest = _latest_o2_by_pond(db)
         bf_latest = _latest_bf_by_unit(db)
+        bf_health = _biofilter_health_by_unit(db)
         # Umbrales actuales: se reinyectan al motor para derivar el motivo
         # (qué parámetro dispara la tarjeta) sin persistir nada.
         thresholds = load_thresholds(db)
+        photo = _photosynthesis_by_unit(db, thresholds, now)
 
         units_data = []
         totals = {"ok": 0, "alerta": 0, "alarma": 0, "sin_dato": 0}
@@ -302,6 +542,8 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 "pond_rows": pond_rows,
                 "bf": bf,
                 "bf_levels": bf_levels,
+                "health": bf_health.get(u.id),
+                "photo": photo.get(u.id),
                 "reason": reason,
             })
 
@@ -426,17 +668,100 @@ def oxigeno_create(
 # ---------------------------------------------------------------------------
 # Biofiltro: formulario + alta
 # ---------------------------------------------------------------------------
+# --- Fixtures del espejo JS -------------------------------------------------
+# El formulario evalúa en vivo repitiendo en JS las fórmulas del motor (NH3 no
+# ionizado, N total, incertidumbre del balance). Para que esa copia no se
+# desalinee en silencio, /biofiltro/nueva?selftest=1 manda estos casos con el
+# resultado calculado por Python; el JS los recalcula y reporta diferencias en
+# la consola del navegador. Es una verificación, no parte del ingreso.
+_BF_SELFTEST_READINGS = [
+    # Muestreo sano
+    {"in_ph": 7.2, "in_temp_c": 17.0, "in_nh4_n": 0.40, "in_no2_n": 0.05, "in_no3_n": 12.0,
+     "out_ph": 7.1, "out_temp_c": 17.2, "out_nh4_n": 0.12, "out_no2_n": 0.06, "out_no3_n": 12.3},
+    # pH alto -> NH3 no ionizado en alarma con el mismo amonio total
+    {"in_ph": 8.6, "in_temp_c": 20.0, "in_nh4_n": 0.40, "in_no2_n": 0.05, "in_no3_n": 12.0,
+     "out_ph": 8.5, "out_temp_c": 20.1, "out_nh4_n": 0.35, "out_no2_n": 0.06, "out_no3_n": 12.2},
+    # Coma corrida en nitrato de salida -> balance de N desbalanceado
+    {"in_ph": 7.2, "in_temp_c": 17.0, "in_nh4_n": 0.40, "in_no2_n": 0.05, "in_no3_n": 1.2,
+     "out_ph": 7.1, "out_temp_c": 17.2, "out_nh4_n": 0.12, "out_no2_n": 0.06, "out_no3_n": 12.0},
+    # Nitrito alto (alarma biológica real)
+    {"in_ph": 7.0, "in_temp_c": 16.0, "in_nh4_n": 0.20, "in_no2_n": 0.80, "in_no3_n": 8.0,
+     "out_ph": 7.0, "out_temp_c": 16.1, "out_nh4_n": 0.10, "out_no2_n": 0.75, "out_no3_n": 8.2},
+    # Incompleto: sin pH de entrada no se puede evaluar NH3 de entrada
+    {"in_ph": None, "in_temp_c": 17.0, "in_nh4_n": 0.40, "in_no2_n": 0.05, "in_no3_n": 12.0,
+     "out_ph": 7.1, "out_temp_c": 17.2, "out_nh4_n": 0.12, "out_no2_n": 0.06, "out_no3_n": 12.3},
+]
+
+
+def _bf_selftest_cases(thresholds: dict, test_specs: dict) -> list:
+    """Casos + resultado del motor Python, para que el espejo JS se compare."""
+    cases = []
+    for reading in _BF_SELFTEST_READINGS:
+        res = wq.evaluate_biofilter(reading, thresholds=thresholds, test_specs=test_specs)
+        cases.append({
+            "reading": reading,
+            "expected": {
+                "tn_in": res.tn_in, "tn_out": res.tn_out,
+                "nh3_n_in": res.nh3_n_in, "nh3_n_out": res.nh3_n_out,
+                "n_balance_flag": res.n_balance_flag,
+                "ph_delta_flag": res.ph_delta_flag,
+                "temp_delta_flag": res.temp_delta_flag,
+                "alarm_level": res.alarm_level,
+                "n_balance_uncertainty": res.detail.get("n_balance_uncertainty"),
+            },
+        })
+    return cases
+
+
+# Campos numéricos del muestreo, en el orden en que se digitan. Se usan para
+# armar el contexto del muestreo anterior (pista "ant.:") del lado cliente.
+_BF_NUM_FIELDS = ["in_ph", "in_temp_c", "in_nh4_n", "in_no2_n", "in_no3_n",
+                  "out_ph", "out_temp_c", "out_nh4_n", "out_no2_n", "out_no3_n"]
+
+
+def _bf_prev_by_unit(db: Session) -> dict:
+    """Último muestreo por unidad, serializado para el form (pista de digitación).
+
+    El operador elige la unidad dentro del formulario, así que se mandan todas
+    y el cliente muestra la que corresponda al cambiar el selector.
+    """
+    out = {}
+    for uid, r in _latest_bf_by_unit(db).items():
+        vals = {f: (float(getattr(r, f)) if getattr(r, f) is not None else None)
+                for f in _BF_NUM_FIELDS}
+        vals["reading_date"] = r.reading_date.strftime("%d-%m-%Y") if r.reading_date else None
+        out[str(uid)] = vals
+    return out
+
+
 @router.get("/biofiltro/nueva", response_class=HTMLResponse)
-def biofiltro_form(request: Request, unit_id: Optional[int] = None):
+def biofiltro_form(request: Request, unit_id: Optional[int] = None,
+                   selftest: Optional[int] = None):
     db = SessionLocal()
     try:
         units = db.query(CultivationUnit).order_by(CultivationUnit.name).all()
+        th = load_thresholds(db)
         context = {
             "request": request,
             "units": [{"id": u.id, "name": u.name} for u in units],
             "users": _active_users(db),
             "selected_unit": unit_id,
             "today": date.today().strftime("%Y-%m-%d"),
+            # Umbrales y specs para evaluar en vivo del lado cliente (espejo del
+            # motor). Los NÚMEROS siguen viniendo de la BD; el JS solo repite las
+            # fórmulas (NH3 no ionizado y suma en cuadratura de la incertidumbre).
+            "bf_thresholds": {
+                "nh3_n": th["nh3_n"],
+                "nitrite_n": th["nitrite_n"],
+                "ph_delta_tol": th["ph_delta_tol"],
+                "temp_delta_tol": th["temp_delta_tol"],
+                "n_balance_k": th.get("n_balance_k") or wq.DEFAULT_THRESHOLDS["n_balance_k"],
+            },
+            "bf_test_specs": load_test_specs(db),
+            "prev_by_unit": _bf_prev_by_unit(db),
+            # ?selftest=1 corre los fixtures del motor contra el espejo JS y
+            # reporta en consola. Solo para verificar, no afecta el ingreso.
+            "selftest_cases": _bf_selftest_cases(th, load_test_specs(db)) if selftest else None,
         }
         html = jinja_env.get_template("calidad_agua_biofiltro_form.html").render(context)
         return HTMLResponse(content=html)
