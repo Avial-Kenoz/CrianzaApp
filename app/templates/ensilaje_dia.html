@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ fecha.strftime('%d-%m-%Y') }} · Ensilaje – Crianza</title>
+  {% include '_ensilaje_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/ensilaje/registro?mes={{ mes }}">Registro</a> / Día</div>
+  <div class="page-title">{{ dia }} {{ fecha.strftime('%d-%m-%Y') }}</div>
+  <div class="page-sub">Detalle de las cargas del día, incluidas las anuladas.</div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  <div class="toolbar">
+    <a class="btn btn-ghost" href="/views/ui/ensilaje/dia/{{ prev }}">← Día anterior</a>
+    <a class="btn btn-ghost" href="/views/ui/ensilaje/dia/{{ next }}">Día siguiente →</a>
+    <span style="flex:1"></span>
+    <a class="btn btn-ghost" href="/views/ui/ensilaje/registro?mes={{ mes }}">Volver al mes</a>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi hi"><div class="n">{{ '%.1f'|format(total_kg) }} kg</div><div class="l">Total del día</div></div>
+    <div class="kpi"><div class="n">{{ cargas }}</div><div class="l">Cargas</div></div>
+    <div class="kpi"><div class="n">{{ '%.1f'|format(total_acido) }} lts</div><div class="l">Ácido</div></div>
+    <div class="kpi"><div class="n">{{ tambores|join(', ') if tambores else '—' }}</div><div class="l">Tambor(es)</div></div>
+    <div class="kpi {{ 'warn' if pendientes }}"><div class="n">{{ pendientes }}</div><div class="l">Sin recibir</div></div>
+  </div>
+
+  {% if falta %}
+  <div class="note warn">
+    Este día no tiene ninguna anotación. Si no hubo mortalidad, debe registrarse igual desde la app
+    de terreno: un día en blanco no equivale a un día sin mortalidad.
+  </div>
+  {% elif sin_mortalidad and not cargas %}
+  <div class="note">Día declarado <b>sin mortalidad</b> desde la app de terreno.</div>
+  {% endif %}
+
+  <div class="section-title">Cargas</div>
+  <div class="card">
+    {% if rows %}
+    <table>
+      <thead>
+        <tr><th>Folio</th><th>Hora</th><th class="num">Kg</th><th class="num">Ácido</th><th>Ad.</th>
+            <th class="num">pH</th><th>Tambor</th><th>Operador</th><th>Observación</th><th>Estado</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr class="{{ 'voided' if r.voided }}">
+          <td class="mono">{{ r.folio }}</td>
+          <td class="mono">{{ r.hora }}</td>
+          <td class="num kg">
+            {%- if not r.had_mortality -%}<span class="pill muted">sin mortalidad</span>
+            {%- else -%}{{ '%.1f'|format(r.kg) }}{%- endif -%}
+          </td>
+          <td class="num">{% if r.acid_lts is not none %}{{ '%.1f'|format(r.acid_lts) }}{% else %}—{% endif %}</td>
+          <td>{{ '✓' if r.additional_acid else '' }}</td>
+          <td class="num">
+            {%- if r.ph is not none -%}
+              {% if r.ph_ok %}{{ '%.1f'|format(r.ph) }}{% else %}<b style="color:#b91c1c">{{ '%.1f'|format(r.ph) }}</b>{% endif %}
+            {%- else -%}—{%- endif -%}
+          </td>
+          <td>{{ r.drum or '—' }}{% if r.drum_closed %} <span class="pill sealed">cerrado</span>{% endif %}</td>
+          <td>{{ r.operador }}</td>
+          <td>{{ r.observacion or '—' }}</td>
+          <td>
+            {% if r.voided %}
+              <span class="pill bad">Anulada</span>
+              <div class="mono">{{ r.void_reason }}{% if r.voided_by %} · {{ r.voided_by }}{% endif %}</div>
+            {% elif r.recibido_por %}
+              <span class="pill ok">Recibida</span>
+              <div class="mono">{{ r.recibido_por }} · {{ r.recibido_at.strftime('%d-%m %H:%M') }}</div>
+              {% if r.reception_note %}<div class="mono">{{ r.reception_note }}</div>{% endif %}
+            {% else %}<span class="pill pend">Pendiente</span>{% endif %}
+          </td>
+        </tr>
+        {% if not r.voided %}
+        <tr>
+          <td colspan="10" style="background:#fafbfc; padding-top:8px; padding-bottom:10px">
+            <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:flex-end">
+              {% if not r.recibido_por %}
+              <form method="post" action="/views/ui/ensilaje/registro/{{ r.id }}/recibir"
+                    style="display:flex; gap:8px; align-items:flex-end">
+                <input type="hidden" name="volver" value="/views/ui/ensilaje/dia/{{ fecha.isoformat() }}" />
+                <div class="fld"><label>Recibido por</label>
+                  <input type="text" name="received_by_name" maxlength="120" required style="width:150px" /></div>
+                <div class="fld"><label>Nota (opcional)</label>
+                  <input type="text" name="reception_note" maxlength="255" style="width:200px" /></div>
+                <button class="btn btn-mini" type="submit">Recibir</button>
+              </form>
+              {% endif %}
+              <form method="post" action="/views/ui/ensilaje/registro/{{ r.id }}/anular"
+                    style="display:flex; gap:8px; align-items:flex-end"
+                    onsubmit="return confirm('¿Anular la carga {{ r.folio }}? Se descontarán {{ '%.1f'|format(r.kg or 0) }} kg del tambor y se revertirá el ácido.');">
+                <input type="hidden" name="volver" value="/views/ui/ensilaje/dia/{{ fecha.isoformat() }}" />
+                <div class="fld"><label>Anular — motivo</label>
+                  <input type="text" name="void_reason" maxlength="255" required
+                         placeholder="Kg mal digitados…" style="width:220px" /></div>
+                <div class="fld"><label>Quién anula</label>
+                  <input type="text" name="voided_by" maxlength="120" style="width:130px" /></div>
+                <button class="btn btn-mini btn-danger" type="submit">Anular</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Sin cargas registradas este día.</div>
+    {% endif %}
+  </div>
+
+  <div class="note">
+    Anular no borra: la carga queda tachada con su motivo y sale de todas las sumas. Es la única
+    forma de corregir, porque la captura es <b>aditiva</b> — volver a registrar el mismo día suma
+    kilos en vez de reemplazarlos.
+  </div>
+</div>
+</body>
+</html>

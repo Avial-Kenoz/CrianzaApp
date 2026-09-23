@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Despacho de tambores – Crianza</title>
+  {% include '_ensilaje_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/ensilaje/registro">Ensilaje</a> / Despachos</div>
+  <div class="page-title">Despacho de tambores</div>
+  <div class="page-sub">Emite la guía y da de baja los tambores que salen de planta.</div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_ensilaje_tabs.html' %}
+
+  <div class="kpis">
+    <div class="kpi hi"><div class="n">{{ sealed|length }}</div><div class="l">Sellados, listos para salir</div></div>
+    <div class="kpi"><div class="n">{{ '%.1f'|format(sealed_kg) }} kg</div><div class="l">Acumulados en planta</div></div>
+    <div class="kpi"><div class="n">{{ dispatches|length }}</div><div class="l">Guías emitidas</div></div>
+  </div>
+
+  <div class="section-title">Nueva guía</div>
+  {% if sealed %}
+  <form method="post" action="/views/ui/ensilaje/despachos/nuevo"
+        onsubmit="return confirm('Se darán de baja los tambores seleccionados. ¿Continuar?');">
+    <div class="card" style="padding:18px">
+      <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; margin-bottom:16px">
+        <div class="fld"><label for="dispatch_date">Fecha</label>
+          <input type="date" id="dispatch_date" name="dispatch_date" value="{{ today }}" /></div>
+        <div class="fld"><label for="guide_number">N° de guía de despacho</label>
+          <input type="text" id="guide_number" name="guide_number" maxlength="60" style="width:160px" /></div>
+        <div class="fld"><label for="carrier">Transportista</label>
+          <input type="text" id="carrier" name="carrier" maxlength="120" style="width:170px" /></div>
+        <div class="fld"><label for="destination">Destino</label>
+          <input type="text" id="destination" name="destination" maxlength="120" style="width:170px" /></div>
+        <div class="fld" style="flex:1; min-width:180px"><label for="notes">Notas</label>
+          <input type="text" id="notes" name="notes" maxlength="255" style="width:100%" /></div>
+      </div>
+
+      <label style="margin-bottom:8px">Tambores a despachar</label>
+      <table>
+        <thead>
+          <tr><th style="width:40px"><input type="checkbox" onclick="marcarTodos(this)" /></th>
+              <th>Tambor</th><th>Sellado el</th><th class="num">Kg</th></tr>
+        </thead>
+        <tbody>
+          {% for d in sealed %}
+          <tr>
+            <td><input type="checkbox" name="drum_ids" value="{{ d.id }}" class="chk" onchange="recalcular()" /></td>
+            <td><b>N° {{ d.drum_number }}</b></td>
+            <td>{{ d.sealed_at.strftime('%d-%m-%Y') if d.sealed_at else '—' }}</td>
+            <td class="num" data-kg="{{ d.total_kg }}">{{ '%.1f'|format(d.total_kg) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div style="margin-top:16px; display:flex; align-items:center; gap:14px">
+        <button class="btn btn-primary" type="submit">Emitir guía y dar de baja</button>
+        <span class="mono" id="resumen">Nada seleccionado</span>
+      </div>
+    </div>
+  </form>
+  <div class="note">
+    Solo aparecen los tambores <b>sellados</b>. El que está abierto sigue recibiendo cargas: sacarlo
+    de planta dejaría el registro del día apuntando a un tambor que ya no está.
+  </div>
+  {% else %}
+  <div class="card"><div class="empty">
+    No hay tambores sellados. Se sellan al marcar «cerré el tambor» en una carga desde la app de
+    terreno, o manualmente en <a href="/views/ui/ensilaje/tambores" style="color:#2563eb">Tambores</a>.
+  </div></div>
+  {% endif %}
+
+  <div class="section-title">Guías emitidas</div>
+  <div class="card">
+    {% if dispatches %}
+    <table>
+      <thead><tr><th>Fecha</th><th>Guía</th><th>Transportista</th><th>Destino</th>
+                 <th class="num">Tambores</th><th class="num">Kg</th><th>N°</th><th>Notas</th></tr></thead>
+      <tbody>
+        {% for x in dispatches %}
+        <tr>
+          <td>{{ x.fecha.strftime('%d-%m-%Y') if x.fecha else '—' }}</td>
+          <td><b>{{ x.guia or '—' }}</b></td>
+          <td>{{ x.carrier or '—' }}</td>
+          <td>{{ x.destino or '—' }}</td>
+          <td class="num">{{ x.tambores }}</td>
+          <td class="num">{{ '%.1f'|format(x.kg) }}</td>
+          <td class="mono">{{ x.numeros|join(', ') if x.numeros else '—' }}</td>
+          <td>{{ x.notas or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Todavía no se ha emitido ninguna guía.</div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  function marcarTodos(master) {
+    document.querySelectorAll(".chk").forEach(function (c) { c.checked = master.checked; });
+    recalcular();
+  }
+  function recalcular() {
+    var n = 0, kg = 0;
+    document.querySelectorAll(".chk").forEach(function (c) {
+      if (!c.checked) return;
+      n += 1;
+      var celda = c.closest("tr").querySelector("[data-kg]");
+      kg += parseFloat(celda.getAttribute("data-kg")) || 0;
+    });
+    document.getElementById("resumen").textContent =
+      n ? (n + " tambor(es) · " + kg.toFixed(1) + " kg") : "Nada seleccionado";
+  }
+</script>
+</body>
+</html>

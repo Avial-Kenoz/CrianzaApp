@@ -50,3 +50,10 @@ from .water_quality_thresholds import WaterQualityThreshold
 from .water_quality_test_specs import WaterQualityTestSpec
 from .sexado_offline_session import SexadoOfflineSession
 from .sexing_offline_operation import SexingOfflineOperation
+# Molienda y ensilaje de mortalidades (registro PC 03.2)
+from .silage_drum_dispatches import SilageDrumDispatch
+from .silage_drums import SilageDrum
+from .silage_grinding_events import SilageGrindingEvent
+from .silage_weekly_inspections import SilageWeeklyInspection
+from .silage_acid import SilageAcidLot, SilageAcidMovement
+from .silage_thresholds import SilageThreshold

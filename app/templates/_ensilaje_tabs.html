@@ -1,0 +1,9 @@
+{# Navegación común del módulo de ensilaje. `active` marca la pestaña actual. #}
+<div class="tabs">
+  <a href="/views/ui/ensilaje/registro" class="{{ 'on' if active == 'registro' }}">Registro</a>
+  <a href="/views/ui/ensilaje/inspeccion" class="{{ 'on' if active == 'inspeccion' }}">Inspección semanal</a>
+  <a href="/views/ui/ensilaje/tambores" class="{{ 'on' if active == 'tambores' }}">Tambores</a>
+  <a href="/views/ui/ensilaje/acido" class="{{ 'on' if active == 'acido' }}">Ácido</a>
+  <a href="/views/ui/ensilaje/despachos" class="{{ 'on' if active == 'despachos' }}">Despachos</a>
+  <a href="/views/ui/ensilaje/conciliacion" class="{{ 'on' if active == 'conciliacion' }}">Conciliación</a>
+</div>

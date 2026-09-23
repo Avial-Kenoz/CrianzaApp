@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Conciliación de ensilaje – Crianza</title>
+  {% include '_ensilaje_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/ensilaje/registro">Ensilaje</a> / Conciliación</div>
+  <div class="page-title">Conciliación con la mortalidad declarada</div>
+  <div class="page-sub">
+    Kilos molidos contra peces muertos declarados en cultivo · {{ mes_label }}
+  </div>
+
+  {% include '_ensilaje_tabs.html' %}
+
+  <div class="toolbar">
+    <a class="btn btn-ghost" href="/views/ui/ensilaje/conciliacion?mes={{ mes_prev }}">← Mes anterior</a>
+    <form method="get" action="/views/ui/ensilaje/conciliacion" style="display:flex; gap:8px; align-items:flex-end">
+      <div class="fld"><label for="mes">Mes</label>
+        <input type="month" id="mes" name="mes" value="{{ mes }}" onchange="this.form.submit()" /></div>
+    </form>
+    <a class="btn btn-ghost" href="/views/ui/ensilaje/conciliacion?mes={{ mes_next }}">Mes siguiente →</a>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi hi"><div class="n">{{ '%.1f'|format(total_kg) }} kg</div><div class="l">Molido en el mes</div></div>
+    <div class="kpi"><div class="n">{{ total_peces }}</div><div class="l">Peces muertos declarados</div></div>
+    <div class="kpi"><div class="n">
+      {%- if kg_por_pez -%}{{ '%.2f'|format(kg_por_pez) }} kg{%- else -%}—{%- endif -%}
+    </div><div class="l">Peso medio por pez</div></div>
+    <div class="kpi {{ 'warn' if sin_declarar }}"><div class="n">{{ sin_declarar }}</div><div class="l">Días con molienda sin mortalidad declarada</div></div>
+    <div class="kpi {{ 'warn' if sin_moler }}"><div class="n">{{ sin_moler }}</div><div class="l">Días con mortalidad sin moler</div></div>
+  </div>
+
+  <div class="note">
+    Este panel es <b>informativo y no bloquea nada</b>. Los dos registros los llenan personas
+    distintas en momentos distintos, así que un descuadre de un día es normal: un pez que muere el
+    domingo se muele el lunes. Lo que vale la pena mirar es la <b>tendencia del peso medio</b> —si
+    se dispara o se hunde, hay un error de digitación en alguno de los dos lados— y los días con
+    molienda pero <b>cero mortalidad declarada</b>, que suelen ser mortalidad no registrada en cultivo.
+  </div>
+
+  <div class="section-title">Día por día</div>
+  <div class="card">
+    {% if filas %}
+    <table>
+      <thead>
+        <tr><th>Fecha</th><th>Día</th><th class="num">Kg molidos</th><th class="num">Peces declarados</th>
+            <th class="num">kg / pez</th><th>Observación</th></tr>
+      </thead>
+      <tbody>
+        {% for f in filas %}
+        <tr>
+          <td>{{ f.fecha.strftime('%d-%m') }}</td>
+          <td>{{ f.dia }}</td>
+          <td class="num">{% if f.kg %}{{ '%.1f'|format(f.kg) }}{% else %}—{% endif %}</td>
+          <td class="num">{{ f.peces or '—' }}</td>
+          <td class="num">{% if f.kg_por_pez %}{{ '%.2f'|format(f.kg_por_pez) }}{% else %}—{% endif %}</td>
+          <td>
+            {% if f.molio_sin_declarar %}<span class="pill pend">Molió sin mortalidad declarada</span>
+            {% elif f.declaro_sin_moler %}<span class="pill muted">Declarada, aún sin moler</span>
+            {% elif f.kg %}<span class="pill ok">Ambos registros</span>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr style="background:#fafbfc; font-weight:700">
+          <td colspan="2">Total {{ mes_label }}</td>
+          <td class="num">{{ '%.1f'|format(total_kg) }}</td>
+          <td class="num">{{ total_peces }}</td>
+          <td class="num">{% if kg_por_pez %}{{ '%.2f'|format(kg_por_pez) }}{% else %}—{% endif %}</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+    {% else %}
+    <div class="empty">Sin datos en {{ mes_label }}.</div>
+    {% endif %}
+  </div>
+
+  <div class="note">
+    La mortalidad declarada se lee de los movimientos de estanque con razón «mortalidad»
+    (<span class="mono">ponds_movements.movement_reason = 'mortality'</span>), que es donde la
+    registra el resto de CrianzaApp.
+  </div>
+</div>
+</body>
+</html>

@@ -20,6 +20,8 @@ from app.api.water_quality import router as water_quality_router
 from app.api.config import router as config_router
 from app.api.field import router as field_router
 from app.api.sexado import router as sexado_router, admin_router as sexado_admin_router
+from app.api.silage import router as silage_router
+from app.api.silage_views import router as silage_views_router
 from app.services.pond_cache_scheduler import start_scheduler, shutdown_scheduler
 
 app = FastAPI(title="FastApp Etapa 1", version="0.1.0")
@@ -60,6 +62,8 @@ app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")
 app.mount("/captura", NoCacheStatic(directory=str(Path(__file__).parent / "field_client"), html=True), name="captura")
 # PWA de sexado offline (clasificación/movimientos por estanque)
 app.mount("/sexado_offline", NoCacheStatic(directory=str(Path(__file__).parent / "sexado_client"), html=True), name="sexado_offline")
+# PWA de molienda y ensilaje (registro PC 03.2 en la zona de molienda, sin señal)
+app.mount("/ensilaje", NoCacheStatic(directory=str(Path(__file__).parent / "silage_client"), html=True), name="ensilaje")
 
 
 app.include_router(fish_router)
@@ -80,6 +84,8 @@ app.include_router(config_router)
 app.include_router(field_router)
 app.include_router(sexado_router)
 app.include_router(sexado_admin_router)
+app.include_router(silage_router)
+app.include_router(silage_views_router)
 
 @app.get("/")
 def root():

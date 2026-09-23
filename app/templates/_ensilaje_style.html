@@ -1,0 +1,103 @@
+<style>
+  /* Estilos compartidos por las páginas de ensilaje. Viven en un parcial para no
+     repetir el mismo bloque en cinco plantillas (y que se desincronicen). */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+  .page { padding: 26px 30px 60px; max-width: 1100px; }
+  .crumb { font-size: .8rem; color: #6b7280; margin-bottom: 6px; }
+  .crumb a { color: #2563eb; text-decoration: none; }
+  .page-title { font-size: 1.4rem; font-weight: 750; margin-bottom: 4px; }
+  .page-sub { color: #6b7280; font-size: .86rem; margin-bottom: 20px; }
+  .flash { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46;
+           padding: 11px 15px; border-radius: 10px; font-size: .88rem; margin-bottom: 18px; }
+  .flash.err { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .tabs a { font-size: .85rem; font-weight: 650; padding: 8px 14px; border-radius: 9px;
+            text-decoration: none; color: #4b5563; border: 1px solid #e5e7eb; background: #fff; }
+  .tabs a.on { background: #2563eb; color: #fff; border-color: #2563eb; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 8px; }
+  .kpi { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 16px; }
+  .kpi .n { font-size: 1.5rem; font-weight: 800; }
+  .kpi .l { font-size: .76rem; color: #6b7280; margin-top: 2px; }
+  .kpi.hi { border-color: #2563eb; } .kpi.hi .n { color: #2563eb; }
+  .kpi.low, .kpi.warn { border-color: #f59e0b; } .kpi.low .n, .kpi.warn .n { color: #b45309; }
+  .kpi.bad { border-color: #ef4444; } .kpi.bad .n { color: #b91c1c; }
+
+  .section-title { font-size: .76rem; text-transform: uppercase; letter-spacing: .06em;
+                   color: #6b7280; font-weight: 750; margin: 26px 0 10px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden; }
+  .card + .card { margin-top: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  th, td { padding: 11px 14px; border-bottom: 1px solid #f1f3f5; text-align: left; vertical-align: middle; }
+  thead th { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #6b7280;
+             font-weight: 700; background: #fafbfc; }
+  tbody tr:last-child td { border-bottom: none; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .mono { font-variant-numeric: tabular-nums; font-size: .82rem; color: #6b7280; }
+  tr.voided td { opacity: .55; }
+  tr.voided .kg { text-decoration: line-through; }
+
+  .pill { display: inline-block; font-size: .72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+  .pill.available { background: #f1f5f9; color: #475569; }
+  .pill.open { background: #dbeafe; color: #1d4ed8; }
+  .pill.sealed { background: #dcfce7; color: #166534; }
+  .pill.dispatched { background: #f3f4f6; color: #9ca3af; }
+  .pill.in { background: #dcfce7; color: #166534; }
+  .pill.out { background: #fee2e2; color: #991b1b; }
+  .pill.adjustment { background: #fef3c7; color: #92400e; }
+  .pill.ok { background: #dcfce7; color: #166534; }
+  .pill.pend { background: #fef3c7; color: #92400e; }
+  .pill.bad { background: #fee2e2; color: #991b1b; }
+  .pill.muted { background: #f1f5f9; color: #64748b; }
+
+  .bar { height: 7px; background: #eef1f4; border-radius: 999px; overflow: hidden; width: 120px; }
+  .bar > i { display: block; height: 100%; background: #22c55e; }
+  .bar.should_close > i { background: #f59e0b; }
+  .bar.over_capacity > i { background: #ef4444; }
+
+  form.inline { display: inline; }
+  label { display: block; font-size: .72rem; color: #6b7280; font-weight: 650; margin-bottom: 5px; }
+  input[type=number], input[type=text], input[type=date], input[type=month], select, textarea {
+    border: 1px solid #d7dbe0; border-radius: 8px; padding: 8px 10px; font-size: .85rem;
+    font-family: inherit; outline: none; background: #fff; color: inherit; }
+  input:focus, select:focus, textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: #2563eb; }
+  .btn { border: none; border-radius: 9px; padding: 9px 16px; font-size: .85rem; font-weight: 650;
+         cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-primary { background: #2563eb; color: #fff; } .btn-primary:hover { background: #1d4ed8; }
+  .btn-ghost { background: #fff; color: #1a1a2e; border: 1px solid #d7dbe0; }
+  .btn-ghost:hover { border-color: #2563eb; color: #2563eb; }
+  .btn-mini { padding: 5px 10px; font-size: .76rem; background: #fff; border: 1px solid #d7dbe0; color: #4b5563; }
+  .btn-mini:hover { border-color: #2563eb; color: #2563eb; }
+  .btn-danger { background: #fff; border: 1px solid #fecaca; color: #b91c1c; }
+  .btn-danger:hover { background: #fef2f2; }
+
+  .newform { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 16px 18px;
+             display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+  .fld { min-width: 0; }
+  .note { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 11px 14px;
+          font-size: .8rem; color: #4b5563; margin-top: 14px; line-height: 1.55; }
+  .note.warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+  .note.bad { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+  .empty { padding: 26px; text-align: center; color: #9ca3af; font-size: .88rem; }
+  .toolbar { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 14px; }
+
+  /* Impresión: el registro oficial debe salir legible en papel, sin el sidebar
+     ni los controles de la pantalla. */
+  @media print {
+    @page { size: A4 landscape; margin: 12mm; }
+    body { background: #fff; }
+    .page { padding: 0; max-width: none; }
+    .sidebar, .sidebar-overlay, .tabs, .toolbar, .no-print, .btn, .newform, form.inline { display: none !important; }
+    .card { border: 1px solid #999; border-radius: 0; }
+    thead th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .kpi { border: 1px solid #999; }
+    .print-only { display: block !important; }
+    table { font-size: .72rem; }
+    th, td { padding: 5px 7px; }
+  }
+  .print-only { display: none; }
+</style>

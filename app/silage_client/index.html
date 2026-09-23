@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <title>Molienda y Ensilaje – Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    :root { --bg:#0f172a; --panel:#1e293b; --panel2:#334155; --line:#334155; --txt:#e2e8f0; --mut:#94a3b8;
+            --blue:#3b82f6; --green:#22c55e; --amber:#f59e0b; --red:#ef4444; }
+    html, body { height: 100%; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: var(--bg); color: var(--txt); overscroll-behavior: none;
+           padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    .app { max-width: 640px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; }
+
+    .top { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
+           padding: 12px 16px; display: flex; align-items: center; gap: 10px; }
+    .top h1 { font-size: 1.05rem; font-weight: 750; flex: 1; }
+    .net { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--mut); }
+    .net .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+    .net.off .dot { background: var(--mut); }
+    .subbar { display: flex; gap: 8px; padding: 8px 16px; font-size: .76rem; color: var(--mut);
+              border-bottom: 1px solid var(--line); align-items: center; flex-wrap: wrap; }
+    .badge { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
+    .badge b { color: var(--txt); }
+    .badge.warn { border-color: var(--amber); color: var(--amber); }
+    .badge.ok { border-color: var(--green); color: var(--green); }
+
+    section { padding: 16px; flex: 1; }
+    .hidden { display: none !important; }
+
+    /* Tarjeta del tambor abierto: el acumulado del día siempre a la vista */
+    .drum-card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+    .drum-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+    .drum-top .n { font-size: 1.6rem; font-weight: 800; }
+    .drum-top .l { color: var(--mut); font-size: .82rem; }
+    .bar { height: 10px; background: var(--panel2); border-radius: 999px; overflow: hidden; }
+    .bar > i { display: block; height: 100%; background: var(--green); width: 0; transition: width .3s; }
+    .bar.near > i { background: var(--amber); }
+    .bar.over > i { background: var(--red); }
+    .drum-foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: .78rem; color: var(--mut); }
+
+    .today { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin-bottom: 14px; }
+    .today .kg { font-size: 2rem; font-weight: 800; }
+    .today .lb { color: var(--mut); font-size: .82rem; }
+
+    .row { display: flex; gap: 10px; }
+    .btn { flex: 1; border: none; border-radius: 14px; padding: 16px; font-size: 1rem; font-weight: 750;
+           cursor: pointer; color: #fff; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+    .btn:active { transform: scale(.98); }
+    .btn-main { background: var(--blue); }
+    .btn-sync { background: var(--panel2); }
+    .btn-ghost { background: transparent; color: var(--mut); border: 1px solid var(--line); }
+    .btn-lg { font-size: 1.1rem; padding: 18px; }
+    .btn:disabled { opacity: .5; }
+    .mt { margin-top: 12px; }
+
+    .list-title { font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; color: var(--mut); font-weight: 700; margin: 20px 4px 8px; }
+    .load { display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line);
+            border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; }
+    .load .info { flex: 1; min-width: 0; }
+    .load .l1 { font-weight: 700; }
+    .load .l2 { font-size: .76rem; color: var(--mut); margin-top: 2px; }
+    .load .folio { font-size: .7rem; color: var(--mut); font-variant-numeric: tabular-nums; }
+    .load.pending { border-style: dashed; }
+    .load.voided { opacity: .55; }
+    .load.voided .l1 { text-decoration: line-through; }
+    .load .x { background: transparent; border: 1px solid var(--line); color: var(--mut);
+               border-radius: 10px; padding: 8px 10px; font-size: .74rem; cursor: pointer; }
+    .empty { color: var(--mut); font-size: .86rem; text-align: center; padding: 22px 10px; }
+
+    /* Formulario */
+    label { display: block; font-size: .78rem; color: var(--mut); font-weight: 650; margin: 0 0 6px 2px; }
+    input[type=number], input[type=text], select, textarea {
+      width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+      padding: 14px; font-size: 1.05rem; color: var(--txt); font-family: inherit; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--blue); }
+    .field { margin-bottom: 14px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .check { display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--line);
+             border-radius: 12px; padding: 13px 14px; margin-bottom: 10px; cursor: pointer; }
+    .check input { width: 20px; height: 20px; accent-color: var(--blue); }
+    .check span { font-weight: 650; font-size: .92rem; }
+    .hint { font-size: .74rem; color: var(--mut); margin: -8px 2px 14px; line-height: 1.45; }
+    .hint.warn { color: var(--amber); }
+    .hint.bad { color: var(--red); }
+
+    .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 40;
+             background: var(--panel2); border: 1px solid var(--line); border-radius: 12px;
+             padding: 12px 18px; font-size: .88rem; font-weight: 650; opacity: 0; pointer-events: none;
+             transition: opacity .25s; max-width: 90vw; text-align: center; }
+    .toast.show { opacity: 1; }
+    .toast.ok { border-color: var(--green); color: #86efac; }
+    .toast.err { border-color: var(--red); color: #fca5a5; }
+    .toast.warn { border-color: var(--amber); color: #fcd34d; }
+
+    /* Ventana de seguridad: bloquea la app hasta aceptar. Sin botón de cerrar,
+       sin cierre por toque fuera y sin scroll de fondo: se trabaja con ácido. */
+    .gate { position: fixed; inset: 0; z-index: 60; background: var(--bg); overflow-y: auto;
+            display: flex; align-items: flex-start; justify-content: center; }
+    .gate.hidden { display: none !important; }
+    .gate-inner { max-width: 640px; width: 100%; padding: 20px 18px 32px; }
+    .gate h2 { font-size: 1.15rem; font-weight: 800; text-align: center; margin-bottom: 4px; }
+    .gate .sub { text-align: center; color: var(--mut); font-size: .8rem; margin-bottom: 18px; }
+    .ppe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 18px; }
+    .ppe div { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+               padding: 10px 4px; text-align: center; font-size: .62rem; color: var(--mut); line-height: 1.25; }
+    .ppe img { width: 46px; height: 46px; display: block; margin: 0 auto 6px; }
+    .gate-block { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+                  padding: 14px 16px; margin-bottom: 12px; }
+    .gate-block h3 { font-size: .74rem; text-transform: uppercase; letter-spacing: .06em;
+                     color: var(--blue); font-weight: 800; margin-bottom: 8px; }
+    .gate-block p, .gate-block li { font-size: .84rem; line-height: 1.55; color: var(--txt); }
+    .gate-block ol, .gate-block ul { padding-left: 18px; }
+    .gate-block li { margin-bottom: 6px; }
+    .gate-block.danger { border-color: var(--red); }
+    .gate-block.danger h3 { color: var(--red); }
+    .gate-block b { color: #fbbf24; }
+    .gate-accept { position: sticky; bottom: 0; background: linear-gradient(transparent, var(--bg) 26%); padding: 18px 0 4px; }
+    .jserr { background: rgba(239,68,68,.15); border: 1px solid var(--red); color: #fca5a5;
+             border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; font-size: .78rem;
+             line-height: 1.5; word-break: break-word; }
+
+    /* Primeros auxilios: mismo layout que el gate pero por ENCIMA (z-index
+       mayor), para que se pueda abrir incluso con la ventana de seguridad sin
+       aceptar. Es información de emergencia: no debe haber ningún estado de la
+       app en que quede inalcanzable. */
+    .aid { z-index: 70; }
+    .aid h2 { color: #fca5a5; }
+    .aid .gate-block h3 { color: #fca5a5; }
+    .aid-link { display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+                width: 100%; margin-bottom: 10px; background: transparent; color: #fca5a5;
+                border: 1px solid var(--red); border-radius: 14px; padding: 13px;
+                font-size: .92rem; font-weight: 700; font-family: inherit; cursor: pointer; }
+    /* Llamada de emergencia: lo primero del panel y lo más grande. Es un enlace
+       tel:, así que en la tablet marca directo. */
+    .call { display: flex; align-items: center; justify-content: center; gap: 12px;
+            background: var(--red); color: #fff; text-decoration: none; border-radius: 16px;
+            padding: 16px; margin-bottom: 16px; font-weight: 800; }
+    .call .n { font-size: 2rem; letter-spacing: .02em; }
+    .call .t { font-size: .78rem; font-weight: 650; opacity: .92; text-align: left; line-height: 1.3; }
+    .call:active { filter: brightness(.92); }
+  </style>
+
+  <script>
+  /* Lógica de la ventana de seguridad, DELIBERADAMENTE aparte de app.js.
+     El gate viene visible desde el HTML y se oculta solo al aceptar, así que la
+     pantalla de seguridad funciona aunque app.js no cargue: si dependiera del
+     bundle, un error ahí dejaría el botón muerto y al operador sin poder entrar
+     (que es justo lo que pasaba). */
+  var GATE_LS = "silage_gate_accepted_at";
+
+  function acceptGate() {
+    try { localStorage.setItem(GATE_LS, new Date().toISOString()); } catch (e) {}
+    var g = document.getElementById("gate");
+    if (g) g.classList.add("hidden");
+    // El resto de la app es opcional para esta pantalla.
+    if (typeof renderHome === "function") { try { renderHome(); } catch (e) {} }
+  }
+
+  function reopenGate() {
+    var g = document.getElementById("gate");
+    if (g) g.classList.remove("hidden");
+  }
+
+  /* Primeros auxilios. Igual que el gate, va acá y no en app.js: es información
+     de emergencia y no puede depender de que cargue el resto de la aplicación.
+     Se abre por encima del gate, así que sirve también antes de aceptar. */
+  function openAid() {
+    var a = document.getElementById("aid");
+    if (a) { a.classList.remove("hidden"); a.scrollTop = 0; }
+  }
+
+  function closeAid() {
+    var a = document.getElementById("aid");
+    if (a) a.classList.add("hidden");
+  }
+
+  /* Si app.js no parsea o revienta al cargar, el operador veía el botón sin
+     reacción y ninguna pista. Acá el error se muestra dentro del gate. */
+  window.addEventListener("error", function (ev) {
+    var box = document.getElementById("jserr");
+    if (!box) return;
+    var src = (ev.filename || "").split("/").pop();
+    box.textContent = "Problema al cargar la aplicación (" + src + " línea " +
+      (ev.lineno || "?") + "): " + (ev.message || "error desconocido") +
+      ". Puedes aceptar y continuar, pero avisa a soporte.";
+    box.style.display = "block";
+  });
+  </script>
+</head>
+<body>
+
+<!-- ============ Primeros auxilios ============
+     Va por encima de la ventana de seguridad (z-index mayor) para que se pueda
+     consultar en cualquier momento, incluso sin haber aceptado todavía. -->
+<div class="gate aid hidden" id="aid">
+  <div class="gate-inner">
+    <h2>Primeros auxilios</h2>
+    <div class="sub">Ácido fórmico · ante cualquier duda, asistencia médica inmediata</div>
+
+    <a class="call" href="tel:131">
+      <span class="n">131</span>
+      <span class="t">Ambulancia · SAMU<br>Toca para llamar</span>
+    </a>
+
+    <div class="gate-block danger">
+      <h3>Por contacto con la piel</h3>
+      <p>Quitar la ropa y los zapatos contaminados, aclarar la piel o duchar al afectado si procede
+      con abundante agua fría y jabón neutro. En caso de afección importante acudir al médico. Si el
+      producto produce quemaduras o congelación, <b>no se debe quitar la ropa</b> debido a que podría
+      empeorar la lesión producida si esta se encuentra pegada a la piel. En el caso de formarse
+      ampollas en la piel, éstas <b>nunca deben reventarse</b> ya que aumentaría el riesgo de infección.</p>
+    </div>
+
+    <div class="gate-block danger">
+      <h3>Por inhalación</h3>
+      <p>Sacar al afectado del lugar de exposición, suministrarle aire limpio y mantenerlo en reposo.
+      En casos graves como parada cardiorrespiratoria, se aplicarán técnicas de respiración
+      artificial (respiración boca a boca, masaje cardíaco, suministro de oxígeno, etc.) requiriendo
+      <b>asistencia médica inmediata</b>.</p>
+    </div>
+
+    <div class="gate-block danger">
+      <h3>Por contacto con los ojos</h3>
+      <p>Enjuagar los ojos con abundante agua a temperatura ambiente <b>al menos durante 15 minutos</b>.
+      Evitar que el afectado se frote o cierre los ojos. En el caso de que el accidentado use lentes
+      de contacto, éstas deben retirarse siempre que no estén pegadas a los ojos, de otro modo podría
+      producirse un daño adicional.</p>
+      <p style="margin-top:8px">En todos los casos, después del lavado, se debe acudir al médico lo
+      más rápidamente posible.</p>
+    </div>
+
+    <div class="gate-block danger">
+      <h3>Por ingestión / aspiración</h3>
+      <p>Requerir <b>asistencia médica inmediata</b>, mostrándole la FDS de este producto.
+      <b>No inducir al vómito</b>, porque su expulsión del estómago puede provocar daños en la mucosa
+      del tracto digestivo superior, y su aspiración, al respiratorio.</p>
+      <p style="margin-top:8px">Enjuagar la boca y la garganta, ya que existe la posibilidad de que
+      hayan sido afectadas en la ingestión. En el caso de pérdida de consciencia <b>no administrar
+      nada por vía oral</b> hasta la supervisión del médico. Mantener al afectado en reposo.</p>
+    </div>
+
+    <div class="gate-accept">
+      <button class="btn btn-sync btn-lg" style="width:100%" onclick="closeAid()">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Ventana de seguridad (bloqueante) ============ -->
+<div class="gate" id="gate">
+  <div class="gate-inner">
+    <h2>Información importante</h2>
+    <div class="sub">Molienda y ensilaje · trabajo con ácido fórmico</div>
+    <div class="jserr" id="jserr" style="display:none"></div>
+
+    <div class="ppe">
+      <div>
+        <img src="ppe-vias.png" alt="" />
+        Protección obligatoria de las vías respiratorias
+      </div>
+      <div>
+        <img src="ppe-manos.png" alt="" />
+        Uso obligatorio de guantes
+      </div>
+      <div>
+        <img src="ppe-cuerpo.png" alt="" />
+        Protección obligatoria del cuerpo
+      </div>
+      <div>
+        <img src="ppe-pies.png" alt="" />
+        Protección obligatoria de los pies
+      </div>
+    </div>
+
+    <div class="gate-block danger">
+      <h3>Antes de empezar</h3>
+      <p>Vestir la ropa y elementos de seguridad proporcionados: <b>traje anti ácido, guantes y
+      botas de goma</b>; para el ensilaje con ácido, además <b>mascarilla y lentes</b>.</p>
+    </div>
+
+    <div class="gate-block">
+      <h3>Molienda</h3>
+      <ol>
+        <li>Revisar que la máquina esté armada y con todas sus piezas en buen estado.</li>
+        <li>Introducir los peces <b>con la máquina apagada</b>.</li>
+        <li>Cerrar todas las puertas de seguridad y encender la máquina.</li>
+        <li>Esperar a que termine y apagarla. <b>¡Nunca manipular la máquina encendida!</b></li>
+        <li>Retirar el contenedor con la molienda y verterla en el bidón designado de ensilaje.</li>
+        <li>Limpiar la máquina, retirar todos los restos y verterlos al bidón de ensilaje.</li>
+        <li>Agregar <b>ácido fórmico: 1 litro por cada 4 kg</b> de mortalidad molida.</li>
+      </ol>
+    </div>
+
+    <div class="gate-block">
+      <h3>Medición de pH</h3>
+      <p>Antes de verter la molienda del día, medir con el <b>medidor de pH en papel</b> y registrar
+      el número. El pH debe ser <b>inferior a 4,0</b>; si no lo es, verter más ácido.
+      Cuando el tambor esté en <b>4/5 partes</b>, cerrarlo y sellarlo, y seguir con el tambor del
+      siguiente número correlativo.</p>
+    </div>
+
+    <div class="gate-block danger">
+      <h3>Precauciones</h3>
+      <p>Utilizar siempre todos los implementos de seguridad, no manipular la máquina de molienda
+      mientras esté encendida, no derramar ácido, mantener siempre el orden y la limpieza, y
+      desinfectar todas las herramientas.</p>
+    </div>
+
+    <div class="gate-accept">
+      <button class="aid-link" onclick="openAid()">🚑 Primeros auxilios · Emergencias 131</button>
+      <button class="btn btn-main btn-lg" style="width:100%" onclick="acceptGate()">
+        Entiendo y acepto las condiciones
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="app">
+  <div class="top">
+    <h1 id="title">Molienda y Ensilaje</h1>
+    <span class="net" id="net"><span class="dot"></span><span id="net-txt">en línea</span></span>
+  </div>
+  <div class="subbar">
+    <span class="badge">Pendientes <b id="b-queue">0</b></span>
+    <span class="badge" id="b-drum">Sin tambor abierto</span>
+    <span class="badge" id="b-acid">Ácido —</span>
+    <span class="badge" style="cursor:pointer" onclick="reopenGate()">⚠️ Seguridad</span>
+    <span class="badge" style="cursor:pointer; border-color:var(--red); color:#fca5a5"
+          onclick="openAid()">🚑 Primeros auxilios · <b style="color:#fca5a5">131</b></span>
+  </div>
+
+  <!-- ============ Inicio ============ -->
+  <section id="v-home">
+    <div class="drum-card" id="drum-card">
+      <div class="drum-top">
+        <div><div class="n" id="drum-n">—</div><div class="l">Tambor abierto</div></div>
+        <div style="text-align:right"><div class="n" id="drum-kg">0</div><div class="l">kg acumulados</div></div>
+      </div>
+      <div class="bar" id="drum-bar"><i></i></div>
+      <div class="drum-foot"><span id="drum-cap">capacidad —</span><span id="drum-state"></span></div>
+    </div>
+
+    <div class="today">
+      <div class="kg" id="today-kg">0 kg</div>
+      <div class="lb" id="today-lb">hoy · sin cargas registradas</div>
+    </div>
+
+    <div class="row">
+      <button class="btn btn-main btn-lg" onclick="openForm()">+ Nueva carga</button>
+    </div>
+    <div class="row mt">
+      <button class="btn btn-sync" id="btn-close" onclick="openClose()">Cerrar tambor</button>
+      <button class="btn btn-ghost" onclick="openNoMortality()">Sin mortalidad hoy</button>
+    </div>
+    <div class="row mt">
+      <button class="btn btn-ghost" onclick="syncQueue(true)">Sincronizar</button>
+    </div>
+
+    <div class="list-title">Cargas de hoy</div>
+    <div id="today-list"></div>
+  </section>
+
+  <!-- ============ Formulario de carga ============ -->
+  <section id="v-form" class="hidden">
+    <div class="field">
+      <label for="f-kg">Kilos de mortalidad</label>
+      <input type="number" id="f-kg" inputmode="decimal" step="0.1" min="0" placeholder="0,0" oninput="liveCheck()" />
+    </div>
+
+    <div class="field">
+      <label for="f-drum">Tambor N°</label>
+      <input type="number" id="f-drum" inputmode="numeric" step="1" min="1" />
+    </div>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="f-acid">Ácido usado (lts)</label>
+        <input type="number" id="f-acid" inputmode="decimal" step="0.1" min="0" placeholder="0,0" oninput="liveCheck()" />
+      </div>
+      <div class="field">
+        <label for="f-ph">pH alcanzado</label>
+        <input type="number" id="f-ph" inputmode="decimal" step="0.1" min="0" max="14" placeholder="3,8" oninput="liveCheck()" />
+      </div>
+    </div>
+    <div class="hint" id="hint-dose"></div>
+
+    <label class="check"><input type="checkbox" id="f-additional" /><span>Necesité ácido adicional</span></label>
+    <label class="check"><input type="checkbox" id="f-closed" onchange="liveCheck()" /><span>Cerré el tambor con esta carga</span></label>
+
+    <div class="field">
+      <label for="f-operator">Operador</label>
+      <select id="f-operator"></select>
+    </div>
+
+    <div class="field">
+      <label for="f-obs">Observación (opcional)</label>
+      <input type="text" id="f-obs" maxlength="255" placeholder="—" />
+    </div>
+
+    <div class="row mt">
+      <button class="btn btn-ghost" onclick="show('v-home')">Cancelar</button>
+      <button class="btn btn-main" id="f-save" onclick="saveLoad()">Guardar carga</button>
+    </div>
+  </section>
+
+  <!-- ============ Cerrar tambor (sin cargarle nada) ============ -->
+  <section id="v-close" class="hidden">
+    <div class="drum-card">
+      <div class="drum-top">
+        <div><div class="n" id="c-drum">—</div><div class="l">Se cerrará y sellará</div></div>
+      </div>
+      <div class="drum-foot"><span id="c-kg"></span></div>
+    </div>
+
+    <div class="hint" id="c-next"></div>
+
+    <div class="field">
+      <label for="c-note">Motivo (opcional)</label>
+      <input type="text" id="c-note" maxlength="255" placeholder="No cabía la molienda del día" />
+    </div>
+    <div class="field">
+      <label for="c-by">Quién lo cierra (opcional)</label>
+      <input type="text" id="c-by" maxlength="120" placeholder="—" />
+    </div>
+
+    <div class="hint">
+      Al cerrarlo dejará de recibir cargas. La próxima carga irá al tambor del siguiente número
+      correlativo. Si el tambor sí recibió esta molienda, no uses esta pantalla: marca
+      «cerré el tambor con esta carga» al registrarla.
+    </div>
+
+    <div class="row mt">
+      <button class="btn btn-ghost" onclick="show('v-home')">Cancelar</button>
+      <button class="btn btn-main" onclick="confirmClose()">Cerrar y sellar</button>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

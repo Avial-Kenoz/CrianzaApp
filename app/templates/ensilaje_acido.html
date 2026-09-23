@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ácido para ensilaje – Crianza</title>
+  {% include '_ensilaje_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/config">Configuración</a> / Ensilaje</div>
+  <div class="page-title">Ácido para ensilaje</div>
+  <div class="page-sub">Ingresos, consumo y disponible de ácido fórmico.</div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_ensilaje_tabs.html' %}
+
+  <div class="kpis">
+    <div class="kpi {{ 'low' if low else 'hi' }}">
+      <div class="n">{{ '%.1f'|format(available) }} lts</div>
+      <div class="l">Disponible {% if low %}· bajo el mínimo{% endif %}</div>
+    </div>
+    <div class="kpi"><div class="n">{{ '%.1f'|format(totals.get('in', 0)) }}</div><div class="l">Ingresado</div></div>
+    <div class="kpi"><div class="n">{{ '%.1f'|format(totals.get('out', 0)) }}</div><div class="l">Consumido</div></div>
+    <div class="kpi"><div class="n">{{ '%.1f'|format(totals.get('adjustment', 0)) }}</div><div class="l">Ajustes</div></div>
+  </div>
+  <div class="note">
+    El disponible se <b>calcula</b>: ingresos + ajustes − consumos. No hay un campo de stock que
+    editar, así que nunca puede quedar desalineado del histórico de movimientos.
+    Cada carga registrada en la app de terreno descuenta sus litros automáticamente.
+  </div>
+
+  <div class="section-title">Ingresar un lote de ácido</div>
+  <form class="newform" method="post" action="/views/ui/ensilaje/acido/lote">
+    <div class="fld">
+      <label for="lot_code">Lote</label>
+      <input type="text" id="lot_code" name="lot_code" maxlength="60" required style="width:150px" />
+    </div>
+    <div class="fld">
+      <label for="received_lts">Litros</label>
+      <input type="number" id="received_lts" name="received_lts" step="0.01" min="0" required style="width:110px" />
+    </div>
+    <div class="fld">
+      <label for="received_date">Fecha</label>
+      <input type="date" id="received_date" name="received_date" value="{{ today }}" />
+    </div>
+    <div class="fld">
+      <label for="supplier">Proveedor</label>
+      <input type="text" id="supplier" name="supplier" maxlength="120" style="width:150px" />
+    </div>
+    <div class="fld">
+      <label for="concentration">Concentración</label>
+      <input type="text" id="concentration" name="concentration" maxlength="40" placeholder="85%" style="width:110px" />
+    </div>
+    <button class="btn btn-primary" type="submit">Ingresar</button>
+  </form>
+
+  <div class="section-title">Ajuste manual</div>
+  <form class="newform" method="post" action="/views/ui/ensilaje/acido/ajuste">
+    <div class="fld">
+      <label for="lts">Litros (negativo para descontar)</label>
+      <input type="number" id="lts" name="lts" step="0.01" required style="width:150px" />
+    </div>
+    <div class="fld">
+      <label for="lot_id">Lote (opcional)</label>
+      <select id="lot_id" name="lot_id">
+        <option value="">—</option>
+        {% for l in lots %}<option value="{{ l.id }}">{{ l.lot_code }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="fld" style="flex:1; min-width:220px">
+      <label for="reason">Motivo</label>
+      <input type="text" id="reason" name="reason" maxlength="255" required
+             placeholder="Merma, derrame, corrección de conteo…" style="width:100%" />
+    </div>
+    <button class="btn btn-primary" type="submit">Registrar ajuste</button>
+  </form>
+  <div class="note warn">
+    Un ajuste no borra ni edita movimientos anteriores: queda como una línea más, con su motivo.
+    Así el descuadre contra lo que declara el inspector cada semana sigue siendo rastreable.
+  </div>
+
+  <div class="section-title">Lotes</div>
+  <div class="card">
+    {% if lots %}
+    <table>
+      <thead><tr><th>Lote</th><th>Proveedor</th><th>Concentración</th><th>Recibido</th><th class="num">Litros</th></tr></thead>
+      <tbody>
+        {% for l in lots %}
+        <tr>
+          <td><b>{{ l.lot_code }}</b></td>
+          <td>{{ l.supplier or '—' }}</td>
+          <td>{{ l.concentration or '—' }}</td>
+          <td>{{ l.received_date.strftime('%d-%m-%Y') if l.received_date else '—' }}</td>
+          <td class="num">{{ '%.1f'|format(l.received_lts) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Todavía no hay lotes de ácido registrados.</div>
+    {% endif %}
+  </div>
+
+  <div class="section-title">Últimos movimientos</div>
+  <div class="card">
+    {% if movements %}
+    <table>
+      <thead><tr><th>Fecha</th><th>Tipo</th><th>Lote</th><th class="num">Litros</th><th>Detalle</th></tr></thead>
+      <tbody>
+        {% for m in movements %}
+        <tr>
+          <td>{{ m.date.strftime('%d-%m-%Y') if m.date else '—' }}</td>
+          <td><span class="pill {{ m.type }}">{{ {'in':'Ingreso','out':'Consumo','adjustment':'Ajuste'}.get(m.type, m.type) }}</span></td>
+          <td>{{ m.lot }}</td>
+          <td class="num">{{ '%.2f'|format(m.lts) }}</td>
+          <td>{{ m.notes or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Sin movimientos todavía.</div>
+    {% endif %}
+  </div>
+
+  <div class="note">
+    Dosis del procedimiento: <b>1 litro por cada 4 kg</b> de mortalidad molida
+    ({{ '%.2f'|format(nominal) }} lts/kg). Se avisa cuando el disponible baja de
+    {{ '%.0f'|format(low_threshold) }} lts.
+  </div>
+</div>
+</body>
+</html>

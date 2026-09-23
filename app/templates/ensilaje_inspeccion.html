@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inspección semanal de ensilaje – Crianza</title>
+  {% include '_ensilaje_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/ensilaje/registro">Ensilaje</a> / Inspección semanal</div>
+  <div class="page-title">Inspección semanal de la zona de ensilaje</div>
+  <div class="page-sub">
+    Semana del {{ week_start.strftime('%d-%m-%Y') }} al {{ week_end.strftime('%d-%m-%Y') }}
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_ensilaje_tabs.html' %}
+
+  <div class="toolbar">
+    <a class="btn btn-ghost" href="/views/ui/ensilaje/inspeccion?semana={{ prev }}">← Semana anterior</a>
+    <a class="btn btn-ghost" href="/views/ui/ensilaje/inspeccion?semana={{ next }}">Semana siguiente →</a>
+    <span style="flex:1"></span>
+    {% if row %}<span class="pill ok">Registrada el {{ row.inspected_at.strftime('%d-%m-%Y %H:%M') }}</span>
+    {% else %}<span class="pill pend">Sin registrar</span>{% endif %}
+  </div>
+
+  <div class="kpis">
+    <div class="kpi hi"><div class="n">{{ '%.1f'|format(computed.kg) }} kg</div><div class="l">Molido en la semana</div></div>
+    <div class="kpi"><div class="n">{{ '%.1f'|format(computed.acido) }} lts</div><div class="l">Ácido consumido (calculado)</div></div>
+    <div class="kpi"><div class="n">{{ '%.1f'|format(computed.disponible) }} lts</div><div class="l">Disponible (calculado)</div></div>
+    <div class="kpi"><div class="n">{{ computed.tambores_usados }}</div><div class="l">Tambores usados</div></div>
+    <div class="kpi"><div class="n">{{ computed.vacios_ahora }}</div><div class="l">Vacíos ahora</div></div>
+  </div>
+
+  <div class="section-title">Registro de la inspección</div>
+  <form method="post" action="/views/ui/ensilaje/inspeccion">
+    <input type="hidden" name="week_start" value="{{ week_start.isoformat() }}" />
+    <div class="card" style="padding:18px">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(190px,1fr)); gap:16px">
+        <div class="fld">
+          <label>Limpieza y orden</label>
+          <label style="display:flex; align-items:center; gap:8px; font-size:.9rem; color:#1a1a2e; margin:6px 0 0">
+            <input type="checkbox" name="cleanliness_ok" {{ 'checked' if row and row.cleanliness_ok }} /> Conforme
+          </label>
+        </div>
+        <div class="fld">
+          <label>Tambores sellados y sin fugas</label>
+          <label style="display:flex; align-items:center; gap:8px; font-size:.9rem; color:#1a1a2e; margin:6px 0 8px">
+            <input type="checkbox" name="drums_sealed_ok" {{ 'checked' if row and row.drums_sealed_ok }} /> Conforme
+          </label>
+          <input type="number" name="drums_sealed_count" step="1" min="0" style="width:100%"
+                 placeholder="cantidad" value="{{ row.drums_sealed_count if row and row.drums_sealed_count is not none else '' }}" />
+        </div>
+        <div class="fld">
+          <label>Cantidad ácido utilizado (lts)</label>
+          <input type="number" name="acid_used_lts" step="0.01" min="0" style="width:100%"
+                 value="{{ '%.2f'|format(row.acid_used_lts) if row and row.acid_used_lts is not none else '' }}" />
+        </div>
+        <div class="fld">
+          <label>Cantidad ácido disponible (lts)</label>
+          <input type="number" name="acid_available_lts" step="0.01" min="0" style="width:100%"
+                 value="{{ '%.2f'|format(row.acid_available_lts) if row and row.acid_available_lts is not none else '' }}" />
+        </div>
+        <div class="fld">
+          <label>Tambores utilizados</label>
+          <input type="number" name="drums_used" step="1" min="0" style="width:100%"
+                 value="{{ row.drums_used if row and row.drums_used is not none else '' }}" />
+        </div>
+        <div class="fld">
+          <label>Tambores disponibles</label>
+          <input type="number" name="drums_available" step="1" min="0" style="width:100%"
+                 value="{{ row.drums_available if row and row.drums_available is not none else '' }}" />
+        </div>
+        <div class="fld">
+          <label>Lote ácido</label>
+          <input type="text" name="acid_lot" maxlength="60" list="lotes" style="width:100%"
+                 value="{{ row.acid_lot or '' if row else '' }}" />
+          <datalist id="lotes">{% for l in lots %}<option value="{{ l }}"></option>{% endfor %}</datalist>
+        </div>
+        <div class="fld">
+          <label>Responsable</label>
+          <input type="text" name="responsible_name" maxlength="120" style="width:100%"
+                 value="{{ row.responsible_name or '' if row else '' }}" />
+        </div>
+        <div class="fld">
+          <label>Inspección</label>
+          <input type="text" name="inspector_name" maxlength="120" style="width:100%"
+                 value="{{ row.inspector_name or '' if row else '' }}" />
+        </div>
+        <div class="fld" style="grid-column:1/-1">
+          <label>Observación</label>
+          <input type="text" name="observation" maxlength="255" style="width:100%"
+                 value="{{ row.observation or '' if row else '' }}" />
+        </div>
+      </div>
+      <div style="margin-top:18px">
+        <button class="btn btn-primary" type="submit">{{ 'Actualizar' if row else 'Registrar' }} inspección</button>
+      </div>
+    </div>
+  </form>
+
+  {% if variances %}
+  <div class="section-title">Declarado vs. calculado</div>
+  <div class="card">
+    <table>
+      <thead><tr><th>Ítem</th><th class="num">Declarado</th><th class="num">Calculado</th><th class="num">Diferencia</th><th></th></tr></thead>
+      <tbody>
+        {% for v in variances %}
+        <tr>
+          <td>{{ v.item }}</td>
+          <td class="num">{{ '%.2f'|format(v.declared) if v.declared is not none else '—' }}</td>
+          <td class="num">{{ '%.2f'|format(v.computed) if v.computed is not none else '—' }}</td>
+          <td class="num">{% if v.delta is not none %}{{ '%+.2f'|format(v.delta) }}{% else %}—{% endif %}</td>
+          <td>
+            {% if v.matches is none %}<span class="pill muted">sin dato</span>
+            {% elif v.matches %}<span class="pill ok">calza</span>
+            {% else %}<span class="pill pend">descuadre</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="note warn">
+    Lo declarado por el inspector se guarda <b>tal cual</b>: es el registro con valor legal y el
+    sistema no lo corrige. El descuadre se muestra para investigarlo, no para reemplazar el dato.
+    Un ajuste de inventario se registra en <a href="/views/ui/ensilaje/acido">Ácido</a>, con su motivo.
+  </div>
+  {% endif %}
+
+  <div class="section-title">Inspecciones anteriores</div>
+  <div class="card">
+    {% if history %}
+    <table>
+      <thead><tr><th>Semana</th><th>Limpieza</th><th class="num">Ácido usado</th><th class="num">Disponible</th>
+                 <th class="num">Tambores</th><th>Responsable</th><th>Inspección</th></tr></thead>
+      <tbody>
+        {% for h in history %}
+        <tr>
+          <td><a href="/views/ui/ensilaje/inspeccion?semana={{ h.week_start.isoformat() }}"
+                 style="color:#2563eb; text-decoration:none">{{ h.week_start.strftime('%d-%m-%Y') }}</a></td>
+          <td>{% if h.limpieza %}<span class="pill ok">✓</span>{% else %}<span class="pill bad">X</span>{% endif %}</td>
+          <td class="num">{{ '%.1f'|format(h.acido) }}</td>
+          <td class="num">{{ '%.1f'|format(h.disponible) }}</td>
+          <td class="num">{{ h.tambores if h.tambores is not none else '—' }}</td>
+          <td>{{ h.responsable or '—' }}</td>
+          <td>{{ h.inspector or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Todavía no hay inspecciones registradas.</div>
+    {% endif %}
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Registro de molienda y ensilaje – Crianza</title>
+  {% include '_ensilaje_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb no-print"><a href="/views/ui/ensilaje/tambores">Ensilaje</a> / Registro</div>
+  <div class="page-title">Registro de molienda y ensilaje</div>
+  <div class="page-sub no-print">
+    Registro PC 03.2 · {{ mes_label }}. Una línea por carga: un día con dos tambores son dos líneas.
+  </div>
+  <div class="print-only" style="margin-bottom:10px; font-size:.85rem">
+    Acuícola Alas S.A. · Registro PC 03.2 «Control de Molienda y Ensilaje» · {{ mes_label }}
+  </div>
+
+  {% if msg %}<div class="flash no-print">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err no-print">{{ err }}</div>{% endif %}
+
+  {% include '_ensilaje_tabs.html' %}
+
+  <div class="toolbar no-print">
+    <a class="btn btn-ghost" href="/views/ui/ensilaje/registro?mes={{ mes_prev }}">← Mes anterior</a>
+    <form method="get" action="/views/ui/ensilaje/registro" style="display:flex; gap:8px; align-items:flex-end">
+      <div class="fld"><label for="mes">Mes</label>
+        <input type="month" id="mes" name="mes" value="{{ mes }}" onchange="this.form.submit()" /></div>
+    </form>
+    <a class="btn btn-ghost" href="/views/ui/ensilaje/registro?mes={{ mes_next }}">Mes siguiente →</a>
+    <span style="flex:1"></span>
+    <a class="btn btn-ghost" href="/views/ui/ensilaje/registro.csv?mes={{ mes }}">Exportar CSV</a>
+    <button class="btn btn-primary" onclick="window.print()">Imprimir</button>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi hi"><div class="n">{{ '%.1f'|format(total_kg) }} kg</div><div class="l">Molido en el mes</div></div>
+    <div class="kpi"><div class="n">{{ total_cargas }}</div><div class="l">Cargas</div></div>
+    <div class="kpi"><div class="n">{{ '%.1f'|format(total_acido) }} lts</div><div class="l">Ácido consumido</div></div>
+    <div class="kpi {{ 'warn' if pendientes }}"><div class="n">{{ pendientes }}</div><div class="l">Sin recibir</div></div>
+    <div class="kpi {{ 'bad' if no_conformes }}"><div class="n">{{ no_conformes }}</div><div class="l">pH no conforme</div></div>
+    <div class="kpi {{ 'warn' if faltantes }}"><div class="n">{{ faltantes }}</div><div class="l">Días sin registro</div></div>
+  </div>
+
+  {% if faltantes %}
+  <div class="note warn no-print">
+    Hay <b>{{ faltantes }} día(s) del mes sin ninguna anotación</b>. Un día sin mortalidad debe
+    registrarse igual desde la app de terreno («Sin mortalidad hoy»): en el formato en papel no es
+    lo mismo una celda marcada con X que una celda en blanco, y es justo lo que revisa un auditor.
+  </div>
+  {% endif %}
+
+  <div class="section-title">Resumen por día</div>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha</th><th>Día</th><th class="num">Kg</th><th class="num">Cargas</th>
+          <th class="num">Ácido lts</th><th>Tambor(es)</th><th>pH</th><th>Estado</th><th class="no-print"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in dias %}
+        <tr>
+          <td>{{ d.fecha.strftime('%d-%m') }}</td>
+          <td>{{ d.dia }}</td>
+          <td class="num">{% if d.kg %}{{ '%.1f'|format(d.kg) }}{% else %}—{% endif %}</td>
+          <td class="num">{{ d.cargas or '—' }}</td>
+          <td class="num">{% if d.acido %}{{ '%.1f'|format(d.acido) }}{% else %}—{% endif %}</td>
+          <td>{{ d.tambores|join(', ') if d.tambores else '—' }}</td>
+          <td class="mono">
+            {%- if d.ph_min is not none -%}
+              {{ '%.1f'|format(d.ph_min) }}{% if d.ph_max != d.ph_min %} – {{ '%.1f'|format(d.ph_max) }}{% endif %}
+            {%- else -%}—{%- endif -%}
+          </td>
+          <td>
+            {% if d.falta %}<span class="pill bad">Sin registro</span>
+            {% elif d.sin_mortalidad and not d.cargas %}<span class="pill muted">Sin mortalidad</span>
+            {% else %}
+              {% if d.no_conformes %}<span class="pill bad">pH ≥ {{ ph_limit }}</span>{% endif %}
+              {% if d.pendientes %}<span class="pill pend">{{ d.pendientes }} sin recibir</span>{% endif %}
+              {% if d.anuladas %}<span class="pill muted">{{ d.anuladas }} anulada(s)</span>{% endif %}
+              {% if not d.no_conformes and not d.pendientes and not d.anuladas %}<span class="pill ok">Conforme</span>{% endif %}
+            {% endif %}
+          </td>
+          <td class="no-print"><a class="btn btn-mini" href="/views/ui/ensilaje/dia/{{ d.fecha.isoformat() }}">Ver día</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-title">Cargas del mes <span style="font-weight:400; text-transform:none; letter-spacing:0">— este listado es el registro oficial</span></div>
+  <div class="card">
+    {% if rows %}
+    <table>
+      <thead>
+        <tr>
+          <th>Folio</th><th>Fecha</th><th>Hora</th><th class="num">Kg</th><th class="num">Ácido</th>
+          <th>Ad.</th><th class="num">pH</th><th>Tambor</th><th>Operador</th><th>Recibido por</th>
+          <th class="no-print"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr class="{{ 'voided' if r.voided }}">
+          <td class="mono">{{ r.folio }}</td>
+          <td>{{ r.fecha.strftime('%d-%m') }}</td>
+          <td class="mono">{{ r.hora }}</td>
+          <td class="num kg">
+            {%- if not r.had_mortality -%}<span class="pill muted">sin mortalidad</span>
+            {%- else -%}{{ '%.1f'|format(r.kg) }}{%- endif -%}
+          </td>
+          <td class="num">{% if r.acid_lts is not none %}{{ '%.1f'|format(r.acid_lts) }}{% else %}—{% endif %}</td>
+          <td>{{ '✓' if r.additional_acid else '' }}</td>
+          <td class="num">
+            {%- if r.ph is not none -%}
+              {% if r.ph_ok %}{{ '%.1f'|format(r.ph) }}{% else %}<b style="color:#b91c1c">{{ '%.1f'|format(r.ph) }}</b>{% endif %}
+            {%- else -%}—{%- endif -%}
+          </td>
+          <td>{{ r.drum or '—' }}{% if r.drum_closed %} <span class="pill sealed">cerrado</span>{% endif %}</td>
+          <td>{{ r.operador }}</td>
+          <td>
+            {% if r.voided %}<span class="mono">anulada</span>
+            {% elif r.recibido_por %}{{ r.recibido_por }}<div class="mono">{{ r.recibido_at.strftime('%d-%m %H:%M') }}</div>
+            {% else %}<span class="pill pend">pendiente</span>{% endif %}
+          </td>
+          <td class="no-print">
+            {% if not r.voided and not r.recibido_por %}
+            <form class="inline" method="post" action="/views/ui/ensilaje/registro/{{ r.id }}/recibir">
+              <input type="hidden" name="volver" value="/views/ui/ensilaje/registro?mes={{ mes }}" />
+              <input type="text" name="received_by_name" placeholder="Recibido por" required
+                     maxlength="120" style="width:130px" />
+              <button class="btn btn-mini" type="submit">Recibir</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No hay cargas registradas en {{ mes_label }}.</div>
+    {% endif %}
+  </div>
+
+  <div class="note no-print">
+    «Recibido por» es un <b>campo de texto</b>, no una firma acreditada: CrianzaApp todavía no
+    tiene autenticación, así que deja constancia de quién declara haber recibido, sin verificar
+    identidad. Para corregir una carga mal registrada no se reescribe: se <b>anula</b> desde el
+    detalle del día y se registra otra, de modo que el original quede a la vista.
+  </div>
+
+  <div class="print-only" style="margin-top:26px; font-size:.8rem">
+    <table style="width:60%">
+      <tr><td style="height:52px; border-bottom:1px solid #333"></td><td style="width:30px"></td>
+          <td style="height:52px; border-bottom:1px solid #333"></td></tr>
+      <tr><td style="text-align:center">Responsable</td><td></td><td style="text-align:center">Inspección</td></tr>
+    </table>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tambores de ensilaje – Crianza</title>
+  {% include '_ensilaje_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/config">Configuración</a> / Ensilaje</div>
+  <div class="page-title">Tambores de ensilaje</div>
+  <div class="page-sub">
+    Alta y estado de los tambores. La captura diaria se hace desde la app de terreno
+    (<a href="/ensilaje" style="color:#2563eb">/ensilaje</a>).
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_ensilaje_tabs.html' %}
+
+  <div class="kpis">
+    <div class="kpi hi">
+      <div class="n">{{ counts.get('open', 0) }}</div>
+      <div class="l">Abierto{% if open_drum %} · N° {{ open_drum.drum_number }}{% endif %}</div>
+    </div>
+    <div class="kpi"><div class="n">{{ counts.get('available', 0) }}</div><div class="l">Vacíos disponibles</div></div>
+    <div class="kpi"><div class="n">{{ counts.get('sealed', 0) }}</div><div class="l">Cerrados y sellados</div></div>
+    <div class="kpi"><div class="n">{{ counts.get('dispatched', 0) }}</div><div class="l">Retirados</div></div>
+  </div>
+
+  <div class="section-title">Dar de alta tambores vacíos</div>
+  <form class="newform" method="post" action="/views/ui/ensilaje/tambores/nuevo">
+    <div class="fld">
+      <label for="desde">Desde el N°</label>
+      <input type="number" id="desde" name="desde" min="1" step="1" value="{{ next_number }}" style="width:110px" required />
+    </div>
+    <div class="fld">
+      <label for="hasta">Hasta el N° (opcional)</label>
+      <input type="number" id="hasta" name="hasta" min="1" step="1" placeholder="{{ next_number }}" style="width:110px" />
+    </div>
+    <div class="fld" style="flex:1; min-width:200px">
+      <label for="observacion">Observación</label>
+      <input type="text" id="observacion" name="observacion" maxlength="255" placeholder="—" style="width:100%" />
+    </div>
+    <button class="btn btn-primary" type="submit">Agregar</button>
+  </form>
+  <div class="note">
+    El procedimiento indica seguir con el tambor del <b>siguiente número correlativo</b>, por eso el
+    formulario propone el N° {{ next_number }}. Puedes cargar una tanda completa indicando un rango.
+    Los números que ya existen sin retirar se omiten.
+  </div>
+
+  <div class="section-title">Tambores registrados</div>
+  <div class="card">
+    {% if drums %}
+    <table>
+      <thead>
+        <tr>
+          <th>N°</th><th>Estado</th><th>Llenado</th><th class="num">Kg</th>
+          <th class="num">Ácido lts</th><th>Abierto</th><th>Sellado</th><th>Cambiar a</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in drums %}
+        <tr>
+          <td><b>{{ d.drum_number }}</b></td>
+          <td><span class="pill {{ d.status }}">{{ d.status_label }}</span></td>
+          <td>
+            {% if d.status in ['open', 'sealed'] %}
+            <div class="bar {{ d.fill_status }}"><i style="width: {{ [d.pct, 100]|min }}%"></i></div>
+            {% else %}<span style="color:#cbd0d6">—</span>{% endif %}
+          </td>
+          <td class="num">{{ '%.1f'|format(d.total_kg) }}</td>
+          <td class="num">{{ '%.1f'|format(d.acid_lts) }}</td>
+          <td>{{ d.opened_at.strftime('%d-%m-%Y') if d.opened_at else '—' }}</td>
+          <td>
+            {{ d.sealed_at.strftime('%d-%m-%Y') if d.sealed_at else '—' }}
+            {% if d.sealed_by or d.seal_note %}
+            <div class="mono">{{ d.sealed_by or '' }}{% if d.sealed_by and d.seal_note %} · {% endif %}{{ d.seal_note or '' }}</div>
+            {% endif %}
+          </td>
+          <td>
+            <form class="inline" method="post" action="/views/ui/ensilaje/tambores/{{ d.id }}/estado">
+              <select name="status" onchange="this.form.submit()">
+                <option value="">—</option>
+                {% for key, label in labels.items() %}
+                  {% if key != d.status %}<option value="{{ key }}">{{ label }}</option>{% endif %}
+                {% endfor %}
+              </select>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Todavía no hay tambores registrados. Agrega la tanda disponible arriba.</div>
+    {% endif %}
+  </div>
+
+  <div class="note">
+    Capacidad configurada: <b>{{ '%.0f'|format(capacity) }} kg</b> por tambor, igual para todos
+    (se edita en Configuración). El procedimiento manda <b>cerrar y sellar a {{ close_pct }}%</b>;
+    a partir de ahí la barra se pone ámbar y la app de terreno avisa.
+    Solo puede haber <b>un tambor abierto a la vez</b>: la base de datos lo impide.
+  </div>
+</div>
+</body>
+</html>
