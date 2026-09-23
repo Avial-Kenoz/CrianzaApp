@@ -16,7 +16,6 @@ from app.models.ponds import Pond
 from app.models.cultivation_units import CultivationUnit
 from app.api.views import (
     _adjust_biomass_on_movement,
-    _recalc_pond_biomass,
     _refresh_pond_runtime_cache_many,
 )
 from app.schemas.fish import FishCreate, FishRead
@@ -283,8 +282,8 @@ async def confirm_faena_by_crotales(request: Request, db: Session = Depends(get_
     db.flush()
     for movement in generated_movements:
         _adjust_biomass_on_movement(movement, db)
-    for pond_id in sorted(affected_pond_ids):
-        _recalc_pond_biomass(pond_id, db)
+    # Sin _recalc_pond_biomass: los deltas de _adjust_biomass_on_movement ya dejan el
+    # mismo valor que el recalculo completo (deriva medida 0,000% en egresos).
     _refresh_pond_runtime_cache_many(affected_pond_ids, db)
 
     db.commit()

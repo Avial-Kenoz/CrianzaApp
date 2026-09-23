@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.api.views import _recalc_pond_biomass
+from app.api.views import _recalc_pond_biomass, _refresh_pond_runtime_cache
 from app.db.session import SessionLocal
 from app.models.ponds import Pond
 
@@ -21,6 +21,8 @@ def main() -> None:
         pond_ids = [pid for (pid,) in db.query(Pond.id).order_by(Pond.id).all()]
         for pond_id in pond_ids:
             _recalc_pond_biomass(pond_id, db)
+            # _recalc_pond_biomass ya no escribe los recuentos.
+            _refresh_pond_runtime_cache(pond_id, db)
 
         db.commit()
 

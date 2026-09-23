@@ -164,26 +164,55 @@
       z-index: 2;
       background: #1f2937;
     }
-    .th-pit-filter {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      min-width: 120px;
+    .fish-search {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+      margin: 0 0 12px 0; padding: 10px 12px;
+      background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;
     }
-    .pit-filter-input {
-      width: 100%;
-      border: 1px solid #4b5563;
+    /* El PIT es hex de 7 caracteres (30.971 de 49.003); hasta ~10 con sufijo de retag.
+       Ancho fijo en ch: no tiene sentido que ocupe el ancho de la pagina. Antes reusaba
+       .pit-filter-input, pensada para el encabezado oscuro de la tabla (fondo #111827),
+       y en la barra clara se veia como un bloque azulado estirado. */
+    .pit-search-input {
+      width: 13ch;
+      padding: 6px 10px;
+      border: 1px solid #d1d5db;
       border-radius: 6px;
-      padding: 5px 7px;
-      font-size: .78rem;
-      background: #111827;
-      color: #fff;
+      background: #fff;
+      color: #111827;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9rem;
+      text-transform: uppercase;
       outline: none;
     }
-    .pit-filter-input::placeholder { color: #9ca3af; }
-    .pit-filter-input:focus {
-      border-color: #93c5fd;
-      box-shadow: 0 0 0 2px rgba(147,197,253,.2);
+    .pit-search-input::placeholder {
+      color: #9ca3af; font-family: inherit; text-transform: none; font-size: 0.82rem;
+    }
+    .pit-search-input:focus {
+      border-color: #6b7280;
+      box-shadow: 0 0 0 2px rgba(107,114,128,.15);
+    }
+    .fish-search select, .fish-search button, .fish-search .limpiar {
+      padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px;
+      background: #fff; font-size: 0.9rem; color: #111827;
+    }
+    .fish-search button { cursor: pointer; background: #1f2937; color: #fff; border-color: #1f2937; }
+    .fish-search button.ver-todos { background: #fff; color: #1f2937; }
+    .fish-search .limpiar { text-decoration: none; }
+    .result-count { margin: 0 0 10px 0; font-size: 0.9rem; color: #4b5563; }
+    .paginador {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      justify-content: center; margin: 14px 0 4px 0; font-size: 0.9rem;
+    }
+    .paginador a {
+      padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px;
+      background: #fff; color: #1f2937; text-decoration: none;
+    }
+    .paginador a:hover { background: #f3f4f6; }
+    .paginador span { color: #4b5563; }
+    @media (max-width: 640px) {
+      .fish-search { flex-direction: column; align-items: stretch; }
+      .pit-search-input { width: 100%; }
     }
     th, td { padding: 10px 10px; text-align: left; font-size: .88rem; }
     .table-wrap th:nth-child(1),
@@ -700,6 +729,59 @@
 
     <div class="detail-content right-compact">
       <div class="table-wrap">
+        <form class="fish-search" method="get" action="/views/ui/ponds/{{ pond.id }}">
+          <input type="hidden" name="ver" value="1" />
+          <input
+            id="pit-search" name="q" type="text" class="pit-search-input"
+            list="pit-index" inputmode="text" spellcheck="false" autocomplete="off"
+            placeholder="Buscar PIT tag..." aria-label="Buscar por PIT tag"
+            value="{{ f_q }}"
+          />
+          <select name="sexo" aria-label="Sexo">
+            <option value="">Sexo: todos</option>
+            <option value="f" {% if f_sexo == 'f' %}selected{% endif %}>Hembras</option>
+            <option value="m" {% if f_sexo == 'm' %}selected{% endif %}>Machos</option>
+            <option value="nd" {% if f_sexo == 'nd' %}selected{% endif %}>Sin sexar</option>
+          </select>
+          <select name="estado" aria-label="Estado de desarrollo">
+            <option value="">Estado: todos</option>
+            {% for e in ['0','1','2','3','4','R','L'] %}
+            <option value="{{ e }}" {% if f_estado == e %}selected{% endif %}>{{ e }}</option>
+            {% endfor %}
+          </select>
+          {% if filter_lot_options|length > 1 %}
+          <select name="lote" aria-label="Lote">
+            <option value="">Lote: todos</option>
+            {% for opt in filter_lot_options %}
+            <option value="{{ opt.id }}" {% if f_lote == opt.id|string %}selected{% endif %}>{{ opt.label }} ({{ opt.count }})</option>
+            {% endfor %}
+          </select>
+          {% endif %}
+          <select name="per_page" aria-label="Registros por pagina">
+            {% for n in per_page_choices %}
+            <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }} por pagina</option>
+            {% endfor %}
+          </select>
+          <button type="submit">Buscar</button>
+          {% if not show_table %}
+          <button type="submit" name="ver" value="1" class="ver-todos">Ver todos ({{ tagged_count }})</button>
+          {% endif %}
+          {% if has_filter %}
+          <a class="limpiar" href="/views/ui/ponds/{{ pond.id }}?ver=1&amp;per_page={{ per_page }}">Limpiar filtros</a>
+          {% endif %}
+        </form>
+
+        <datalist id="pit-index">
+          {% for pit in pit_index %}<option value="{{ pit }}"></option>{% endfor %}
+        </datalist>
+
+        {% if show_table %}
+        <p class="result-count">
+          {% if has_filter %}<strong>{{ total_filtered }}</strong> de {{ tagged_count }} peces coinciden{% else %}<strong>{{ tagged_count }}</strong> peces marcados{% endif %}
+          {% if total_pages > 1 %} — pagina {{ page }} de {{ total_pages }}{% endif %}
+        </p>
+        {% endif %}
+
         <datalist id="ponds-list">
           {% for p in all_ponds %}
           <option value="{{ p.id }} - {{ p.name }}"></option>
@@ -710,20 +792,7 @@
           <thead>
             <tr>
               <th>
-                <div class="th-pit-filter">
-                  <span>PIT tag</span>
-                  <input
-                    id="pit-filter"
-                    class="pit-filter-input"
-                    type="text"
-                    inputmode="text"
-                    spellcheck="false"
-                    autocomplete="off"
-                    placeholder="Filtrar PIT..."
-                    aria-label="Filtrar por PIT tag"
-                    oninput="filterPitRows(this.value)"
-                  />
-                </div>
+                PIT tag
               </th>
               <th>Lote</th>
               <th>Sexo</th>
@@ -835,11 +904,20 @@
             </tr>
             {% endif %}
 
-            {% if fish_rows %}
-            {% for row in fish_rows %}
+            {% if fish_rows and show_table %}
+            {% for row in page_rows %}
             <tr class="fish-row" data-pit="{{ (row.internal_id or '')|lower }}">
               <td>
-                <form id="save-fish-{{ row.fish_id }}" method="post" action="/views/ui/ponds/{{ pond.id }}/fish/{{ row.fish_id }}/save"></form>
+                <form id="save-fish-{{ row.fish_id }}" method="post" action="/views/ui/ponds/{{ pond.id }}/fish/{{ row.fish_id }}/save">
+                  {# Estado de la vista: sin esto, guardar devolvia a la pagina sin tabla #}
+                  <input type="hidden" name="ret_ver" value="1" />
+                  <input type="hidden" name="ret_page" value="{{ page }}" />
+                  <input type="hidden" name="ret_per_page" value="{{ per_page }}" />
+                  <input type="hidden" name="ret_q" value="{{ f_q }}" />
+                  <input type="hidden" name="ret_sexo" value="{{ f_sexo }}" />
+                  <input type="hidden" name="ret_estado" value="{{ f_estado }}" />
+                  <input type="hidden" name="ret_lote" value="{{ f_lote }}" />
+                </form>
                 <a class="pit-link" href="/views/ui/fish/{{ row.fish_id }}">{{ row.internal_id }}</a>
               </td>
               <td>{{ row.lot }}</td>
@@ -966,13 +1044,44 @@
               </td>
             </tr>
             {% endfor %}
-            {% else %}
+            {% if not page_rows %}
+            <tr>
+              <td colspan="{{ 11 if show_depuration_column else 9 }}" class="nd">Ningun pez coincide con la busqueda.</td>
+            </tr>
+            {% endif %}
+            {% elif not fish_rows %}
             <tr>
               <td colspan="{{ 11 if show_depuration_column else 9 }}" class="nd">No hay peces con PIT tag actualmente en esta laguna.</td>
+            </tr>
+            {% else %}
+            {# Tabla plegada: la fila de registro/re-tag de arriba sigue disponible #}
+            <tr>
+              <td colspan="{{ 11 if show_depuration_column else 9 }}" class="nd">
+                {{ tagged_count }} peces con PIT tag en esta laguna. Busca un PIT arriba o usa «Ver todos».
+              </td>
             </tr>
             {% endif %}
           </tbody>
         </table>
+
+        {% if show_table and total_pages > 1 %}
+        {% set base = "/views/ui/ponds/" ~ pond.id ~ "?ver=1&per_page=" ~ per_page
+                      ~ ("&q=" ~ f_q if f_q else "")
+                      ~ ("&sexo=" ~ f_sexo if f_sexo else "")
+                      ~ ("&estado=" ~ f_estado if f_estado else "")
+                      ~ ("&lote=" ~ f_lote if f_lote else "") %}
+        <nav class="paginador" aria-label="Paginacion de peces">
+          {% if page > 1 %}
+          <a href="{{ base }}&page=1">« Primera</a>
+          <a href="{{ base }}&page={{ page - 1 }}">‹ Anterior</a>
+          {% endif %}
+          <span>Pagina {{ page }} de {{ total_pages }} ({{ total_filtered }} peces)</span>
+          {% if page < total_pages %}
+          <a href="{{ base }}&page={{ page + 1 }}">Siguiente ›</a>
+          <a href="{{ base }}&page={{ total_pages }}">Ultima »</a>
+          {% endif %}
+        </nav>
+        {% endif %}
       </div>
 
       <!-- Sidebar derecho: funciones rápidas -->
@@ -1333,15 +1442,6 @@
         return confirm(`¿Confirmar mortalidad de ${qty} pez(ces) sin tag (${lotText})?\nSe registrarán y cerrarán ${qty} evento(s).`);
       }
       return confirm(`¿Confirmar pérdida de PIT tag para ${qty} pez(ces) en ${lotText}?\nSe agregarán ${qty} evento(s) pendientes de re-tag.`);
-    }
-
-    function filterPitRows(rawValue) {
-      const query = (rawValue || '').trim().toLowerCase();
-      const rows = document.querySelectorAll('tr.fish-row');
-      rows.forEach((row) => {
-        const pit = row.getAttribute('data-pit') || '';
-        row.style.display = pit.includes(query) ? '' : 'none';
-      });
     }
 
     function updateDevelopmentStateOptions(fishId) {

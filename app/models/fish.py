@@ -10,6 +10,9 @@ class Fish(Base):
     internal_id = Column(String(120), nullable=False)
     secondary_internal_id = Column(String(120))
     lot_id = Column(BigInteger, ForeignKey("lots.id"), nullable=False)
+    # Posicion denormalizada: la mantiene el trigger trg_sync_fish_current_pond
+    # sobre ponds_movements (migracion 20260831_01). NO escribir desde Python.
+    current_pond_id = Column(BigInteger, ForeignKey("ponds.id"))
     sex = Column(String(20))
     state = Column(String(30), default='alive')
     registration_time = Column(TIMESTAMP)

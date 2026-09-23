@@ -3,13 +3,13 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
 from sqlalchemy.orm import Session, aliased
-from sqlalchemy import func, or_, text
+from sqlalchemy import case, func, literal, or_, text
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
-from collections import defaultdict
+from collections import Counter, defaultdict
 from urllib.parse import quote_plus
 import bisect
 import re
@@ -93,8 +93,6 @@ CU_DISPLAY_ORDER = [
     "Nor-Central", "Nor-Poniente", "Central",
     "Jaula", "Hatchery: Alevinaje", "Hatchery Sala 2", "Hatchery: Incubacion",
 ]
-RECENT_LOT_WEIGHT_LOOKBACK_DAYS = 365
-MIN_RECENT_LOT_SAMPLES_FOR_FLOOR = 10
 APP_LOCAL_TZ = ZoneInfo("America/Santiago")
 
 
@@ -148,15 +146,11 @@ def _latest_movement_id_per_fish_subq(db: Session):
 
 def _get_current_tagged_fish_in_pond(pond_id: int, db: Session) -> List[Fish]:
     """Obtiene peces con PIT tag cuyo ultimo movimiento los deja en el estanque."""
-    latest_id_subq = _latest_movement_id_per_fish_subq(db)
-
     return (
         db.query(Fish)
-        .join(PondMovement, PondMovement.fish_id == Fish.id)
-        .join(latest_id_subq, latest_id_subq.c.max_id == PondMovement.id)
         .filter(
-            PondMovement.destiny_pond_id == pond_id,
-            Fish.state.in_(["alive", "depuration"])
+            Fish.current_pond_id == pond_id,
+            Fish.state.in_(["alive", "depuration"]),
         )
         .order_by(Fish.internal_id)
         .all()
@@ -165,16 +159,9 @@ def _get_current_tagged_fish_in_pond(pond_id: int, db: Session) -> List[Fish]:
 
 def _get_current_marked_lot_ids_in_pond(pond_id: int, db: Session) -> list[int]:
     """Lotes de peces marcados cuyo último movimiento los deja en esta laguna."""
-    latest_id_subq = _latest_movement_id_per_fish_subq(db)
     rows = (
         db.query(Fish.lot_id)
-        .join(PondMovement, PondMovement.fish_id == Fish.id)
-        .join(latest_id_subq, latest_id_subq.c.max_id == PondMovement.id)
-        .filter(
-            PondMovement.destiny_pond_id == pond_id,
-            PondMovement.fish_id.isnot(None),
-            Fish.lot_id.isnot(None),
-        )
+        .filter(Fish.current_pond_id == pond_id, Fish.lot_id.isnot(None))
         .distinct()
         .all()
     )
@@ -261,13 +248,10 @@ def _as_int_dict(raw_value) -> dict[int, int]:
 
 
 def _get_current_tagged_count_and_lot_ids(pond_id: int, db: Session) -> tuple[int, set[int]]:
-    latest_id_subq = _latest_movement_id_per_fish_subq(db)
     rows = (
         db.query(Fish.id, Fish.lot_id)
-        .join(PondMovement, PondMovement.fish_id == Fish.id)
-        .join(latest_id_subq, latest_id_subq.c.max_id == PondMovement.id)
         .filter(
-            PondMovement.destiny_pond_id == pond_id,
+            Fish.current_pond_id == pond_id,
             Fish.state.in_(["alive", "depuration"]),
         )
         .all()
@@ -393,6 +377,53 @@ def _refresh_pond_runtime_cache_many(pond_ids, db: Session) -> None:
         _refresh_pond_runtime_cache(pid, db)
 
 
+def refresh_projected_biomass_cache(db: Session, commit: bool = True) -> int:
+    """Persiste en `ponds` la biomasa proyectada desde checkpoints (criterio vigente).
+
+    `biomass_current` es el caché del criterio anterior y solo se ajusta de forma
+    incremental, así que los consumidores externos (AdminDashboard) no pueden usarlo
+    sin desviarse. Acá se materializa lo mismo que muestra la UI —la suma por estanque
+    de `_project_biomass_from_checkpoint(hoy)`— para que lo lean con un SELECT en vez
+    de duplicar el algoritmo.
+
+    `biomass_projected_lots_missing` cuenta los lotes con peces en el estanque que no
+    tienen checkpoint: valen 0 kg en la proyección, y sin el contador un estanque sin
+    muestreo es indistinguible de uno vacío.
+
+    Devuelve la cantidad de estanques actualizados.
+    """
+    from datetime import date as _date, time as _dtime
+
+    target_date = _date.today()
+    proj, _alerts = _project_biomass_from_checkpoint(target_date, db)
+
+    biomass_by_pond: dict[int, float] = defaultdict(float)
+    for (pond_id, _lot_id), biomass_kg in proj.items():
+        biomass_by_pond[int(pond_id)] += biomass_kg
+
+    # Lotes con peces pero sin checkpoint. La proyección los devuelve en 0 kg, no los
+    # omite, así que hay que mirar los checkpoints: sin esto un estanque sin muestreo
+    # se reporta igual que uno vacío.
+    cutoff = datetime.combine(target_date, _dtime(23, 59, 59))
+    checkpoints = _get_best_checkpoints_at(target_date, db)
+    missing_by_pond: dict[int, int] = defaultdict(int)
+    for (pond_id, lot_id), count in _sum_pond_lot_balance_until(cutoff, db).items():
+        if count > 0 and checkpoints.get((pond_id, lot_id)) is None:
+            missing_by_pond[int(pond_id)] += 1
+
+    now = datetime.utcnow()
+    ponds = db.query(Pond).order_by(Pond.id).all()
+    for pond in ponds:
+        pond_id = int(pond.id)
+        pond.biomass_projected_kg = round(biomass_by_pond.get(pond_id, 0.0), 3)
+        pond.biomass_projected_lots_missing = missing_by_pond.get(pond_id, 0)
+        pond.biomass_projected_at = now
+
+    if commit:
+        db.commit()
+    return len(ponds)
+
+
 def rebuild_all_pond_runtime_cache(db: Session) -> int:
     """Recalcula y persiste el cache operativo de todos los estanques.
 
@@ -402,6 +433,7 @@ def rebuild_all_pond_runtime_cache(db: Session) -> int:
     ponds = db.query(Pond).order_by(Pond.id).all()
     for pond in ponds:
         _refresh_pond_runtime_cache(pond.id, db)
+    refresh_projected_biomass_cache(db, commit=False)
     db.commit()
     return len(ponds)
 
@@ -911,22 +943,18 @@ def _aggregate_lot_totals(pond_lot_map: dict[tuple[int, int], int]) -> dict[int,
 
 def _build_current_pond_lot_counts(db: Session) -> dict[tuple[int, int], int]:
     """Conteo operacional actual por estanque/lote (tagged + sin registrar)."""
-    latest_id_subq = _latest_movement_id_per_fish_subq(db)
-
     tagged_rows = (
         db.query(
-            PondMovement.destiny_pond_id.label("pond_id"),
+            Fish.current_pond_id.label("pond_id"),
             Fish.lot_id.label("lot_id"),
             func.count(Fish.id).label("cnt"),
         )
-        .join(Fish, Fish.id == PondMovement.fish_id)
-        .join(latest_id_subq, latest_id_subq.c.max_id == PondMovement.id)
         .filter(
-            PondMovement.destiny_pond_id.isnot(None),
+            Fish.current_pond_id.isnot(None),
             Fish.lot_id.isnot(None),
             Fish.state.in_(["alive", "depuration"]),
         )
-        .group_by(PondMovement.destiny_pond_id, Fish.lot_id)
+        .group_by(Fish.current_pond_id, Fish.lot_id)
         .all()
     )
 
@@ -1003,13 +1031,10 @@ def _get_jaula_quality_conflict_rows(db: Session) -> list[dict]:
     jaula_pond_ids = [p.id for p in jaula_ponds]
     jaula_pond_name_map = {p.id: p.name for p in jaula_ponds}
 
-    latest_mv_subq = _latest_movement_id_per_fish_subq(db)
     fish_rows = (
-        db.query(Fish, PondMovement.destiny_pond_id)
-        .join(latest_mv_subq, latest_mv_subq.c.fish_id == Fish.id)
-        .join(PondMovement, PondMovement.id == latest_mv_subq.c.max_id)
+        db.query(Fish, Fish.current_pond_id)
         .filter(
-            PondMovement.destiny_pond_id.in_(jaula_pond_ids),
+            Fish.current_pond_id.in_(jaula_pond_ids),
             Fish.state.notin_(["dead", "faena", "in_process", "processed"]),
             Fish.internal_id.isnot(None),
             Fish.internal_id != "",
@@ -1390,13 +1415,18 @@ REPORT_CHOICES = [
 _VALID_REPORTS = {r for r, _ in REPORT_CHOICES}
 
 
-@router.get("/ui/reports", response_class=HTMLResponse)
-def ui_reports(
-    request: Request,
-    month: Optional[str] = None,
-    report: str = "existencia_lote",
-    db: Session = Depends(get_db),
-):
+def build_reports_payload(
+    month: Optional[str],
+    report: str,
+    db: Session,
+) -> dict:
+    """Arma los datos de los reportes mensuales (existencia y alimento).
+
+    Extraído de `ui_reports` para que la vista HTML y el endpoint JSON que consume
+    AdminDashboard salgan del mismo cálculo: las reglas finas de acá (el mes en curso
+    corta al instante actual, el checkpoint `month_start` manda sobre el recálculo,
+    el ajuste de conciliación) no se pueden replicar afuera sin divergir.
+    """
     if report not in _VALID_REPORTS:
         report = "existencia_lote"
     month_value, month_start, month_next, month_end = _parse_month_for_reports(month)
@@ -1627,25 +1657,83 @@ def ui_reports(
             if feed_data else None
         )
 
+    return {
+        "month": month_value,
+        "month_start": month_start,
+        "month_end": report_end_snapshot,
+        "report": report,
+        "report_choices": REPORT_CHOICES,
+        "lot_rows": lot_rows,
+        "lot_totals": lot_totals,
+        "pond_rows": pond_rows,
+        "pond_totals": pond_totals,
+        "feed_data": feed_data,
+        "feed_lot_data": feed_lot_data,
+        "biomass_alerts": biomass_alerts,
+    }
+
+
+@router.get("/ui/reports", response_class=HTMLResponse)
+def ui_reports(
+    request: Request,
+    month: Optional[str] = None,
+    report: str = "existencia_lote",
+    db: Session = Depends(get_db),
+):
+    payload = build_reports_payload(month, report, db)
     template = jinja_env.get_template("reports.html")
-    html = template.render(
-        {
-            "request": request,
-            "month": month_value,
-            "month_start": month_start,
-            "month_end": report_end_snapshot,
-            "report": report,
-            "report_choices": REPORT_CHOICES,
-            "lot_rows": lot_rows,
-            "lot_totals": lot_totals,
-            "pond_rows": pond_rows,
-            "pond_totals": pond_totals,
-            "feed_data": feed_data,
-            "feed_lot_data": feed_lot_data,
-            "biomass_alerts": biomass_alerts,
-        }
-    )
+    html = template.render({"request": request, **payload})
     return HTMLResponse(content=html)
+
+
+def _feed_matrix_to_json(feed: "dict | None") -> "dict | None":
+    """Normaliza las matrices de alimento a tipos serializables (tuplas y Decimal)."""
+    if not feed:
+        return None
+
+    def _clean(value):
+        if isinstance(value, dict):
+            return {str(k): _clean(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_clean(v) for v in value]
+        if isinstance(value, Decimal):
+            return float(value)
+        return value
+
+    return _clean(feed)
+
+
+@router.get("/api/reports")
+def api_reports(
+    month: Optional[str] = None,
+    report: str = "existencia_lote",
+    db: Session = Depends(get_db),
+):
+    """Los mismos reportes de `/views/ui/reports`, en JSON, para AdminDashboard.
+
+    Devuelve solo el bloque del reporte pedido: las cuatro tablas juntas pesan de más
+    y el consumidor muestra una a la vez.
+    """
+    payload = build_reports_payload(month, report, db)
+    data: dict = {
+        "month": payload["month"],
+        "month_start": payload["month_start"].date().isoformat(),
+        "month_end": payload["month_end"].date().isoformat(),
+        "report": payload["report"],
+        "report_label": dict(REPORT_CHOICES).get(payload["report"], payload["report"]),
+        "biomass_alerts": payload["biomass_alerts"],
+    }
+    if payload["report"] == "existencia_lote":
+        data["rows"] = payload["lot_rows"]
+        data["totals"] = payload["lot_totals"]
+    elif payload["report"] == "existencia_estanque":
+        data["rows"] = payload["pond_rows"]
+        data["totals"] = payload["pond_totals"]
+    elif payload["report"] == "alimento_estanque":
+        data["feed"] = _feed_matrix_to_json(payload["feed_data"])
+    else:
+        data["feed"] = _feed_matrix_to_json(payload["feed_lot_data"])
+    return JSONResponse(content=data)
 
 
 # ---------------------------------------------------------------------------
@@ -2290,6 +2378,13 @@ def ui_pond_detail(
     request: Request,
     status: Optional[str] = None,
     msg: Optional[str] = None,
+    q: Optional[str] = None,
+    sexo: Optional[str] = None,
+    estado: Optional[str] = None,
+    lote: Optional[str] = None,
+    ver: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 50,
     db: Session = Depends(get_db)
 ):
     """Vista HTML de detalle por laguna."""
@@ -2506,6 +2601,7 @@ def ui_pond_detail(
             "fish_id": fish.id,
             "internal_id": fish.internal_id or "N/D",
             "lot": (lot.name or lot.internal_id) if lot else "N/D",
+            "lot_id": fish.lot_id,
             "sex": sex_label,
             "sex_value": "f" if is_female else ("m" if sex_norm in ["m", "male", "macho"] else ""),
             "last_weight": float(sample.weight) if sample and sample.weight is not None else None,
@@ -2524,6 +2620,36 @@ def ui_pond_detail(
             "e4_label": e4_label,
             "next_days_label": next_days_label,
         })
+
+    # ── Filtrado y paginacion SOLO del render de la tabla ──────────────────────
+    # La pagina pesaba 9,5 MB / 83.783 nodos DOM con 2.796 peces (3.376 bytes y 30
+    # nodos por fila, casi todos controles de edicion). fish_rows queda completo
+    # porque de el salen los resumenes; lo que se acota es lo que se dibuja.
+    q_norm = (q or "").strip().lower()
+    filtered_rows = fish_rows
+    if q_norm:
+        filtered_rows = [r for r in filtered_rows if q_norm in (r.get("internal_id") or "").lower()]
+    if sexo in ("f", "m", "nd"):
+        want = "" if sexo == "nd" else sexo
+        filtered_rows = [r for r in filtered_rows if (r.get("sex_value") or "") == want]
+    if estado:
+        _e = str(estado).strip().upper()
+        filtered_rows = [r for r in filtered_rows
+                         if (r.get("development_state") or "") == _e]
+    if lote and str(lote).isdigit():
+        filtered_rows = [r for r in filtered_rows if str(r.get("lot_id") or "") == str(lote)]
+
+    PER_PAGE_CHOICES = [50, 100, 200]
+    per_page = per_page if per_page in PER_PAGE_CHOICES else 50
+    total_filtered = len(filtered_rows)
+    total_pages = max(1, (total_filtered + per_page - 1) // per_page)
+    page = max(1, min(int(page or 1), total_pages))
+
+    # La tabla se muestra si el usuario la pidio, si busco/filtro algo, o si el
+    # estanque es chico (no tiene sentido esconder 20 peces).
+    has_filter = bool(q_norm or sexo or estado or lote)
+    show_table = bool(ver) or has_filter or len(fish_rows) <= per_page
+    page_rows = filtered_rows[(page - 1) * per_page: page * per_page] if show_table else []
 
     show_depuration_column = pond.depuration or any(row["depuration_days"] is not None for row in fish_rows)
 
@@ -2657,6 +2783,22 @@ def ui_pond_detail(
             "depuration": pond.depuration,
         },
         "fish_rows": fish_rows,
+        # Lo que se dibuja en la tabla. Los resumenes siguen usando fish_rows completo.
+        "page_rows": page_rows,
+        "show_table": show_table,
+        "total_filtered": total_filtered,
+        "page": page,
+        "per_page": per_page,
+        "per_page_choices": PER_PAGE_CHOICES,
+        "total_pages": total_pages,
+        "has_filter": has_filter,
+        "f_q": q or "",
+        "f_sexo": sexo or "",
+        "f_estado": estado or "",
+        "f_lote": lote or "",
+        # Solo los PIT (~9 bytes c/u): permite autocompletar al instante sin
+        # renderizar las filas. Para el estanque 6 son ~25 KB contra 9,5 MB.
+        "pit_index": [r["internal_id"] for r in fish_rows if r.get("internal_id")],
         "show_depuration_column": show_depuration_column,
         "all_ponds": [{"id": p.id, "name": p.name} for p in all_ponds if p.id != pond.id],
         "tagged_count": len(fish_rows),
@@ -2675,6 +2817,18 @@ def ui_pond_detail(
         "females_by_state": females_by_state,
         "can_register_from_untagged": unregistered_count > 0,
         "pending_first_count": pending_first_count,
+        # Lotes con peces marcados presentes, con su conteo. Se arma desde fish_rows
+        # (no desde present_lot_options, que incluye lotes con saldo solo sin-marca:
+        # esas opciones filtrarian siempre a cero).
+        "filter_lot_options": [
+            {"id": lid, "label": lbl, "count": cnt}
+            for (lid, lbl), cnt in sorted(
+                Counter(
+                    (r["lot_id"], r["lot"]) for r in fish_rows if r.get("lot_id")
+                ).items(),
+                key=lambda kv: kv[0][1],
+            )
+        ],
         "unregistered_lot_options": unregistered_lot_options,
         "tag_detachment_lot_options": tag_detachment_lot_options,
         "pending_detachment_events": [
@@ -3124,12 +3278,41 @@ def ui_pond_fish_save(
     development_state: Optional[str] = Form(None),
     move_to: Optional[str] = Form(None),
     action: str = Form("save"),
+    ret_ver: Optional[str] = Form(None),
+    ret_page: Optional[str] = Form(None),
+    ret_per_page: Optional[str] = Form(None),
+    ret_q: Optional[str] = Form(None),
+    ret_sexo: Optional[str] = Form(None),
+    ret_estado: Optional[str] = Form(None),
+    ret_lote: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
+    # Vuelve a la misma pagina/filtro desde donde se edito. Se reconstruye a partir
+    # de parametros validados (no se acepta una URL del formulario) para no abrir
+    # un redirect arbitrario.
+    def _txt(v):
+        return v.strip() if isinstance(v, str) else ""
+
+    _ret = ""
+    if _txt(ret_ver):
+        _ret = "&ver=1"
+        if _txt(ret_page).isdigit():
+            _ret += f"&page={int(ret_page)}"
+        if _txt(ret_per_page) in ("50", "100", "200"):
+            _ret += f"&per_page={int(ret_per_page)}"
+        if _txt(ret_q):
+            _ret += f"&q={quote_plus(_txt(ret_q))}"
+        if _txt(ret_sexo) in ("f", "m", "nd"):
+            _ret += f"&sexo={_txt(ret_sexo)}"
+        if _txt(ret_estado):
+            _ret += f"&estado={quote_plus(_txt(ret_estado)[:2])}"
+        if _txt(ret_lote).isdigit():
+            _ret += f"&lote={int(ret_lote)}"
+
     from app.services.sexado_sessions import pond_lock_session
     if pond_lock_session(db, pond_id):
         return RedirectResponse(
-            url=f"/views/ui/ponds/{pond_id}?status=error&msg={quote_plus('Estanque en sesión de sexado offline (solo lectura hasta sincronizar).')}",
+            url=f"/views/ui/ponds/{pond_id}?status=error&msg={quote_plus('Estanque en sesión de sexado offline (solo lectura hasta sincronizar).')}{_ret}",
             status_code=303,
         )
     res = apply_fish_save(
@@ -3137,7 +3320,7 @@ def ui_pond_fish_save(
         development_state=development_state, move_to=move_to, action=action,
     )
     return RedirectResponse(
-        url=f"/views/ui/ponds/{pond_id}?status={quote_plus(res.status)}&msg={quote_plus(res.message)}",
+        url=f"/views/ui/ponds/{pond_id}?status={quote_plus(res.status)}&msg={quote_plus(res.message)}{_ret}",
         status_code=303,
     )
 
@@ -4205,13 +4388,17 @@ def ui_movement_create(
 ):
     ponds = db.query(Pond).filter(Pond.state != "inactive").order_by(Pond.name).all()
     lots = db.query(Lot).order_by(Lot.name).all()
-    pond_balances: dict[int, dict[int, int]] = {}
-    for pond in ponds:
-        balances = _get_unregistered_balances_by_lot(pond.id, db)
-        if balances:
-            pond_balances[pond.id] = balances
 
     def render_form(error=None, success=None):
+        # Los saldos de los 95 estanques (190 queries, ~100 ms) solo los consume esta
+        # plantilla, y solo se llega aca en la rama de error. Se arman al vuelo en vez
+        # de al entrar al handler, donde el camino feliz los pagaba sin usarlos.
+        pond_balances: dict[int, dict[int, int]] = {}
+        for pond in ponds:
+            balances = _get_unregistered_balances_by_lot(pond.id, db)
+            if balances:
+                pond_balances[pond.id] = balances
+
         prefill_source_id = int(source_pond_id) if source_pond_id else None
         prefill_pit_tags: list[str] = []
         if prefill_source_id:
@@ -4366,6 +4553,37 @@ def ui_movement_create(
                         return render_form(error="Estado de desarrollo inválido para macho. Use: 0 o L.")
                     return render_form(error="Estado de desarrollo inválido.")
 
+            # Una sola query para el peso de todos los peces del lote, en vez de 1-3 por
+            # pez dentro de _adjust_biomass_on_movement (eran ~400 queries por 200 peces).
+            batch_weights: dict = {}
+            _bids = [f.id for f in movable_fish]
+            if _bids:
+                _latest = (
+                    db.query(
+                        FishSampling.fish_id,
+                        func.max(
+                            func.coalesce(FishSampling.registry_time, FishSampling.created_at)
+                        ).label("max_time"),
+                    )
+                    .filter(FishSampling.fish_id.in_(_bids), FishSampling.weight.isnot(None))
+                    .group_by(FishSampling.fish_id)
+                    .subquery()
+                )
+                _rows = (
+                    db.query(FishSampling)
+                    .join(
+                        _latest,
+                        (FishSampling.fish_id == _latest.c.fish_id) &
+                        (func.coalesce(FishSampling.registry_time, FishSampling.created_at)
+                         == _latest.c.max_time),
+                    )
+                    .filter(FishSampling.weight.isnot(None))
+                    .all()
+                )
+                for _r in sorted(_rows, key=lambda r: r.id):   # mayor id gana ante empate
+                    batch_weights[_r.fish_id] = (_r.weight, _r.registry_time or _r.created_at)
+            batch_lot_avg: dict = {}
+
             try:
                 for fish in movable_fish:
                     new_mov = PondMovement(
@@ -4389,7 +4607,7 @@ def ui_movement_create(
                         fish.state = "alive"
                         fish.depuration_start_time = None
 
-                    _adjust_biomass_on_movement(new_mov, db)
+                    _adjust_biomass_on_movement(new_mov, db, batch_lot_avg, batch_weights)
 
                     # Registro masivo de estado de desarrollo (nuevo muestreo por pez).
                     if batch_dev_state:
@@ -4404,11 +4622,13 @@ def ui_movement_create(
                     moved_pits.append(fish.internal_id or str(fish.id))
 
                 _refresh_pond_runtime_cache_many([src_id, dst_id], db)
-                # Recalculate avg_weight after movements
-                if src_id:
-                    _recalc_pond_biomass(src_id, db)
-                if dst_id:
-                    _recalc_pond_biomass(dst_id, db)
+                # No se llama _recalc_pond_biomass: _adjust_biomass_on_movement ya aplico
+                # el delta exacto de cada pez y, desde que ambos comparten
+                # _resolve_fish_weight, el recalculo completo da el MISMO numero (medido:
+                # deriva 0,000% tras 150 movimientos, traslado y egreso). Recalcular aca
+                # costaba 332 ms por request y ademas reseteaba el running total.
+                # La verdad se rehace donde cambian los pesos: cierre de muestreo y
+                # pond_cache_scheduler.
                 db.commit()
             except Exception:
                 db.rollback()
@@ -4466,11 +4686,6 @@ def ui_movement_create(
 
             _adjust_biomass_on_movement(new_mov, db)
             _refresh_pond_runtime_cache_many([src_id, dst_id], db)
-            # Recalculate avg_weight after movements
-            if src_id:
-                _recalc_pond_biomass(src_id, db)
-            if dst_id:
-                _recalc_pond_biomass(dst_id, db)
             db.commit()
             dest_name = dest_pond.name if dst_id and dest_pond else "egreso"
             fish_label = fish.internal_id or str(fish.id)
@@ -4514,11 +4729,6 @@ def ui_movement_create(
             db.flush()
             _adjust_biomass_on_movement(new_mov, db)
             _refresh_pond_runtime_cache_many([src_id, dst_id], db)
-            # Recalculate avg_weight after movements
-            if src_id:
-                _recalc_pond_biomass(src_id, db)
-            if dst_id:
-                _recalc_pond_biomass(dst_id, db)
             db.commit()
 
             lot = db.query(Lot).filter(Lot.id == lot_id_int).first()
@@ -4546,52 +4756,99 @@ def _get_last_sampling_date(pond_id: int, db: Session):
     return row[0] if row else None
 
 
-def _get_fish_weight_estimate(fish_id: int, lot_id: int, db: Session, pond_id: Optional[int] = None) -> Optional[float]:
-    """
-    Peso estimado de un pez marcado para ajustes de biomasa.
+def _get_lot_avg_weight(lot_id, db: Session, cache=None, prefer_pond_id=None):
+    """Promedio del lote en su muestreo mas reciente, en CUALQUIER estanque.
 
-    Criterio híbrido (STALE_WEIGHT_DAYS = 90 días):
-      - Si el último peso individual fue tomado hace ≤ 90 días desde el último
-        muestreo del estanque (F) → usar peso individual (fresco y preciso).
-      - Si no → usar pond_lot_stats.avg_weight del estanque origen.
-        Esto garantiza consistencia con _recalc_pond_biomass, que aplica el
-        mismo floor para calcular biomass_current.
+    Prioridad:
+      1. Fecha de muestreo mas reciente. Los peces crecen, asi que un promedio
+         reciente con pocos individuos describe mejor el peso de hoy que uno
+         antiguo con muchos (lote 2: 16.900 g con n=2 en 2026 vs 3.890 g n=32 en 2023).
+      2. Ante EMPATE de fecha, gana el muestreo del propio estanque. El mismo lote
+         puede tener tamanos muy distintos segun donde este: el lote 46 medido el
+         2026-08-07 da 1.008 g en el estanque 10 y 329 g en el estanque 5. Sin esta
+         preferencia el desempate por n_sampled elegia el otro estanque por UNA
+         muestra de diferencia y triplicaba el error.
+      3. Recien despues, mayor tamano de muestra.
+
+    `prefer_pond_id` es preferencia, no filtro: si el estanque no tiene medicion, o
+    la suya es mas vieja que la mejor del lote, igual se usa la del lote (que es el
+    punto: no quedarse con un promedio de 2021 habiendo uno de 2026).
+
+    `cache` es un dict para resolver un estanque completo sin repetir la query.
+    """
+    if not lot_id:
+        return None
+    lot_id = int(lot_id)
+    key = (lot_id, int(prefer_pond_id) if prefer_pond_id else None)
+    if cache is not None and key in cache:
+        return cache[key]
+
+    propio = case((PondLotStats.pond_id == prefer_pond_id, 1), else_=0) if prefer_pond_id else literal(0)
+    row = (
+        db.query(PondLotStats.avg_weight)
+        .filter(PondLotStats.lot_id == lot_id, PondLotStats.avg_weight.isnot(None))
+        .order_by(
+            PondLotStats.sampled_at.desc().nullslast(),
+            propio.desc(),
+            PondLotStats.n_sampled.desc().nullslast(),
+            PondLotStats.updated_at.desc().nullslast(),
+        )
+        .first()
+    )
+    value = float(row[0]) if row and row[0] is not None else None
+    if cache is not None:
+        cache[key] = value
+    return value
+
+
+def _resolve_fish_weight(individual_weight, individual_time, lot_id, db: Session,
+                         lot_avg_cache=None, now=None, pond_id=None):
+    """Criterio UNICO de peso de un pez, en gramos.
+
+    Lo usan tanto el ajuste incremental por movimiento como el recalculo completo
+    del estanque. Si los dos divergen, la biomasa deja de cuadrar: por eso el
+    criterio vive aca y no duplicado en cada camino.
+
+    - Peso individual de <= STALE_WEIGHT_DAYS dias, contados **desde hoy**: se usa tal cual.
+    - Peso individual mas antiguo: max(individual, promedio del lote). Es un piso, no
+      un reemplazo: los esturiones no encogen, asi que la ultima medicion sigue siendo
+      una cota inferior valida del peso actual.
+    - Sin peso individual (incluye peces sin marca): promedio del lote.
+    """
+    if individual_weight is None:
+        return _get_lot_avg_weight(lot_id, db, lot_avg_cache, pond_id)
+
+    individual_weight = float(individual_weight)
+    if individual_time is None:
+        return individual_weight
+
+    ref = now or datetime.utcnow()
+    stamp = (individual_time if isinstance(individual_time, datetime)
+             else datetime.combine(individual_time, datetime.min.time()))
+    if (ref - stamp).days <= STALE_WEIGHT_DAYS:
+        return individual_weight
+
+    lot_avg = _get_lot_avg_weight(lot_id, db, lot_avg_cache, pond_id)
+    return max(individual_weight, lot_avg) if lot_avg else individual_weight
+
+
+def _get_fish_weight_estimate(fish_id: int, lot_id: int, db: Session, pond_id=None):
+    """Peso estimado de un pez marcado, via el criterio unico (_resolve_fish_weight).
+
+    `pond_id` ya no RESTRINGE el fallback al par (estanque, lote) --eso devolvia
+    promedios de 2021--, pero si se usa como preferencia para desempatar cuando el
+    estanque tiene un muestreo tan reciente como el mejor del lote.
     """
     row = (
         db.query(FishSampling.weight, FishSampling.registry_time, FishSampling.created_at)
         .filter(FishSampling.fish_id == fish_id, FishSampling.weight.isnot(None))
-        .order_by(func.coalesce(FishSampling.registry_time, FishSampling.created_at).desc())
+        .order_by(func.coalesce(FishSampling.registry_time, FishSampling.created_at).desc(),
+                  FishSampling.id.desc())
         .first()
     )
-
     if row:
-        individual_weight = float(row[0])
-        weight_time = row[1] or row[2]
-
-        if pond_id and weight_time:
-            last_F = _get_last_sampling_date(pond_id, db)
-            if last_F:
-                weight_date = weight_time.date() if isinstance(weight_time, datetime) else weight_time
-                days_stale = (last_F - weight_date).days
-                if days_stale > STALE_WEIGHT_DAYS:
-                    # Peso viejo respecto al último muestreo: usar avg del lote en el estanque
-                    lot_avg = _get_lot_weight_estimate(pond_id, lot_id, db)
-                    if lot_avg:
-                        return lot_avg
-
-        return individual_weight
-
-    # Sin peso individual: intentar avg del estanque, luego avg global del lote
-    lot_avg = _get_lot_weight_estimate(pond_id, lot_id, db) if pond_id else None
-    if lot_avg:
-        return lot_avg
-    row2 = (
-        db.query(func.avg(FishSampling.weight))
-        .join(Fish, Fish.id == FishSampling.fish_id)
-        .filter(Fish.lot_id == lot_id, FishSampling.weight.isnot(None))
-        .first()
-    )
-    return float(row2[0]) if row2 and row2[0] else None
+        return _resolve_fish_weight(row[0], row[1] or row[2], lot_id, db, pond_id=pond_id)
+    return _resolve_fish_weight(None, None, lot_id, db, pond_id=pond_id)
 
 
 def _get_lot_weight_estimate(pond_id: Optional[int], lot_id: int, db: Session) -> Optional[float]:
@@ -4615,7 +4872,8 @@ def _get_lot_weight_estimate(pond_id: Optional[int], lot_id: int, db: Session) -
     return float(row2[0]) if row2 and row2[0] else None
 
 
-def _adjust_biomass_on_movement(mov: PondMovement, db: Session) -> None:
+def _adjust_biomass_on_movement(mov: PondMovement, db: Session,
+                                lot_avg_cache=None, weights=None) -> None:
     """
     Ajusta biomass_current de los ponds afectados por un movimiento.
 
@@ -4643,9 +4901,15 @@ def _adjust_biomass_on_movement(mov: PondMovement, db: Session) -> None:
         # ── TAGGED ──
         fish = db.query(Fish).filter(Fish.id == mov.fish_id).first()
         lot_id = fish.lot_id if fish else mov.lot_id
-        # Criterio híbrido: pasar pond_id para que _get_fish_weight_estimate aplique
-        # el floor de 90 días coherente con _recalc_pond_biomass.
-        peso_g = _get_fish_weight_estimate(mov.fish_id, lot_id, db, pond_id=mov.source_pond_id)
+        # `weights` trae {fish_id: (peso, fecha)} precargado de una sola query cuando el
+        # llamador mueve un lote de peces; sin el, se resuelve pez por pez como antes.
+        if weights is not None and mov.fish_id in weights:
+            w, t = weights[mov.fish_id]
+            peso_g = _resolve_fish_weight(w, t, lot_id, db, lot_avg_cache,
+                                          pond_id=mov.source_pond_id)
+        else:
+            peso_g = _get_fish_weight_estimate(mov.fish_id, lot_id, db,
+                                               pond_id=mov.source_pond_id)
         if peso_g is None:
             return
         delta_kg = Decimal(str(peso_g)) / 1000
@@ -4676,8 +4940,10 @@ def _adjust_biomass_on_movement(mov: PondMovement, db: Session) -> None:
             return
 
         # avg_weight desde el estanque origen (o fallback del lote si es ingreso desde fuera)
+        # Pez sin marca: no hay peso individual, va el promedio del lote (criterio unico),
+        # prefiriendo el muestreo del estanque de referencia si empata en fecha.
         ref_pond_id = mov.source_pond_id if mov.source_pond_id else mov.destiny_pond_id
-        avg_g = _get_lot_weight_estimate(ref_pond_id, mov.lot_id, db)
+        avg_g = _get_lot_avg_weight(mov.lot_id, db, lot_avg_cache, prefer_pond_id=ref_pond_id)
         if avg_g is None:
             return
 
@@ -4894,10 +5160,14 @@ def _adjust_biomass_on_individual_sampling(
 
 def _recalc_pond_biomass(pond_id: int, db: Session) -> None:
     """
-    Recalcula biomass y avg_weight en ponds usando:
-    - Peces marcados: último peso individual de FishSampling (o fish.weight si no tiene)
-    - Peces sin marcar por lote: avg_weight de pond_lot_stats
+    Recalcula biomass y avg_weight en ponds. El peso de cada pez lo resuelve
+    _resolve_fish_weight — el mismo criterio que usa el ajuste incremental por
+    movimiento, para que ambos caminos no diverjan.
     Actualiza ponds.biomass y ponds.avg_weight en la misma transacción.
+
+    Solo toca campos de PESO. Los campos de RECUENTO (tagged_count, unregistered_count,
+    n_fish_cached, active_lot_ids, ...) son responsabilidad exclusiva de
+    _refresh_pond_runtime_cache; quien necesite ambos debe llamar a las dos.
     """
     pond = db.query(Pond).filter(Pond.id == pond_id).first()
     if not pond:
@@ -4905,37 +5175,6 @@ def _recalc_pond_biomass(pond_id: int, db: Session) -> None:
 
     tagged_fish = _get_current_tagged_fish_in_pond(pond_id, db)
     unregistered_balances = _get_unregistered_balances_by_lot(pond_id, db)
-
-    def _recent_lot_weight_floor_map() -> dict[int, float]:
-        """Promedio reciente por lote dentro del estanque para corregir pesos individuales antiguos."""
-        lot_ids = sorted({int(f.lot_id) for f in tagged_fish if f.lot_id is not None})
-        if not lot_ids:
-            return {}
-
-        cutoff = datetime.utcnow() - timedelta(days=RECENT_LOT_WEIGHT_LOOKBACK_DAYS)
-        rows = (
-            db.query(
-                SamplingRecord.lot_id,
-                func.avg(SamplingRecord.weight).label("avg_w"),
-                func.count(SamplingRecord.id).label("n"),
-            )
-            .join(SamplingSession, SamplingSession.id == SamplingRecord.session_id)
-            .filter(
-                SamplingSession.pond_id == pond_id,
-                SamplingRecord.lot_id.in_(lot_ids),
-                SamplingRecord.weight.isnot(None),
-                func.coalesce(SamplingSession.closed_at, SamplingSession.created_at) >= cutoff,
-            )
-            .group_by(SamplingRecord.lot_id)
-            .all()
-        )
-        return {
-            int(r.lot_id): float(r.avg_w)
-            for r in rows
-            if r.lot_id and r.avg_w and int(r.n or 0) >= MIN_RECENT_LOT_SAMPLES_FOR_FLOOR
-        }
-
-    lot_recent_floor = _recent_lot_weight_floor_map()
 
     # Peso de peces marcados: última muestra individual
     tagged_ids = [f.id for f in tagged_fish]
@@ -4949,7 +5188,10 @@ def _recalc_pond_biomass(pond_id: int, db: Session) -> None:
                     func.coalesce(FishSampling.registry_time, FishSampling.created_at)
                 ).label("max_time"),
             )
-            .filter(FishSampling.fish_id.in_(tagged_ids))
+            # weight IS NOT NULL va DENTRO de la subquery: si no, un muestreo posterior
+            # que no anoto peso gana el max(fecha) y borra el ultimo peso conocido,
+            # tirando al pez al promedio del lote (3 peces del estanque 9, ~35 kg).
+            .filter(FishSampling.fish_id.in_(tagged_ids), FishSampling.weight.isnot(None))
             .group_by(FishSampling.fish_id)
             .subquery()
         )
@@ -4960,49 +5202,40 @@ def _recalc_pond_biomass(pond_id: int, db: Session) -> None:
                 (FishSampling.fish_id == latest_subq.c.fish_id) &
                 (func.coalesce(FishSampling.registry_time, FishSampling.created_at) == latest_subq.c.max_time),
             )
+            .filter(FishSampling.weight.isnot(None))
             .all()
         )
-        for row in rows:
+        # Mismo desempate que el camino de un solo pez (mayor id gana ante empate de
+        # fecha): si difieren, los dos caminos calculan biomasas distintas.
+        for row in sorted(rows, key=lambda r: r.id):
             if row.weight is not None:
                 latest_weight_by_fish[row.fish_id] = float(row.weight)
                 sample_dt = row.registry_time or row.created_at
                 if sample_dt:
                     latest_time_by_fish[row.fish_id] = sample_dt
 
+    # Un solo criterio de peso para todos los peces, con cache por lote (1 query por lote).
+    lot_avg_cache: dict = {}
     tagged_biomass = Decimal("0")
     now_utc = datetime.utcnow()
     for f in tagged_fish:
-        w = latest_weight_by_fish.get(f.id)
-        # Si no hay peso individual, mantiene fallback existente.
-        if w is None:
-            w = _get_fish_weight_estimate(f.id, f.lot_id, db)
-
-        # Corrección de estancamiento: si el último peso es antiguo,
-        # no permitir que quede por debajo del promedio reciente del lote.
-        last_dt = latest_time_by_fish.get(f.id)
-        floor_w = lot_recent_floor.get(int(f.lot_id)) if f.lot_id else None
-        if w is not None and last_dt and floor_w is not None:
-            age_days = (now_utc - last_dt).days
-            if age_days > STALE_WEIGHT_DAYS:
-                w = max(w, floor_w)
-
+        w = _resolve_fish_weight(
+            latest_weight_by_fish.get(f.id),
+            latest_time_by_fish.get(f.id),
+            f.lot_id, db, lot_avg_cache, now_utc, pond_id=pond_id,
+        )
         if w:
             tagged_biomass += Decimal(str(w))
 
-    # Peso de peces sin marcar: usa avg_weight de pond_lot_stats por lote
+    # Peces sin marca: mismo criterio que en el movimiento (promedio del lote),
+    # compartiendo el cache para no repetir queries.
     unregistered_biomass = Decimal("0")
-    lot_ids_unreg = list(unregistered_balances.keys())
-    stats_rows = (
-        db.query(PondLotStats)
-        .filter(PondLotStats.pond_id == pond_id, PondLotStats.lot_id.in_(lot_ids_unreg))
-        .all()
-    ) if lot_ids_unreg else []
-    stats_by_lot = {s.lot_id: s for s in stats_rows}
-
     for lot_id, qty in unregistered_balances.items():
-        stats = stats_by_lot.get(lot_id)
-        if stats and stats.avg_weight and qty > 0:
-            unregistered_biomass += Decimal(str(stats.avg_weight)) * qty
+        if qty <= 0:
+            continue
+        avg_g = _get_lot_avg_weight(lot_id, db, lot_avg_cache, pond_id)
+        if avg_g:
+            unregistered_biomass += Decimal(str(avg_g)) * qty
 
     total_biomass = tagged_biomass + unregistered_biomass  # gramos
     total_population = len(tagged_fish) + sum(unregistered_balances.values())
@@ -5015,17 +5248,10 @@ def _recalc_pond_biomass(pond_id: int, db: Session) -> None:
     pond.biomass_current = biomass_kg    # resetea el running total
     pond.avg_weight = avg_w
 
-    tagged_lot_ids = {int(f.lot_id) for f in tagged_fish if f.lot_id is not None}
-    unregistered_lot_ids = {int(lot_id) for lot_id in unregistered_balances.keys()}
-    active_lot_ids = sorted(tagged_lot_ids | unregistered_lot_ids)
-
-    pond.tagged_count = len(tagged_fish)
-    pond.unregistered_count = int(sum(unregistered_balances.values()))
-    pond.n_fish_cached = pond.tagged_count + pond.unregistered_count
-    pond.active_lots_count = len(active_lot_ids)
-    pond.active_lot_ids = active_lot_ids
-    pond.unregistered_lot_ids = sorted(unregistered_lot_ids)
-    pond.unregistered_lot_conflict = len(unregistered_lot_ids) > 1
+    # Los recuentos NO se escriben acá: _refresh_pond_runtime_cache es la única que
+    # descuenta los retags pendientes (TagDetachmentEvent status='retagged' sin resolver).
+    # Esta función corría después y los pisaba sin ese descuento, reintroduciendo peces
+    # fantasma en cada movimiento (p. ej. estanque 77: 1323 -> 1343).
     pond.updated_at = datetime.utcnow()
 
 
@@ -5098,6 +5324,8 @@ def _close_sampling_session(session: SamplingSession, db: Session) -> None:
 
     # Recalcular biomasa del estanque (mantiene pond.biomass_current como cache)
     _recalc_pond_biomass(session.pond_id, db)
+    # ...y los recuentos, que _recalc_pond_biomass ya no escribe.
+    _refresh_pond_runtime_cache(session.pond_id, db)
 
     # Guardar checkpoint 'sampling' — biomass_kg desde mediciones, no desde biomass_current
     pond_lot_counts_now = _sum_pond_lot_balance_until(
@@ -5131,6 +5359,12 @@ def _close_sampling_session(session: SamplingSession, db: Session) -> None:
             source_session_id=session.id,
             db=db,
         )
+
+    # El checkpoint recién guardado cambia la proyección de este estanque y la de los
+    # que recibieron peces desde acá, así que se refresca el caché completo (~0,3 s).
+    # El job agendado lo repite cada 2h; esto evita que el dashboard quede 14h atrás
+    # justo después de un muestreo.
+    refresh_projected_biomass_cache(db, commit=False)
 
     # Marcar sesión como cerrada
     session.closed_at = now
@@ -6465,11 +6699,6 @@ def _project_biomass_from_checkpoint(
         _mv_params,
     ).fetchall()
 
-    # Pre-agrupar movimientos por lote — evita el scan O(pares × todos_movimientos)
-    mvs_by_lot: dict[int, list] = defaultdict(list)
-    for mv in movements:
-        mvs_by_lot[int(mv.lot_id)].append(mv)
-
     lot_names = {
         r.id: (r.name or r.internal_id or str(r.id))
         for r in db.query(Lot).filter(Lot.id.in_(active_lot_ids)).all()
@@ -6477,76 +6706,86 @@ def _project_biomass_from_checkpoint(
 
     alerts: list[str] = []
     alerted: set = set()
-    result: dict[tuple[int, int], float] = {}
 
+    # Ancla: biomasa del checkpoint de cada par. Los pares sin checkpoint quedan en 0
+    # con alerta (no se pueden proyectar).
+    result: dict[tuple[int, int], float] = {}
+    chk_date_by_pair: dict[tuple[int, int], object] = {}
+    chk_avgw_by_pair: dict[tuple[int, int], float] = {}
     for (pond_id, lot_id) in active:
         chk = checkpoints.get((pond_id, lot_id))
-        lot_label = lot_names.get(lot_id, str(lot_id))
-
         if chk is None:
             key = ("no_chk", pond_id, lot_id)
             if key not in alerted:
+                lot_label = lot_names.get(lot_id, str(lot_id))
                 alerts.append(
                     f"Lote {lot_label} (estanque {pond_id}): sin muestreo — biomasa no disponible"
                 )
                 alerted.add(key)
             result[(pond_id, lot_id)] = 0.0
             continue
+        result[(pond_id, lot_id)] = float(chk.biomass_kg)
+        chk_date_by_pair[(pond_id, lot_id)] = chk.checkpoint_date
+        chk_avgw_by_pair[(pond_id, lot_id)] = float(chk.avg_weight_g) if chk.avg_weight_g else 0.0
 
-        chk_date  = chk.checkpoint_date
-        chk_avg_w = float(chk.avg_weight_g) if chk.avg_weight_g else 0.0
-        proj = float(chk.biomass_kg)
+    # Un solo recorrido de los movimientos. Antes se re-escaneaba la lista completa del
+    # lote una vez por cada estanque que lo contiene: con 111 pares sobre 16 lotes eran
+    # 3,2 millones de iteraciones por request (el lote 4 solo aportaba 1,97 M).
+    # Cada movimiento afecta a lo sumo dos pares —(origen, lote) y (destino, lote)—
+    # asi que repartirlo directo es O(movimientos) y da el mismo resultado.
+    for mv in movements:
+        qty = int(mv.fish_quantity or 0)
+        if qty <= 0:
+            continue
+        lot_id = int(mv.lot_id)
+        mv_date = mv.mv_date
+        src = mv.source_pond_id
+        dst = mv.destiny_pond_id
 
-        for mv in mvs_by_lot.get(lot_id, []):
-            mv_date = mv.mv_date
-            if mv_date <= chk_date:
-                continue
-            qty = int(mv.fish_quantity or 0)
-            if qty <= 0:
-                continue
+        if src is not None:
+            k = (int(src), lot_id)
+            chk_date = chk_date_by_pair.get(k)
+            if chk_date is not None and mv_date > chk_date:
+                result[k] -= qty * chk_avgw_by_pair[k] / 1000.0
 
-            src = mv.source_pond_id
-            dst = mv.destiny_pond_id
-
-            if src == pond_id:
-                proj -= qty * chk_avg_w / 1000.0
-            elif dst == pond_id and src is not None:
+        if dst is not None and src is not None:
+            k = (int(dst), lot_id)
+            chk_date = chk_date_by_pair.get(k)
+            if chk_date is not None and mv_date > chk_date:
                 src_w = _src_avg_w(int(src), lot_id, mv_date)
                 if src_w is not None:
-                    proj += qty * src_w / 1000.0
+                    result[k] += qty * src_w / 1000.0
                 else:
                     key = ("no_src", int(src), lot_id)
                     if key not in alerted:
+                        lot_label = lot_names.get(lot_id, str(lot_id))
                         alerts.append(
                             f"Lote {lot_label}: llegada desde estanque {src} sin muestreo previo"
                         )
                         alerted.add(key)
-                    proj += qty * chk_avg_w / 1000.0
+                    result[k] += qty * chk_avgw_by_pair[k] / 1000.0
 
-        result[(pond_id, lot_id)] = max(0.0, proj)
+    for k in result:
+        result[k] = max(0.0, result[k])
 
     return result, alerts
 
 
 def _allocate_biomass_by_pond_lot(db: Session) -> tuple[dict[int, float], dict[tuple[int, int], float]]:
     """OBSOLETA — reemplazada por _project_biomass_from_checkpoint. No llamar."""
-    latest_id_subq = _latest_movement_id_per_fish_subq(db)
-
     # 1) Conteos tagged por (pond_id, lot_id)
     tagged_rows = (
         db.query(
-            PondMovement.destiny_pond_id.label("pond_id"),
+            Fish.current_pond_id.label("pond_id"),
             Fish.lot_id.label("lot_id"),
             func.count(Fish.id).label("cnt"),
         )
-        .join(Fish, Fish.id == PondMovement.fish_id)
-        .join(latest_id_subq, latest_id_subq.c.max_id == PondMovement.id)
         .filter(
-            PondMovement.destiny_pond_id.isnot(None),
+            Fish.current_pond_id.isnot(None),
             Fish.lot_id.isnot(None),
             Fish.state.in_(["alive", "depuration"]),
         )
-        .group_by(PondMovement.destiny_pond_id, Fish.lot_id)
+        .group_by(Fish.current_pond_id, Fish.lot_id)
         .all()
     )
 
@@ -6765,20 +7004,17 @@ def ui_lot_detail(
     stats_by_pond = {s.pond_id: s for s in pond_stats}
 
     # Peces tagged del lote en cada estanque (un solo query)
-    latest_id_subq = _latest_movement_id_per_fish_subq(db)
     fish_by_pond_rows = (
-        db.query(PondMovement.destiny_pond_id, func.count(Fish.id).label("cnt"))
-        .join(Fish, Fish.id == PondMovement.fish_id)
-        .join(latest_id_subq, latest_id_subq.c.max_id == PondMovement.id)
+        db.query(Fish.current_pond_id.label("pond_id"), func.count(Fish.id).label("cnt"))
         .filter(
             Fish.lot_id == lot_id,
             Fish.state.in_(["alive", "depuration"]),
-            PondMovement.destiny_pond_id.isnot(None),
+            Fish.current_pond_id.isnot(None),
         )
-        .group_by(PondMovement.destiny_pond_id)
+        .group_by(Fish.current_pond_id)
         .all()
     )
-    tagged_by_pond = {int(r.destiny_pond_id): int(r.cnt) for r in fish_by_pond_rows}
+    tagged_by_pond = {int(r.pond_id): int(r.cnt) for r in fish_by_pond_rows}
 
     # Peces sin registrar del lote por estanque
     unreg_in_rows = (

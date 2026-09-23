@@ -20,6 +20,12 @@ class Pond(Base):
     biomass = Column(Numeric(14,3))
     biomass_measured = Column(Numeric(14,3))
     biomass_current = Column(Numeric(14,3))
+    # Caché de la biomasa proyectada desde biomass_checkpoints (criterio vigente).
+    # Lo escribe refresh_projected_biomass_cache(); biomass_current es el caché del
+    # criterio anterior y no sirve para reportes externos.
+    biomass_projected_kg = Column(Numeric(14,3))
+    biomass_projected_at = Column(TIMESTAMP)
+    biomass_projected_lots_missing = Column(Integer, default=0, nullable=False)
     avg_weight = Column(Numeric(14,3))
     tagged_count = Column(Integer, default=0, nullable=False)
     unregistered_count = Column(Integer, default=0, nullable=False)
