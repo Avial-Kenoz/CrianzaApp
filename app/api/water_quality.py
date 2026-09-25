@@ -1244,6 +1244,11 @@ def biofiltro_create(
         no2_flag = ("sospechoso" if any(c["flag"] == "sospechoso" for c in no2_checks)
                     else ("ok" if no2_checks else None))
 
+        # Cero no es vacio: un colorimetro no lee cero. Se calcula ANTES de
+        # separar alta y edicion porque el aviso va en las dos ramas -- la de
+        # edicion lo usaba sin haberlo calculado y reventaba siempre.
+        ceros = wq.concentration_issues(reading_vals, test_specs)
+
         existing = (db.query(BiofilterReading).get(int(reading_id))
                     if reading_id and reading_id.isdigit() else None)
         if existing is not None:
@@ -1301,10 +1306,6 @@ def biofiltro_create(
         )
         db.add(reading)
         db.commit()
-
-        # Cero no es vacio: un colorimetro no lee cero. Avisamos en el mensaje
-        # porque el efecto —quedar fuera del calculo de eta— es invisible.
-        ceros = wq.concentration_issues(reading_vals, test_specs)
 
         flags = [f for f, v in (("balance N", res.n_balance_flag), ("ΔpH", res.ph_delta_flag),
                                 ("Δtemp", res.temp_delta_flag),
