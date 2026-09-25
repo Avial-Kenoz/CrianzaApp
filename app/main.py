@@ -23,6 +23,10 @@ from app.api.sexado import router as sexado_router, admin_router as sexado_admin
 from app.api.silage import router as silage_router
 from app.api.silage_views import router as silage_views_router
 from app.services.pond_cache_scheduler import start_scheduler, shutdown_scheduler
+from app.services.wq_alerts_scheduler import (
+    start_scheduler as start_wq_alerts_scheduler,
+    shutdown_scheduler as shutdown_wq_alerts_scheduler,
+)
 
 app = FastAPI(title="FastApp Etapa 1", version="0.1.0")
 
@@ -32,9 +36,19 @@ def _start_pond_cache_scheduler() -> None:
     start_scheduler()
 
 
+@app.on_event("startup")
+def _start_wq_alerts_scheduler() -> None:
+    start_wq_alerts_scheduler()
+
+
 @app.on_event("shutdown")
 def _stop_pond_cache_scheduler() -> None:
     shutdown_scheduler()
+
+
+@app.on_event("shutdown")
+def _stop_wq_alerts_scheduler() -> None:
+    shutdown_wq_alerts_scheduler()
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 

@@ -23,6 +23,7 @@ from app.models.ponds import Pond
 from app.models.cultivation_units import CultivationUnit
 from app.models.pond_oxygen_readings import PondOxygenReading
 from app.services import water_quality as wq
+from app.services import wq_alerts
 from app.api.water_quality import (
     load_thresholds, ensure_pond_qr_codes, recent_unit_temp, CORRECTIVE_ACTIONS,
 )
@@ -233,6 +234,14 @@ def upload_oxygen_readings(payload: OxygenBatchIn):
                                           error="no se pudo guardar la lectura"))
 
         db.commit()
+
+        # Una sola reevaluación por lote, no una por lectura: el motor mira el
+        # estado completo, así que correrlo treinta veces daría lo mismo que
+        # correrlo una. Nunca levanta: la sincronización del tablet no puede
+        # fallar porque falló el aviso.
+        if created:
+            wq_alerts.run_detection_safe(db)
+
         return BatchResult(created=created, duplicates=duplicates, errors=errors, results=results)
     finally:
         db.close()

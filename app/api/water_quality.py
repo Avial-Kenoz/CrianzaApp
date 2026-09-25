@@ -31,6 +31,14 @@ from app.models.water_quality_test_specs import WaterQualityTestSpec
 from app.models.water_treatment_doses import WaterTreatmentDose
 from app.models.solar_daily import SolarDaily
 from app.services import water_quality as wq
+# Las consultas que comparte con el motor de alertas viven una capa abajo:
+# un servicio no puede importar este router sin cerrar el ciclo.
+from app.services import wq_alerts
+from app.services.wq_queries import (  # noqa: F401  (reexportadas: field.py las importa de aca)
+    load_thresholds,
+    latest_o2_by_pond as _latest_o2_by_pond,
+    o2_hours_ago as _o2_hours_ago,
+)
 
 router = APIRouter(prefix="/views/ui/calidad-agua", tags=["calidad-agua"])
 template_dir = Path(__file__).parent.parent / "templates"
@@ -72,23 +80,6 @@ def _parse_decimal(value: Optional[str]) -> Optional[float]:
         return float(Decimal(value))
     except (InvalidOperation, ValueError):
         return None
-
-
-def load_thresholds(db: Session) -> dict:
-    """Lee los umbrales activos de la BD con la forma que espera el motor.
-
-    Rellena con DEFAULT_THRESHOLDS cualquier parámetro faltante/inactivo.
-    """
-    out: dict[str, dict] = {}
-    for r in db.query(WaterQualityThreshold).filter(WaterQualityThreshold.active.is_(True)).all():
-        out[r.parameter] = {
-            "alert": float(r.alert_value) if r.alert_value is not None else None,
-            "alarm": float(r.alarm_value) if r.alarm_value is not None else None,
-            "comparator": r.comparator,
-        }
-    for key, spec in wq.DEFAULT_THRESHOLDS.items():
-        out.setdefault(key, spec)
-    return out
 
 
 def load_test_specs(db: Session) -> dict:
@@ -142,35 +133,6 @@ def _active_users(db: Session):
 # ---------------------------------------------------------------------------
 # Helpers de última lectura
 # ---------------------------------------------------------------------------
-def _latest_o2_by_pond(db: Session) -> dict:
-    """Última lectura CON OXIGENO por estanque (pond_id -> PondOxygenReading).
-
-    La tabla tambien admite filas de solo pH: desde el 24-09 el pH por
-    estanque se mide en rondas propias, a las 08:30 y a las 12:00, sin OD.
-    Sin el filtro, una de esas filas se hace pasar por la ultima lectura de O2
-    y el panel muestra el estanque en blanco cuando en realidad tiene un dato
-    de oxigeno reciente.
-    """
-    sub = (
-        db.query(
-            PondOxygenReading.pond_id.label("pid"),
-            func.max(PondOxygenReading.reading_datetime).label("mx"),
-        )
-        .filter(PondOxygenReading.do_mg_l.isnot(None))
-        .group_by(PondOxygenReading.pond_id)
-        .subquery()
-    )
-    out = {}
-    for r in db.query(PondOxygenReading).filter(
-        PondOxygenReading.do_mg_l.isnot(None),
-    ).join(
-        sub, and_(PondOxygenReading.pond_id == sub.c.pid,
-                  PondOxygenReading.reading_datetime == sub.c.mx),
-    ).order_by(PondOxygenReading.id.desc()).all():
-        out.setdefault(r.pond_id, r)
-    return out
-
-
 def _latest_bf_by_unit(db: Session) -> dict:
     """Último muestreo de biofiltro por unidad (unit_id -> BiofilterReading)."""
     sub = (
@@ -586,20 +548,6 @@ def _photosynthesis_evaluable(db: Session, now: datetime) -> set:
             c[1] += 1
     return {u for u, (d, n) in cuenta.items()
             if d >= wq.PHOTO_MIN_READINGS and n >= wq.PHOTO_MIN_READINGS}
-
-
-def _o2_hours_ago(reading, now: datetime, thresholds: Optional[dict] = None):
-    """(horas de antiguedad, vencida) segun el turno vigente.
-
-    No es un umbral parejo: la ronda es cada 4 h en el turno de dia de lunes a
-    sabado y cada 2 h el resto del tiempo, asi que "vencida" significa que se
-    salto una lectura programada, no que pasaron 4 horas.
-    """
-    if reading is None or reading.reading_datetime is None:
-        return None, False
-    hours = (now - reading.reading_datetime).total_seconds() / 3600.0
-    return round(hours, 1), hours > wq.o2_stale_thresholds(
-        reading.reading_datetime, thresholds)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -1022,6 +970,11 @@ def oxigeno_create(
         )
         db.add(reading)
         db.commit()
+
+        # Reevaluar alertas con la lectura ya comprometida. Sólo abre o cierra
+        # filas; el envío corre por su cuenta, para que el operador nunca quede
+        # esperando a que conteste un servicio externo.
+        wq_alerts.run_detection_safe(db)
 
         msg = f"Lectura de O2 registrada (estado: {res.alarm_level}"
         if res.alarm_level == "alarma" and reading.corrective_action:
