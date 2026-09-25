@@ -840,6 +840,9 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                     float(bf.out_nh4_n) if bf.out_nh4_n is not None else None)
                     if bf is not None else None),
                 "no3_trend": no3_trend.get(u.id),
+                # Con aire en el reactor el ΔOD no mide respiracion; el OD de
+                # salida si dice si al medio le falta oxigeno.
+                "aireado": bool(getattr(u, "reactor_is_aerated", True)),
                 "medio": carga_sup.get(u.id),
                 # La palanca de bajar ventilacion se paga en oxigeno: el
                 # margen del amanecer decide si se puede recomendar.

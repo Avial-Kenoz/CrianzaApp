@@ -30,6 +30,11 @@ class CultivationUnit(Base):
     media_fill_pct = Column(Numeric(5, 2))         # % del reactor con biomedio
     media_ssa_m2_m3 = Column(Numeric(8, 1))        # superficie especifica del medio
     media_type = Column(String(60))
+    # Reactor aireado (migracion 20260925_03). Con aire adentro el ΔOD a
+    # traves del reactor no mide respiracion: el aire repone el O2 tan
+    # rapido como la biopelicula lo consume, y de paso arrastra el CO2,
+    # que es por que el pH tampoco cambia de entrada a salida.
+    reactor_is_aerated = Column(Boolean, nullable=False, default=True)
 
     # Agua de la unidad: sin esto no hay dosis de choque. Sembrado desde la
     # suma de ponds.volume; editable porque no sabemos si incluye el canal.

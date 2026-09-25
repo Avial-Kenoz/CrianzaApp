@@ -538,6 +538,7 @@ NITRIFICATION_PH_REF = 7.50     # pH de referencia
 TAN_PER_FEED_N = 0.092
 O2_PER_N = 4.57                 # g O2 por g N nitrificado (estequiometria rigida:
                                 # NH4+ + 2 O2 -> NO3- + 2 H+ + H2O)          # kg TAN-N por kg de alimento x fraccion proteica
+OD_REACTOR_MIN = 4.0            # mg/L a la salida: bajo esto la nitrificacion cede
                                 # (Timmons & Ebeling); validado al 2% contra el
                                 # balance de masa del norte.
 MIN_SAMPLES_FOR_HEALTH = 5      # el test de amonio (+-0,04 mg/L fijo) hace que una
@@ -869,7 +870,9 @@ def heterotrophic_load(do_in: Optional[float], do_out: Optional[float],
     out = {"do_drop": round(d_total, 2), "nitrif": round(d_nitrif, 2),
            "hetero": round(d_hetero, 2),
            # El cociente es lo que se lee: 4,57 es nitrificacion pura.
-           "ratio": (round(d_total / d_n, 2) if d_n > 0 else None)}
+           "ratio": (round(d_total / d_n, 2) if d_n > 0 else None),
+           # El OD de salida es lo unico que un reactor aireado contesta.
+           "do_out": float(do_out)}
     if q_l_s and area_m2 and area_m2 > 0:
         out["hetero_g_m2_d"] = round(d_hetero * float(q_l_s) * 0.0864 * 1000 / area_m2, 3)
     return out
@@ -1486,7 +1489,7 @@ def _dg_nitrato(no3_trend):
 
 # --- ESTRUCTURA: el biofiltro rinde poco de forma estable -------------------
 
-def _dg_nitrificacion(health, capacity):
+def _dg_nitrificacion(health, capacity, aireado=True):
     if not health or health.get("state") not in ("bajo", "atencion"):
         return []
     pct = health.get("pct")
@@ -1496,10 +1499,17 @@ def _dg_nitrificacion(health, capacity):
     if capacity and capacity["uso_del_techo"] > 0.85:
         txt += " Medio al {:.0%} del techo: más caudal no lo arregla.".format(
             capacity["uso_del_techo"])
+    if aireado:
+        # Con aire en el reactor el ΔOD no dice nada de la respiracion. Lo que
+        # el OD de salida si contesta es si al medio le falta oxigeno.
+        medir, senal = ("NH₄-N entrada y salida; OD de salida del reactor.",
+                        "OD de salida bajo 4 mg/L limita la nitrificación. "
+                        "El ΔOD no sirve acá: el aire repone lo que se consume.")
+    else:
+        medir, senal = ("OD y NH₄-N, entrada y salida del reactor.",
+                        "ΔOD/ΔN > {} mg O₂/mg N → heterótrofos.".format(_n(O2_PER_N, 2)))
     return [_dg("estructura", "alarma" if health["state"] == "bajo" else "alerta",
-                "Nitrificación baja", txt,
-                "OD y NH₄-N, entrada y salida del reactor.",
-                "ΔOD/ΔN > {} mg O₂/mg N → heterótrofos.".format(_n(O2_PER_N, 2)))]
+                "Nitrificación baja", txt, medir, senal)]
 
 
 def _dg_nob(health):
@@ -1511,7 +1521,18 @@ def _dg_nob(health):
                 "Brecha creciente muestreo a muestreo; sobre 20 °C las AOB ganan.")]
 
 
-def _dg_heterotrofa(hetero):
+def _dg_heterotrofa(hetero, aireado=True):
+    """Exceso de consumo de O2 sobre lo que explica la nitrificacion.
+
+    SOLO sirve en un reactor sin aire. Medido el 25-09-2026 en los cuatro
+    biofiltros aireados de la planta, faltaba entre el 96% y el 105% del O2
+    que la nitrificacion deberia consumir: el aire lo repone tan rapido como
+    la biopelicula lo toma. En esas condiciones el cociente no mide carga
+    heterotrofa, no mide nada, y encenderlo o apagarlo seria igual de
+    arbitrario.
+    """
+    if aireado:
+        return []
     if not hetero or not hetero.get("ratio"):
         return []
     r = hetero["ratio"]
@@ -1588,6 +1609,25 @@ def _dg_poco_medio(medio):
                 "caudal y la ración. Medio nuevo tarda semanas en colonizar.")]
 
 
+def _dg_od_reactor(hetero, aireado=True):
+    """Oxigeno de SALIDA del reactor: lo unico que el OD contesta con aire.
+
+    La nitrificacion se frena bajo ~2 mg/L y empieza a ceder antes. No es un
+    balance, es una verificacion de adecuacion.
+    """
+    if not aireado or not hetero or hetero.get("do_out") is None:
+        return []
+    od = hetero["do_out"]
+    if od >= OD_REACTOR_MIN:
+        return []
+    return [_dg("estructura", "alarma" if od < 2.0 else "alerta",
+                "Oxígeno bajo en el reactor",
+                "OD de salida {} mg/L · la nitrificación cede bajo {}.".format(
+                    _n(od, 2), _n(OD_REACTOR_MIN)),
+                "OD de salida del reactor, en cada muestreo.",
+                "Bajo 2,0 mg/L la nitrificación se detiene; revisar el aire del medio.")]
+
+
 def _dg_techo_hidraulico(capacity, health):
     if not capacity or capacity.get("uso_del_techo") is None:
         return []
@@ -1632,9 +1672,10 @@ def diagnose(dims, bf, photo, health, no2_check, pond_rows, capacity=None,
         + _dg_techo_alcalinidad(c.get("feed_cap"))
         + _dg_nitrato(c.get("no3_trend"))
         # estructura
-        + _dg_nitrificacion(health, capacity)
+        + _dg_nitrificacion(health, capacity, c.get("aireado", True))
         + _dg_nob(health)
-        + _dg_heterotrofa(c.get("hetero"))
+        + _dg_heterotrofa(c.get("hetero"), c.get("aireado", True))
+        + _dg_od_reactor(c.get("hetero"), c.get("aireado", True))
         + _dg_poco_medio(c.get("medio"))
         + _dg_techo_hidraulico(capacity, health)
     )
