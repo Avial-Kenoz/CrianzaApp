@@ -589,10 +589,16 @@ def _photosynthesis_evaluable(db: Session, now: datetime) -> set:
 
 
 def _o2_hours_ago(reading, now: datetime):
+    """(horas de antiguedad, vencida) segun el turno vigente.
+
+    No es un umbral parejo: la ronda es cada 4 h en el turno de dia de lunes a
+    sabado y cada 2 h el resto del tiempo, asi que "vencida" significa que se
+    salto una lectura programada, no que pasaron 4 horas.
+    """
     if reading is None or reading.reading_datetime is None:
         return None, False
     hours = (now - reading.reading_datetime).total_seconds() / 3600.0
-    return round(hours, 1), hours > O2_STALE_HOURS
+    return round(hours, 1), hours > wq.o2_stale_thresholds(reading.reading_datetime)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -650,6 +656,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
             # Dimension O2: el MINIMO entre estanques, no el promedio — el
             # promedio esconde justo el estanque que necesita atencion.
             o2_min, o2_pond, o2_hours, o2_state = None, None, None, "ok"
+            o2_at = None       # momento de la lectura mas fresca: fija el turno
             o2_marks = 0
 
             for p in u_ponds:
@@ -667,6 +674,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                         o2_pond = p.name.split(" - ")[0].strip()
                     if hours is not None and (o2_hours is None or hours < o2_hours):
                         o2_hours = hours
+                        o2_at = r.reading_datetime
                     # El nivel lo pone el motor por lectura (mira saturacion,
                     # OD absoluto y temperatura); la saturacion minima es solo
                     # el VALOR que se muestra.
@@ -767,12 +775,17 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
             # del norte invitaria a leerlo como un problema.
             tiene_bf = ((has_bf or u.media_volume_m3 is not None)
                         and bool(u.is_recirculating))
+            # El vencimiento del O2 sigue al turno EN QUE SE TOMO la lectura:
+            # cada 4 h en el turno de dia de lun-sab, cada 2 h el resto y el
+            # domingo completo.
+            stale_o2 = wq.o2_stale_thresholds(o2_at)
             dims = wq.build_dimensions(o2_min, o2_pond, o2_hours, o2_state,
                                        eta, eta_n or 0, eta_hours, eta_state,
                                        (bf.alarm_level if bf is not None else None),
                                        photo.get(u.id), photo_hours, marks,
                                        has_bf=tiene_bf,
-                                       photo_evaluable=(u.id in photo_eval))
+                                       photo_evaluable=(u.id in photo_eval),
+                                       stale_o2=stale_o2)
             accion = wq.suggest_action(dims, bool(bf_conf and bf_conf.get("gate")),
                                        photo.get(u.id), (h or {}).get("state"))
 

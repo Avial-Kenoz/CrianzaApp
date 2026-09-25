@@ -1006,7 +1006,49 @@ def concentration_issues(reading: dict,
 #                es la vigilancia: cuanto puede degradarse sin que nos enteremos
 #   Foto   5 d   la ventana movil de 7 dias queda coja
 # ---------------------------------------------------------------------------
+# --- el O2 no tiene UN intervalo: tiene turnos -------------------------------
+# Turno de dia de lunes a sabado (08:30-16:00): una ronda cada 4 h.
+# Resto (16:00-08:30 todos los dias) y domingo completo: cada 2 h.
+#
+# Un umbral parejo se equivoca en los dos sentidos. Con 2 h/4 h fijos, durante
+# el turno de dia el dato pasa casi todo el turno marcado "viejo" y vence justo
+# cuando toca la siguiente ronda -- una alarma sistematica en la franja en que
+# el administrador mira el panel. De noche, en cambio, los umbrales quedan tan
+# holgados que se podria perder una ronda entera sin que se note.
+#
+# "Vencido" tiene que significar SE SALTO UNA LECTURA, no "pasaron 4 horas".
+O2_INTERVAL_DAY = 4.0       # lun-sab 08:30-16:00
+O2_INTERVAL_OFF = 2.0       # resto de los turnos y domingo completo
+O2_DAY_START, O2_DAY_END = 8.5, 16.0
+O2_STALE_FACTOR = 1.5       # vencido = un intervalo y medio: se salto una ronda
+
+
+def o2_interval_hours(when) -> float:
+    """Intervalo de ronda vigente en ese momento, en horas."""
+    if when is None:
+        return O2_INTERVAL_OFF
+    if when.weekday() == 6:                       # domingo: 24 h a 2 h
+        return O2_INTERVAL_OFF
+    hora = when.hour + when.minute / 60.0
+    return (O2_INTERVAL_DAY if O2_DAY_START <= hora < O2_DAY_END
+            else O2_INTERVAL_OFF)
+
+
+def o2_stale_thresholds(reading_at) -> tuple:
+    """(alerta, vencido) en horas, segun el turno EN QUE SE TOMO la lectura.
+
+    El turno que manda es el de la lectura, no el de ahora. Una medicion de
+    las 06:06 se tomo en turno de noche: la siguiente tocaba a las 08:00, y no
+    hereda las 4 h de holgura del turno de dia solo porque la estemos mirando
+    a mediodia. Al reves tambien: una lectura de las 09:00 tiene 4 h de plazo
+    aunque uno la mire a las 17:00.
+    """
+    iv = o2_interval_hours(reading_at)
+    return iv, iv * O2_STALE_FACTOR
+
+
 DIM_STALE = {                     # (alerta, vencido) en horas
+    # Valor de respaldo: el de O2 se reemplaza por turno via `stale_o2`.
     "o2": (2.0, 4.0),
     "bf": (7 * 24.0, 10 * 24.0),
     "photo": (3 * 24.0, 5 * 24.0),
@@ -1029,7 +1071,8 @@ FADE_FROM = 0.80          # fraccion de la vida util donde empieza a atenuarse
 FADE_FLOOR = 0.18         # opacidad minima justo antes de vencer
 
 
-def _age_opacity(hours: Optional[float], kind: str) -> float:
+def _age_opacity(hours: Optional[float], kind: str,
+                 stale: Optional[tuple] = None) -> float:
     """El dato se desvanece a medida que envejece.
 
     Convierte el tiempo en algo que se percibe en vez de leerse: a los 3,2 h una
@@ -1038,7 +1081,7 @@ def _age_opacity(hours: Optional[float], kind: str) -> float:
     """
     if hours is None:
         return 1.0
-    vida = DIM_STALE[kind][1]
+    vida = (stale or DIM_STALE[kind])[1]
     frac = hours / vida
     if frac <= FADE_FROM:
         return 1.0
@@ -1048,11 +1091,12 @@ def _age_opacity(hours: Optional[float], kind: str) -> float:
     return round(1.0 - t * (1.0 - FADE_FLOOR), 2)
 
 
-def _age_state(hours: Optional[float], kind: str) -> tuple:
+def _age_state(hours: Optional[float], kind: str,
+               stale: Optional[tuple] = None) -> tuple:
     """(estado, texto) de frescura. Sin dato -> 'sin_dato'."""
     if hours is None:
         return "sin_dato", "sin datos"
-    alerta, vencido = DIM_STALE[kind]
+    alerta, vencido = stale or DIM_STALE[kind]
     estado = "vencido" if hours >= vencido else ("viejo" if hours >= alerta else "ok")
     if hours < 1:
         txt = "recién"
@@ -1078,7 +1122,8 @@ def build_dimensions(o2_min: Optional[float], o2_pond: Optional[str],
                      eta: Optional[float], eta_n: int, eta_hours: Optional[float],
                      eta_state: str, bf_alarm: Optional[str], photo: Optional[dict],
                      photo_hours: Optional[float], marks: list,
-                     has_bf: bool = True, photo_evaluable: bool = True) -> dict:
+                     has_bf: bool = True, photo_evaluable: bool = True,
+                     stale_o2: Optional[tuple] = None) -> dict:
     """Arma las cuatro filas de la tarjeta.
 
     Cada fila lleva valor, detalle, estado biologico y estado de frescura. Una
@@ -1086,9 +1131,9 @@ def build_dimensions(o2_min: Optional[float], o2_pond: Optional[str],
     eta de 0,51 de hace doce dias no es un biofiltro sano, es un biofiltro sin
     vigilancia.
     """
-    def fila(label, value, detail, state, hours, kind):
-        age_state, age_text = (_age_state(hours, kind) if kind else (None, None))
-        opacity = _age_opacity(hours, kind) if kind else 1.0
+    def fila(label, value, detail, state, hours, kind, stale=None):
+        age_state, age_text = (_age_state(hours, kind, stale) if kind else (None, None))
+        opacity = _age_opacity(hours, kind, stale) if kind else 1.0
         # Con la opacidad diciendo la edad, el texto solo estorba mientras el
         # dato esta fresco. Aparece cuando empieza a atenuarse.
         if opacity >= 1.0 and age_state == "ok":
@@ -1105,7 +1150,7 @@ def build_dimensions(o2_min: Optional[float], o2_pond: Optional[str],
     dims = {
         "o2": fila("Oxígeno",
                    (f"{o2_min:.0f}%" if o2_min is not None else "—"),
-                   (o2_pond or ""), o2_state, o2_hours, "o2"),
+                   (o2_pond or ""), o2_state, o2_hours, "o2", stale_o2),
         "bf": (fila("Biofiltro",
                     # eta como porcentaje: se lee mas directo que 0,51. El
                     # numero de muestreos no le dice nada a quien mira.
