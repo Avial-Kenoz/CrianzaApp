@@ -48,6 +48,14 @@ from .pond_oxygen_readings import PondOxygenReading
 from .biofilter_readings import BiofilterReading
 from .water_quality_thresholds import WaterQualityThreshold
 from .water_quality_test_specs import WaterQualityTestSpec
+# Alertas de calidad de agua: la condición como entidad con ciclo de vida,
+# más sus reglas de aviso, destinatarios y bitácora de envíos.
+from .water_quality_alerts import (
+    WaterQualityAlert,
+    WaterQualityAlertRule,
+    WaterQualityAlertRecipient,
+    WaterQualityAlertNotification,
+)
 from .sexado_offline_session import SexadoOfflineSession
 from .sexing_offline_operation import SexingOfflineOperation
 # Molienda y ensilaje de mortalidades (registro PC 03.2)
