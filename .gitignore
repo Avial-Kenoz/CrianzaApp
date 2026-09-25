@@ -12,6 +12,7 @@ env/
 .env
 .env.*
 !.env.example
+server.env
 
 # Databases and local dumps
 *.db
