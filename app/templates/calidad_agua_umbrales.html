@@ -31,6 +31,13 @@
     .switch input { width: 16px; height: 16px; accent-color: #2563eb; }
     .na { color: #cbd0d6; }
     .note { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 11px 14px; font-size: .8rem; color: #4b5563; margin-top: 16px; }
+    .ventana { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+               padding: 10px 14px; border-top: 1px solid #f1f3f5; font-size: .88rem; }
+    .ventana input { width: 72px; }
+    .v-lbl { font-weight: 650; margin-right: 4px; }
+    .v-sep, .v-hint { color: #9ca3af; font-size: .78rem; }
+    .v-hint { margin-left: 4px; }
+    .ventana .switch { margin-left: auto; }
     .actions { display: flex; gap: 10px; margin-top: 22px; }
     .btn { border: none; border-radius: 9px; padding: 10px 18px; font-size: .88rem; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
     .btn-primary { background: #2563eb; color: #fff; } .btn-primary:hover { background: #1d4ed8; }
@@ -100,24 +107,26 @@
         <thead><tr><th>Turno</th><th>Intervalo</th><th>Vence a las</th><th>Estado</th></tr></thead>
         <tbody>{{ rows(ronda_rows) }}</tbody>
       </table>
+      {% for w in ventana_rows %}
+      <div class="ventana">
+        <span class="v-lbl">Turno de día</span>
+        <input type="number" step="any" name="alert_{{ w.parameter }}" value="{{ '%g'|format(w.alert_value) if w.alert_value is not none else '' }}" />
+        <span class="v-sep">a</span>
+        <input type="number" step="any" name="alarm_{{ w.parameter }}" value="{{ '%g'|format(w.alarm_value) if w.alarm_value is not none else '' }}" />
+        <span class="v-hint">horas decimales · 8,5 = 08:30</span>
+        <label class="switch"><input type="checkbox" name="active_{{ w.parameter }}" {{ 'checked' if w.active else '' }} /> activo</label>
+      </div>
+      {% endfor %}
     </div>
-    <div class="card">
-      <table>
-        <thead><tr><th>Ventana</th><th>Inicio</th><th>Término</th><th>Estado</th></tr></thead>
-        <tbody>{{ rows(ventana_rows) }}</tbody>
-      </table>
-    </div>
-    <div class="note">Acá el par no es alerta/alarma: <strong>Intervalo</strong> es cada cuánto
-      toca la ronda y <strong>Vence</strong> la antigüedad a la que la lectura se da por perdida
-      —la idea es que “vencido” signifique <em>se saltó una ronda</em>, no que pasaron N horas.
-      El turno que manda es el de <strong>la lectura</strong>, no el de ahora: una medición de las
-      06:00 se tomó en turno de noche y conserva ese plazo aunque se la mire a mediodía.
-      La ventana va en horas decimales: <strong>8,5 = 08:30</strong>. El domingo usa el intervalo
-      corto las 24 horas.</div>
 
-    <div class="note">Para las validaciones, el motor solo distingue dentro / fuera de tolerancia (marca <em>sospechoso</em>);
-      el desdoble alerta/alarma solo pesa en las biológicas. La saturación de O₂ dispara con valores <strong>menores</strong> al umbral;
-      el resto, con valores mayores. Altitud del sitio para el cálculo de saturación: <strong>{{ altitude_m }} m</strong> (constante).</div>
+    <div class="note">
+      <strong>Rondas:</strong> el par no es alerta/alarma — “vence” significa <em>se saltó una ronda</em>.
+      Manda el turno de <strong>la lectura</strong>, no el de ahora: una medición de las 06:00 conserva
+      su plazo de noche aunque se la mire a mediodía. El domingo usa el intervalo corto las 24 h.<br>
+      <strong>Validaciones:</strong> el motor solo distingue dentro / fuera de tolerancia; el desdoble
+      alerta/alarma solo pesa en las biológicas. La saturación de O₂ dispara con valores <strong>menores</strong>
+      al umbral; el resto, con mayores. Altitud del sitio: <strong>{{ altitude_m }} m</strong> (constante).
+    </div>
 
     <div class="actions">
       <button type="submit" class="btn btn-primary">Guardar cambios</button>
