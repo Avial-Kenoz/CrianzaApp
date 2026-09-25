@@ -28,6 +28,10 @@ class PondOxygenReading(Base):
     # True si water_temp_c se heredó de otro estanque de la misma unidad/ronda
     # (la laguna es homogénea; el operador mide la temp una vez por ronda).
     water_temp_inherited = Column(Boolean, nullable=False, default=False)
+    # pH del estanque (migracion 20260924_03). Opcional: la ronda normal no
+    # lo mide. Va aqui y no en una tabla aparte porque un pH sin la
+    # temperatura de ese momento no permite despejar el CO2.
+    ph = Column(Numeric(4, 2))
     saturation_pct = Column(Numeric(6, 2))     # Saturación ingresada (%)
 
     # Derivados del motor

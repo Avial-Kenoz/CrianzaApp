@@ -69,6 +69,60 @@
     .hm-foot { font-size: .72rem; color: #9ca3af; margin-top: 4px; }
     .health-reason { margin-top: 10px; font-size: .78rem; font-weight: 600; color: #b45309; }
     .chip.leaf { background: #ecfdf5; color: #047857; }
+    .hora { font-weight: 500; color: #9ca3af; }
+    .dims { margin-top: 13px; display: grid; gap: 1px; background: #eef0f2;
+            border: 1px solid #eef0f2; border-radius: 9px; overflow: hidden; }
+    .dim { display: grid; grid-template-columns: 9px 82px 1fr; gap: 8px;
+           align-items: center; padding: 7px 10px; background: #fff; font-size: .78rem; }
+    .dim-dot { width: 7px; height: 7px; border-radius: 50%; background: #d1d5db; }
+    .dim-label { color: #6b7280; font-weight: 600; }
+    .dim-value { font-weight: 700; color: #111827; }
+    .dim-det { font-weight: 500; color: #9ca3af; }
+    .dim.d-ok .dim-dot { background: #22c55e; }
+    .dim.d-alerta .dim-dot { background: #f59e0b; }
+    .dim.d-alerta { background: #fffdf5; }
+    .dim.d-alarma .dim-dot { background: #dc2626; }
+    .dim.d-alarma { background: #fff8f8; }
+    .dim.d-alarma .dim-value { color: #b91c1c; }
+    .dim.d-sin_dato .dim-value, .dim.d-sin_dato .dim-label { color: #b6bcc4; }
+    .dim.d-no_aplica { background: #fafbfc; }
+    .dim.d-no_aplica .dim-value, .dim.d-no_aplica .dim-label { color: #c3c8ce; }
+    .dim-value { transition: opacity .2s; }
+    .u-accion { display: flex; align-items: center; gap: 8px; margin-top: 11px;
+                padding: 8px 11px; border-radius: 8px; font-size: .81rem;
+                font-weight: 700; background: #fffbeb; border: 1px solid #fcd34d;
+                color: #92400e; }
+    .u-accion.k-operacion { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+    .acc-ico { font-size: .95rem; }
+    .acc-mas { font-weight: 600; opacity: .65; }
+    .solar { display: flex; align-items: stretch; gap: 10px; margin-bottom: 16px;
+             padding: 11px 14px; border-radius: 12px; background: #fff;
+             border: 1px solid #e5e7eb; }
+    .solar-h { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em;
+               color: #6b7280; font-weight: 750; align-self: center;
+               padding-right: 12px; border-right: 1px solid #eef0f3; }
+    .sd { min-width: 104px; padding: 4px 10px; border-radius: 9px; }
+    .sd-d { font-size: .7rem; color: #6b7280; font-weight: 700; }
+    .sd-v { font-size: 1.02rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+    .sd-x { font-size: .68rem; color: #9ca3af; }
+    .sd.peligro { background: #fef2f2; box-shadow: inset 0 0 0 1px #fecaca; }
+    .sd.peligro .sd-d, .sd.peligro .sd-v { color: #991b1b; }
+    .sd.sol { background: #fffbeb; box-shadow: inset 0 0 0 1px #fde68a; }
+    .sd.sol .sd-v { color: #92400e; }
+    .sd.apagado .sd-v { color: #9ca3af; }
+    .solar-n { align-self: center; margin-left: auto; font-size: .76rem;
+               color: #6b7280; max-width: 330px; line-height: 1.45; }
+    .solar-n b { color: #991b1b; }
+    .confianza { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 2px;
+                 padding: 9px 11px; border-radius: 9px; font-size: .78rem;
+                 background: #f8fafc; border: 1px solid #e2e8f0; color: #475569; }
+    .confianza.gate { background: #fffbeb; border-color: #fcd34d; color: #92400e;
+                      font-weight: 600; }
+    .conf-ico { font-size: .95rem; line-height: 1.2; }
+    .btn-edit { margin-left: auto; font-size: .74rem; font-weight: 650; color: #4b5563;
+                text-decoration: none; padding: 3px 10px; border: 1px solid #d1d5db;
+                border-radius: 999px; }
+    .btn-edit:hover { background: #f3f4f6; color: #111827; }
     .photo { margin-top: 10px; border: 1px solid #a7f3d0; background: #f0fdf4;
              border-radius: 10px; padding: 10px 12px; }
     .photo.crit { border-color: #fecaca; background: #fef2f2; }
@@ -97,6 +151,73 @@
     .b-alerta { background: #fffbeb; color: #b45309; } .b-alerta .d { background: #d97706; }
     .b-alarma { background: #fef2f2; color: #b91c1c; } .b-alarma .d { background: #dc2626; }
     .b-sin_dato { background: #f3f4f6; color: #6b7280; } .b-sin_dato .d { background: #9ca3af; }
+    .cols3 { display: grid; grid-template-columns: 1fr 1.15fr 0.85fr; gap: 18px;
+             align-items: start; }
+    .col { min-width: 0; }
+    .col-title { font-size: .76rem; text-transform: uppercase; letter-spacing: .06em;
+                 color: #9ca3af; font-weight: 700; margin-bottom: 9px; }
+    .pond-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    .pond-table th { text-align: right; font-size: .7rem; text-transform: uppercase;
+                     letter-spacing: .04em; color: #9ca3af; font-weight: 700;
+                     padding: 0 7px 6px; border-bottom: 1px solid #e5e7eb; }
+    .pond-table th:first-child { text-align: left; }
+    .pond-table td { padding: 6px 7px; text-align: right; border-bottom: 1px solid #f1f3f5;
+                     font-weight: 650; color: #111827; }
+    .pond-table td.pt-name { text-align: left; font-weight: 700; color: #374151; }
+    .pond-table tr.pr-alerta { background: #fffdf5; }
+    .pond-table tr.pr-alarma { background: #fff8f8; }
+    .pond-table tr.pr-stale td { opacity: .45; }
+    .pond-table td.pv-alerta { color: #b45309; }
+    .pond-table td.pv-alarma { color: #b91c1c; }
+    .pt-flags { width: 34px; }
+    .pt-nodata { text-align: left; font-weight: 500; color: #9ca3af; font-size: .78rem; }
+    .mini-warn, .mini-alarm, .mini-mut { font-size: .74rem; margin-left: 2px; }
+    .mini-warn { color: #b45309; } .mini-alarm { color: #dc2626; } .mini-mut { color: #c3c8ce; }
+    .dg { border: 1px solid #e5e7eb; border-radius: 10px; padding: 11px 12px;
+          margin-bottom: 11px; background: #fff; }
+    .dg-alerta { border-color: #fcd34d; background: #fffdf5; }
+    .dg-alarma { border-color: #fca5a5; background: #fff8f8; }
+    .dg-h { font-size: .84rem; font-weight: 750; color: #111827; margin-bottom: 6px;
+            display: flex; align-items: center; gap: 7px; }
+    .dg-kind { font-size: .64rem; text-transform: uppercase; letter-spacing: .05em;
+               padding: 2px 6px; border-radius: 4px; font-weight: 700; }
+    .k-dato { background: #fef2f2; color: #b91c1c; }
+    .k-coyuntura { background: #fffbeb; color: #92400e; }
+    .k-estructura { background: #eff6ff; color: #1d4ed8; }
+    .dg-t { font-size: .79rem; line-height: 1.5; color: #374151; }
+    .dg-seg { margin-top: 9px; padding-top: 8px; border-top: 1px dashed #d8dde3;
+              font-size: .75rem; line-height: 1.45; color: #4b5563; }
+    .dg-seg > div { margin-bottom: 3px; }
+    .col-link { float: right; font-size: .7rem; font-weight: 600; color: #2563eb;
+                text-decoration: none; text-transform: none; letter-spacing: normal; }
+    .col-link:hover { text-decoration: underline; }
+    .dg-seg span { display: inline-block; min-width: 54px; font-weight: 700;
+                   color: #9ca3af; text-transform: uppercase; font-size: .66rem;
+                   letter-spacing: .04em; }
+    .cap { border: 1px solid #eef0f2; border-radius: 10px; padding: 11px 12px;
+           background: #f9fafb; }
+    .cap-fold { margin-top: 4px; opacity: .85; }
+    .cap-h { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
+             color: #9ca3af; font-weight: 700; margin-bottom: 7px; }
+    .cap-row { display: flex; align-items: baseline; gap: 6px; font-size: .78rem;
+               padding: 3px 0; }
+    .cap-row span { color: #6b7280; flex: 1; }
+    .cap-row b { color: #111827; font-weight: 700; }
+    .cap-row i { font-style: normal; font-size: .71rem; color: #b6bcc4; }
+    .cap-max { margin: 10px 0 7px; padding: 9px 10px; background: #fff;
+               border: 1px solid #e5e7eb; border-radius: 8px; }
+    .cm-v { font-size: 1.32rem; font-weight: 750; color: #111827; }
+    .cm-v span { font-size: .8rem; font-weight: 600; color: #9ca3af; }
+    .cm-l { font-size: .73rem; color: #6b7280; margin-top: 1px; }
+    .cm-l b { color: #b45309; }
+    .cap-table { width: 100%; border-collapse: collapse; font-size: .75rem; }
+    .cap-table td { padding: 3px 0; color: #6b7280; }
+    .cap-table td:nth-child(2) { text-align: right; font-weight: 700; color: #374151;
+                                 white-space: nowrap; padding-left: 8px; }
+    .cap-table td.ct-nota { display: none; }
+    .cap-table tr.ct-manda td { color: #92400e; font-weight: 700; }
+    .cap-foot { margin-top: 8px; font-size: .69rem; color: #b6bcc4; line-height: 1.4; }
+    @media (max-width: 1100px) { .cols3 { grid-template-columns: 1fr; } }
     .section-title { font-size: .76rem; text-transform: uppercase; letter-spacing: .06em; color: #6b7280; font-weight: 750; margin: 22px 0 10px; }
     .sub-card { background: #f9fafb; border: 1px solid #eef0f2; border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
     .sub-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -155,10 +276,36 @@
     <div class="actions">
       <a class="btn btn-primary" href="/views/ui/calidad-agua/oxigeno/nueva">+ Lectura de O₂</a>
       <a class="btn btn-ghost" href="/views/ui/calidad-agua/biofiltro/nueva">+ Muestreo biofiltro</a>
+      <a class="btn btn-ghost" href="/views/ui/calidad-agua/carga/nueva">+ Carga de insumo</a>
     </div>
   </div>
 
   {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+  {% if solar_dias %}
+  <div class="solar">
+    <div class="solar-h">Radiación<br>Parral</div>
+    {% for d in solar_dias %}
+    <div class="sd {{ d.estado }}">
+      <div class="sd-d">{{ d.label }}</div>
+      <div class="sd-v">{{ '%.1f'|format(d.mj)|replace('.', ',') }}<span style="font-size:.62rem;font-weight:600"> MJ/m²</span></div>
+      <div class="sd-x">{% if d.nubes is not none %}{{ '%.0f'|format(d.nubes) }}% nubes · {% endif %}~{{ '%.0f'|format(d.amplitud) }} pts</div>
+    </div>
+    {% endfor %}
+    <div class="solar-n">
+      {% set peligro = solar_dias | selectattr('estado', 'equalto', 'peligro') | list %}
+      {% if peligro %}
+        <b>Peligro de fotosíntesis</b> {{ peligro | map(attribute='label') | join(', ') }}.
+        Bajar ventilación 09:00-12:00 contiene el pH de la tarde; el margen del amanecer
+        de cada laguna decide si se puede — está en su ficha.
+      {% elif solar_lagunas %}
+        Floración activa en {{ solar_lagunas | join(', ') }}, pero ningún día despejado a la vista.
+      {% else %}
+        Sin floración detectada.
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
 
   <div class="legend">
     <span><span class="dot dot-ok"></span>OK: {{ totals.ok }}</span>
@@ -172,60 +319,20 @@
     <button type="button" class="u-card {{ u.rollup }}" data-unit="{{ u.unit_id }}" aria-expanded="false">
       <svg class="u-caret" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       <div class="u-name">{{ u.unit_name }}</div>
-      <div class="u-status"><span class="big-dot"></span>
-        {% if u.rollup == 'ok' %}Todo en orden{% elif u.rollup == 'alerta' %}En alerta
-        {% elif u.rollup == 'alarma' %}En alarma{% else %}Sin datos{% endif %}
-      </div>
-      {% if u.reason %}
-      <div class="u-reason r-{{ u.reason.kind }}-{{ u.reason.level }}">
-        <span class="r-ico">{% if u.reason.kind == 'val' %}⚑{% else %}▲{% endif %}</span>
-        <span>{{ u.reason.text }}{% if u.reason.extra %} <span class="r-more">+{{ u.reason.extra }} más</span>{% endif %}</span>
-      </div>
-      {% endif %}
-      <div class="u-meta">
-        <span class="chip">{{ u.n_ponds }} estanque{{ 's' if u.n_ponds != 1 else '' }}</span>
-        <span class="chip {{ '' if u.has_bf else 'muted' }}">biofiltro {{ '✓' if u.has_bf else '—' }}</span>
-        {% if u.n_alarm %}<span class="chip warn">{{ u.n_alarm }} en alarma</span>{% endif %}
-        {% if u.n_alarm_unack %}<span class="chip warn">⚠ {{ u.n_alarm_unack }} sin acción</span>{% endif %}
-        {% if u.n_alert %}<span class="chip amber">{{ u.n_alert }} en alerta</span>{% endif %}
-        {% set h = u.health %}
-        {% if h and h.state == 'bajo' %}<span class="chip warn">salud biofiltro {{ h.pct|round|int }}%</span>
-        {% elif h and h.state == 'atencion' %}<span class="chip amber">salud biofiltro {{ h.pct|round|int }}%</span>
-        {% elif h and h.state == 'no_aplica' %}<span class="chip muted">flujo abierto</span>
-        {% endif %}
-        {% if h and h.balance_state == 'rezagado' %}<span class="chip amber">NOB rezagadas</span>{% endif %}
-        {% if u.photo %}<span class="chip leaf" title="Fotosíntesis activa">🍃 F</span>{% endif %}
-      </div>
-      {% set f = u.photo %}
-      {% if f %}
-      {% set dw = f.dawn %}
-      {% set crit = dw and (dw.sat_level != 'ok' or dw.do_level != 'ok') %}
-      <div class="photo{{ ' crit' if crit else '' }}">
-        <div class="photo-h">🍃 Fotosíntesis activa</div>
-        {% if f.ph_alert %}
-        <div class="photo-l">
-          El pH sube en la tarde: sobre <b>pH {{ '%.2f'|format(f.ph_alert) }}</b>
-          el NH₃ cruza la alerta del sitio con el TAN actual ({{ f.nh4_n }} mg/L){%
-          if f.ph_alarm %}; la alarma, sobre pH {{ '%.2f'|format(f.ph_alarm) }}{% endif %}.
-          <b>Mide pH y NAT entre 15:00 y 17:00.</b>
+      <div class="dims">
+        {% for k in ['o2','bf','photo','valid'] %}{% set d = u.dims[k] %}
+        <div class="dim d-{{ d.state }}{{ ' d-old' if d.age_state in ('viejo','vencido') else '' }}"
+             {% if d.age_text %}title="{{ d.label }}: {{ d.age_text }}"{% endif %}>
+          <span class="dim-dot"></span>
+          <span class="dim-label">{{ d.label }}</span>
+          <span class="dim-value" style="opacity:{{ d.opacity }}">{{ d.value }}{% if d.detail %}<span class="dim-det"> · {{ d.detail }}</span>{% endif %}</span>
         </div>
-        {% else %}
-        <div class="photo-l">El pH sube en la tarde y el NH₃ no ionizado se multiplica.
-          <b>Mide pH y NAT entre 15:00 y 17:00.</b></div>
-        {% endif %}
-        {% if dw %}
-        <div class="photo-l">
-          Amanecer en <b>{{ dw.sat_p10 }}%</b> de saturación{% if dw.do_p10 %}
-          ({{ dw.do_p10 }} mg/L){% endif %}{% if dw.margin is not none %},
-          margen de {{ dw.margin }} pts a la alerta{% endif %}.
-          {% if dw.factor_to_alert %}Si la caída nocturna crece
-          {{ dw.factor_to_alert }}× la toca.{% endif %}
-        </div>
-        {% endif %}
-        <div class="photo-m">
-          amplitud {{ f.amplitude }} pts · p90 diurno {{ f.day_p90 }}% ·
-          noche {{ f.night_mean }}% · 7 días, {{ f.n_day }}/{{ f.n_night }} lecturas
-        </div>
+        {% endfor %}
+      </div>
+      {% if u.accion %}
+      <div class="u-accion k-{{ u.accion.kind }}">
+        <span class="acc-ico">{{ '⟳' if u.accion.kind == 'dato' else '▸' }}</span>
+        <span>{{ u.accion.text }}{% if u.accion.otras %} <span class="acc-mas">+{{ u.accion.otras }}</span>{% endif %}</span>
       </div>
       {% endif %}
       {% if u.n_nodata or u.n_stale %}
@@ -257,13 +364,18 @@
         </div>
       </div>
 
-      <div class="section-title">Biofiltro</div>
+      <div class="cols3">
+        <div class="col col-bf">
+          <div class="col-title">Biofiltro{% if u.dims.bf.state != 'no_aplica' %} <a class="col-link" href="/views/ui/calidad-agua/biofiltro/unidad/{{ u.unit_id }}">configurar y dosificar →</a>{% endif %}</div>
       <div class="sub-card">
         {% set bf = u.bf %}
         {% if bf %}
         <div class="sub-head">
-          <div class="sub-name">Muestreo del {{ bf.reading_date.strftime('%d/%m/%Y') }}</div>
+          <div class="sub-name">Muestreo del {{ bf.reading_date.strftime('%d/%m/%Y') }}{%
+            if bf.created_at %} <span class="hora">· {{ bf.created_at.strftime('%H:%M') }}</span>{% endif %}</div>
           {{ level_pill(bf.alarm_level) }}
+          <a class="btn-edit" href="/views/ui/calidad-agua/biofiltro/nueva?edit={{ bf.id }}"
+             title="Corregir este muestreo">editar</a>
         </div>
         <table class="bf-table">
           <thead><tr><th>Parámetro</th><th class="col-in">Entrada</th><th class="col-out">Salida</th></tr></thead>
@@ -280,6 +392,7 @@
         <div class="flags">
           <span>Validación:</span>
           {% if bf.n_balance_flag == 'sospechoso' %}<span class="pill pill-warn">Balance N desbalanceado</span>{% else %}<span class="pill pill-ok">Balance N OK</span>{% endif %}
+          {% if bf.no2_flag == 'sospechoso' %}<span class="pill pill-warn">Nitrito fuera de la curva</span>{% elif bf.no2_flag %}<span class="pill pill-ok">Nitrito en curva</span>{% endif %}
           {% if bf.ph_delta_flag == 'sospechoso' %}<span class="pill pill-warn">ΔpH alto</span>{% else %}<span class="pill pill-ok">ΔpH OK</span>{% endif %}
           {% if bf.temp_delta_flag == 'sospechoso' %}<span class="pill pill-warn">Δtemp alto</span>{% else %}<span class="pill pill-ok">Δtemp OK</span>{% endif %}
         </div>
@@ -287,82 +400,84 @@
         <div class="no-data">Sin muestreos de biofiltro. <a href="/views/ui/calidad-agua/biofiltro/nueva?unit_id={{ u.unit_id }}">Registrar el primero →</a></div>
         {% endif %}
 
-        {% set h = u.health %}
-        {% if h %}
-        <div class="health">
-          <div class="health-title">Salud del biofiltro
-            {% if h.n_samples %}<span class="health-note">no se ve en la medición diaria · ventana de {{ h.n_samples }} muestreos</span>{% endif %}
-          </div>
-          {% if h.state == 'no_aplica' %}
-          <div class="no-data">Unidad de flujo abierto: el nitrógeno sale con el agua, no por el biofiltro. No se evalúa.</div>
-          {% elif h.state == 'sin_dato' %}
-          <div class="no-data">{{ h.reason }}.</div>
-          {% else %}
-          <div class="health-grid">
-            <div class="hm">
-              <div class="hm-label">Velocidad de nitrificación</div>
-              <div class="hm-value hs-{{ h.state }}">
-                {{ '%.2f'|format(h.k) }} <span class="hm-unit">h⁻¹</span>
-                {% if h.pct %}<span class="hm-pct">{{ h.pct|round|int }}% de {{ h.ref_kind }}</span>{% endif %}
-              </div>
-              <div class="hm-foot">
-                {% if h.state == 'sin_base' %}Sin referencia con qué comparar todavía
-                {% elif h.ref %}referencia {{ '%.2f'|format(h.ref) }} h⁻¹ ({{ h.ref_kind }}){% endif %}
-              </div>
-            </div>
-            <div class="hm">
-              <div class="hm-label">Balance nitrito (NOB/AOB)</div>
-              <div class="hm-value hb-{{ h.balance_state or 'nd' }}">
-                {% if h.balance %}{{ '%.2f'|format(h.balance) }}{% else %}—{% endif %}
-                <span class="hm-pct">
-                  {%- if h.balance_state == 'al_dia' %}al día
-                  {%- elif h.balance_state == 'justo' %}justo
-                  {%- elif h.balance_state == 'rezagado' %}NOB rezagadas{% endif -%}
-                </span>
-              </div>
-              <div class="hm-foot">bajo 0,95 el nitrito se acumula pasada a pasada</div>
-            </div>
-          </div>
-          {% if h.reason %}<div class="health-reason">▲ {{ h.reason }}</div>{% endif %}
-          {% endif %}
-        </div>
-        {% endif %}
+        
       </div>
 
-      <div class="section-title">Estanques ({{ u.pond_rows|length }})</div>
-      {% for p in u.pond_rows %}
-      <div class="sub-card">
-        <div class="sub-head">
-          <div>
-            <div class="sub-name">{{ p.pond_name }}</div>
-            {% if p.has_data %}<div class="meta {{ 'stale' if p.stale else '' }}">Última lectura hace {{ p.hours_ago }} h{{ ' · vencida' if p.stale else '' }}</div>{% endif %}
+        </div>
+        <div class="col col-o2">
+        <div class="col-title">Estanques ({{ u.pond_rows|length }})</div>
+        {% if u.pond_rows %}
+        <table class="pond-table">
+          <thead><tr><th>Estanque</th><th>O₂</th><th>T</th><th>Sat</th><th></th></tr></thead>
+          <tbody>
+          {% for p in u.pond_rows %}
+          <tr class="pr-{{ p.alarm_level or 'nd' }}{{ ' pr-stale' if p.stale else '' }}"
+              {% if p.has_data %}title="Hace {{ p.hours_ago }} h{{ ' · vencida' if p.stale else '' }}{% if p.reading.water_temp_inherited %} · T heredada{% endif %}{% if p.consistency_flag == 'sospechoso' %} · terna sospechosa{% endif %}"{% endif %}>
+            <td class="pt-name">{{ p.pond_name.split(' - ')[0] }}</td>
+            {% if p.has_data %}
+            <td class="{{ 'pv-'+p.levels.get('do_mg_l') if p.levels.get('do_mg_l','ok') != 'ok' else '' }}">{{ '%.1f'|format(p.reading.do_mg_l) if p.reading.do_mg_l is not none else '—' }}</td>
+            <td>{{ '%.1f'|format(p.reading.water_temp_c) if p.reading.water_temp_c is not none else '—' }}</td>
+            <td class="{{ 'pv-'+p.levels.get('saturation_pct') if p.levels.get('saturation_pct','ok') != 'ok' else '' }}">{{ '%.0f'|format(p.sat_pct) if p.sat_pct is not none else '—' }}%</td>
+            <td class="pt-flags">{% if p.consistency_flag == 'sospechoso' %}<span class="mini-warn" title="Terna sospechosa">⚑</span>{% endif %}{% if p.reading.water_temp_inherited %}<span class="mini-mut" title="Temperatura heredada">T</span>{% endif %}{% if p.alarm_level == 'alarma' and not p.reading.acknowledged %}<span class="mini-alarm" title="Alarma sin acción registrada">⚠</span>{% endif %}</td>
+            {% else %}
+            <td colspan="4" class="pt-nodata"><a href="/views/ui/calidad-agua/oxigeno/nueva?pond_id={{ p.pond_id }}">sin lecturas →</a></td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="no-data">Esta unidad no tiene estanques activos asociados.</div>
+        {% endif %}
+        </div>
+        <div class="col col-dg">
+        <div class="col-title">{{ 'Diagnóstico' if u.diag else 'Capacidad' }}</div>
+        {% if u.diag %}
+        {% for b in u.diag %}
+        <div class="dg dg-{{ b.level }}">
+          <div class="dg-h"><span class="dg-kind k-{{ b.kind }}">{{ b.kind }}</span>{{ b.title }}</div>
+          <div class="dg-t">{{ b.text }}</div>
+          {% if b.medir %}
+          <div class="dg-seg">
+            <div><span>Medir</span>{{ b.medir }}</div>
+            <div><span>Señal</span>{{ b.senal }}</div>
           </div>
-          {{ level_pill(p.alarm_level) }}
-        </div>
-        {% if p.has_data %}
-        <div class="params">
-          <div class="param {{ 'p-'+p.levels.get('do_mg_l') if p.levels.get('do_mg_l', 'ok') != 'ok' else '' }}"><div class="k">O₂ disuelto</div><div class="v">{{ fmt_hl(p.reading.do_mg_l, '2', 'mg/L', p.levels.get('do_mg_l')) }}</div></div>
-          <div class="param {{ 'p-'+p.levels.get('water_temp_c') if p.levels.get('water_temp_c', 'ok') != 'ok' else '' }}"><div class="k">Temperatura</div><div class="v">{{ fmt_hl(p.reading.water_temp_c, '1', '°C', p.levels.get('water_temp_c')) }}{% if p.reading.water_temp_inherited %} <span style="font-size:.72rem;color:#6b7280;font-weight:600">heredada</span>{% endif %}</div></div>
-          <div class="param {{ 'p-'+p.levels.get('saturation_pct') if p.levels.get('saturation_pct', 'ok') != 'ok' else '' }}"><div class="k">Saturación</div><div class="v">{{ fmt_hl(p.reading.saturation_pct, '1', '%', p.levels.get('saturation_pct')) }}</div></div>
-          <div class="param {{ 'p-'+p.levels.get('saturation_computed_pct') if p.levels.get('saturation_computed_pct', 'ok') != 'ok' else '' }}"><div class="k">Sat. teórica</div><div class="v">{{ fmt_hl(p.reading.saturation_computed_pct, '1', '%', p.levels.get('saturation_computed_pct')) }}</div></div>
-          <div class="param"><div class="k">Terna</div><div class="v" style="font-size:.86rem">
-            {% if p.consistency_flag == 'sospechoso' %}<span class="pill pill-warn">Sospechosa</span>{% else %}<span class="pill pill-ok">OK</span>{% endif %}</div></div>
-        </div>
-        {% if p.alarm_level == 'alarma' %}
-        <div class="action-row">
-          {% if p.reading.acknowledged and p.reading.corrective_action %}
-          <span class="pill pill-ok">✓ Acción tomada: {{ p.reading.corrective_action }}</span>
-          {% else %}
-          <span class="pill pill-alarm">⚠ Sin acción registrada — requiere seguimiento</span>
           {% endif %}
         </div>
+        {% endfor %}
         {% endif %}
-        {% else %}
-        <div class="no-data">Sin lecturas de O₂. <a href="/views/ui/calidad-agua/oxigeno/nueva?pond_id={{ p.pond_id }}">Registrar la primera →</a></div>
+
+        {% set c = u.capacidad %}{% set fc = u.feed_cap %}
+        {% if c or fc %}
+        <div class="cap{{ ' cap-fold' if u.diag else '' }}">
+          {% if u.diag %}<div class="cap-h">Capacidad del sistema</div>{% endif %}
+          {% if c %}
+          <div class="cap-row"><span>Caudal depurado equiv.</span><b>{{ '%.0f'|format(c.cde) }} L/s</b></div>
+          <div class="cap-row"><span>Techo de depuración</span><b>{{ '%.0f'|format(c.techo) }} L/s</b><i>{{ '%.0f'|format(c.uso_del_techo * 100) }}% usado</i></div>
+          {% if c.vida_media_min %}<div class="cap-row"><span>Vida media del amonio</span><b>{{ '%.0f'|format(c.vida_media_min) }} min</b><i>contacto {{ '%.0f'|format(c.tau_min) }} min</i></div>{% endif %}
+          {% endif %}
+          {% if u.health and u.health.pct %}
+          <div class="cap-row"><span>Salud del biofiltro</span><b>{{ u.health.pct|round|int }}%</b><i>de {{ u.health.ref_kind }}</i></div>
+          {% endif %}
+          {% if fc %}
+          <div class="cap-max">
+            <div class="cm-v">{{ '%.0f'|format(fc.feed_max) }} <span>kg/día</span></div>
+            <div class="cm-l">alimentación máxima · limita <b>{{ fc.manda }}</b></div>
+          </div>
+          <table class="cap-table">
+            {% for t in fc.techos %}
+            <tr class="{{ 'ct-manda' if t.key == fc.manda else '' }}">
+              <td>{{ t.label }}</td><td>{{ '%.0f'|format(t.feed) }} kg/d</td>
+              <td class="ct-nota">{{ t.nota }}</td>
+            </tr>
+            {% endfor %}
+          </table>
+          {% endif %}
+          {% if u.flow_nominal %}<div class="cap-foot">Calculado con caudal nominal de {{ '%.0f'|format(u.recirc_l_s) if u.recirc_l_s else '—' }} L/s — no se mide en continuo.</div>{% endif %}
+        </div>
         {% endif %}
+        </div>
       </div>
-      {% endfor %}
-      {% if not u.pond_rows %}<div class="no-data">Esta unidad no tiene estanques activos asociados.</div>{% endif %}
     </div>
     {% endfor %}
   </div>

@@ -38,6 +38,16 @@ class BiofilterReading(Base):
     out_no3_n = Column(Numeric(8, 3))
 
     # Derivados del motor
+    # --- protocolo v2 (todos opcionales) ---------------------------------
+    in_alkalinity = Column(Numeric(8, 2))   # mg CaCO3/L, solo entrada
+    in_do_mg_l = Column(Numeric(6, 2))      # O2 disuelto entrada
+    out_do_mg_l = Column(Numeric(6, 2))     # O2 disuelto salida
+    in_nh4_n_2 = Column(Numeric(8, 3))      # duplicados: si vienen, se promedian
+    out_nh4_n_2 = Column(Numeric(8, 3))
+    in_no3_n_2 = Column(Numeric(8, 3))
+    out_no3_n_2 = Column(Numeric(8, 3))
+    no2_flag = Column(String(20))           # ok | sospechoso (detector de outlier)
+
     tn_in = Column(Numeric(9, 3))       # N total entrada (suma de especies como N)
     tn_out = Column(Numeric(9, 3))      # N total salida
     nh3_n_in = Column(Numeric(8, 4))    # NH3-N no ionizado entrada

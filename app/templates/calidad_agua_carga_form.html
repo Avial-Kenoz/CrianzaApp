@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Carga de insumo – Crianza</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    .page { padding: 26px 30px 60px; max-width: 720px; }
+    .crumb { font-size: .8rem; color: #6b7280; margin-bottom: 6px; }
+    .crumb a { color: #2563eb; text-decoration: none; }
+    .page-title { font-size: 1.4rem; font-weight: 750; margin-bottom: 4px; }
+    .page-sub { color: #6b7280; font-size: .86rem; margin-bottom: 20px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; margin-bottom: 10px; }
+    .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 13px; }
+    label { display: block; font-size: .72rem; color: #6b7280; font-weight: 650; margin-bottom: 3px; }
+    input, select, textarea { width: 100%; border: 1px solid #d7dbe0; border-radius: 8px;
+      padding: 8px 10px; font-size: .88rem; font-family: inherit; outline: none; }
+    input:focus, select:focus, textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+    .seg { display: flex; gap: 0; border: 1px solid #d7dbe0; border-radius: 9px; overflow: hidden; }
+    .seg label { flex: 1; margin: 0; text-align: center; padding: 9px 4px; cursor: pointer;
+                 font-size: .84rem; color: #4b5563; font-weight: 650; background: #fff; }
+    .seg input { display: none; }
+    .seg input:checked + span { background: #2563eb; color: #fff; }
+    .seg span { display: block; padding: 9px 4px; margin: -9px -4px; }
+    .section-title { font-size: .74rem; text-transform: uppercase; letter-spacing: .06em;
+                     color: #6b7280; font-weight: 750; margin: 20px 0 9px; }
+    .note { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px;
+            padding: 10px 13px; font-size: .79rem; color: #4b5563; margin-top: 12px; line-height: 1.5; }
+    .warnbox { background: #fffbeb; border-color: #fde68a; color: #78350f; }
+    .actions { display: flex; gap: 10px; margin-top: 18px; }
+    .btn { border: none; border-radius: 9px; padding: 10px 18px; font-size: .88rem; font-weight: 650;
+           cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+    .btn-primary { background: #2563eb; color: #fff; } .btn-primary:hover { background: #1d4ed8; }
+    .btn-ghost { background: #fff; color: #1a1a2e; border: 1px solid #d7dbe0; }
+    .pill { display: inline-block; font-size: .7rem; font-weight: 700; padding: 2px 8px;
+            border-radius: 999px; background: #eef2ff; color: #3730a3; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/calidad-agua">Calidad de agua</a> · Carga de insumo</div>
+  <div class="page-title">{{ 'Editar carga' if editing else 'Registrar carga' }}</div>
+  <div class="page-sub">Bicarbonato o sal aplicados a una unidad.</div>
+
+  <form method="post" action="/views/ui/calidad-agua/carga/nueva">
+    {% if editing %}<input type="hidden" name="dose_id" value="{{ editing.id }}" />{% endif %}
+    <div class="card">
+      <div class="fields">
+        <div><label>Unidad</label>
+          <select name="cultivation_unit_id" id="unit" required>
+            {% for u in units %}
+            <option value="{{ u.id }}" data-regimen="{{ u.regimen }}"
+              {{ 'selected' if selected_unit == u.id }}>{{ u.name }}</option>
+            {% endfor %}
+          </select></div>
+        <div><label>Fecha y hora de aplicación</label>
+          <input type="datetime-local" name="applied_at" required
+            value="{{ editing.applied_at.strftime('%Y-%m-%dT%H:%M') if editing else now }}" /></div>
+        <div><label>Operador</label>
+          <select name="operator_id">
+            <option value="">—</option>
+            {% for o in users %}
+            <option value="{{ o.id }}" {{ 'selected' if editing and editing.operator_id == o.id }}>{{ o.label }}</option>
+            {% endfor %}
+          </select></div>
+      </div>
+
+      <div class="section-title">Producto</div>
+      <div class="fields">
+        <div><label>Insumo</label>
+          <select name="product" required>
+            {% for p in ['bicarbonato', 'sal'] %}
+            <option value="{{ p }}" {{ 'selected' if (editing.product if editing else product) == p }}>{{ p }}</option>
+            {% endfor %}
+          </select></div>
+        <div><label>Cantidad (kg)</label>
+          <input type="number" step="any" name="kg" required
+            value="{{ '%g'|format(editing.kg) if editing else '' }}" /></div>
+        <div><label>Modo</label>
+          <select name="mode" id="mode">
+            <option value="mantencion" {{ 'selected' if editing and editing.mode == 'mantencion' }}>mantención</option>
+            <option value="choque" {{ 'selected' if editing and editing.mode == 'choque' }}>choque</option>
+          </select></div>
+        <div><label>Punto de aplicación</label>
+          <input type="text" name="application_point" placeholder="entrada del biofiltro"
+            value="{{ editing.application_point or '' if editing else '' }}" /></div>
+      </div>
+
+      <div class="section-title" id="par-title">Par dosis-respuesta</div>
+      <div class="fields">
+        <div><label>Alcalinidad antes (mg/L)</label>
+          <input type="number" step="any" name="alk_before"
+            value="{{ '%g'|format(editing.alk_before) if editing and editing.alk_before is not none else '' }}" /></div>
+        <div><label>Alcalinidad +2 h (mg/L)</label>
+          <input type="number" step="any" name="alk_after_2h"
+            value="{{ '%g'|format(editing.alk_after_2h) if editing and editing.alk_after_2h is not none else '' }}" /></div>
+        <div><label>pH antes</label>
+          <input type="number" step="any" name="ph_before"
+            value="{{ '%g'|format(editing.ph_before) if editing and editing.ph_before is not none else '' }}" /></div>
+        <div><label>pH +2 h</label>
+          <input type="number" step="any" name="ph_after_2h"
+            value="{{ '%g'|format(editing.ph_after_2h) if editing and editing.ph_after_2h is not none else '' }}" /></div>
+      </div>
+      <div class="note" id="par-note">
+        Estas dos alcalinidades son lo único que <strong>calibra el consumo real</strong>.
+        Se piden durante el choque; en mantención se pueden dejar vacías —
+        son calibración, no rutina.
+      </div>
+
+      <div style="margin-top:14px"><label>Observación</label>
+        <textarea name="observation" rows="2" maxlength="255">{{ editing.observation or '' if editing else '' }}</textarea></div>
+
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">{{ 'Guardar cambios' if editing else 'Registrar carga' }}</button>
+        <a href="/views/ui/calidad-agua" class="btn btn-ghost">Cancelar</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+// El régimen de la unidad decide si el par dosis-respuesta se destaca o se
+// atenúa: pedirlo siempre lo convierte en un campo que se deja vacío por
+// costumbre, y entonces tampoco está cuando importa.
+(function () {
+  var unit = document.getElementById('unit');
+  var mode = document.getElementById('mode');
+  var note = document.getElementById('par-note');
+  var title = document.getElementById('par-title');
+  function sync() {
+    var opt = unit.options[unit.selectedIndex];
+    var reg = opt ? opt.getAttribute('data-regimen') : 'basal';
+    var pide = (mode.value === 'choque') || (reg === 'choque');
+    note.className = pide ? 'note warnbox' : 'note';
+    title.innerHTML = 'Par dosis-respuesta' +
+      (pide ? ' <span class="pill">requerido</span>' : '');
+  }
+  unit.addEventListener('change', sync);
+  mode.addEventListener('change', sync);
+  sync();
+})();
+</script>
+</div></div>
+</body>
+</html>

@@ -88,7 +88,15 @@
     .modal .m-stack { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
     .modal .m-stack .btn { width: 100%; justify-content: center; }
     .hidden { display: none !important; }
-    @media (max-width: 640px) { .points, .row2 { grid-template-columns: 1fr; } }
+    .dup-box { margin-top: 12px; padding: 9px 11px; background: #f8fafc;
+               border: 1px dashed #cbd5e1; border-radius: 8px; }
+    .dup-title { font-size: .72rem; font-weight: 700; color: #64748b; margin-bottom: 6px; }
+    .dup-row { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 6px 8px;
+               align-items: center; }
+    .dup-row label { font-size: .72rem; color: #64748b; font-weight: 600; margin: 0; }
+    .dup-row input { padding: 5px 7px; font-size: .84rem; }
+    @media (max-width: 640px) { .points, .row2 { grid-template-columns: 1fr; }
+                                .dup-row { grid-template-columns: auto 1fr; } }
   </style>
 </head>
 <body>
@@ -99,6 +107,12 @@
   <div class="page-sub">Muestreo diario en entrada y salida del biofiltro de la unidad. Nitrógeno expresado como N.</div>
 
   <form class="card" method="post" action="/views/ui/calidad-agua/biofiltro">
+    {% if editing %}<input type="hidden" name="reading_id" value="{{ editing.id }}" />
+    <div class="note" style="background:#fffbeb;border-color:#fcd34d;color:#92400e">
+      Corrigiendo el muestreo <b>#{{ editing.id }}</b> del {{ editing.reading_date }}
+      (digitado {{ editing.created_at.strftime('%H:%M') if editing.created_at else '—' }}).
+      Se recalculan todas las validaciones al guardar.
+    </div>{% endif %}
     <div class="row2">
       <div class="field">
         <label for="cultivation_unit_id">Unidad de cultivo</label>
@@ -119,38 +133,82 @@
       <div class="point in">
         <h3>Entrada</h3>
         <div class="p-field"><label for="in_ph">pH</label>
-          <input type="text" inputmode="decimal" autocomplete="off" id="in_ph" name="in_ph" />
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_ph" name="in_ph"
+                 value="{{ editing.in_ph if editing and editing.in_ph is not none else '' }}" />
           <div class="fx" id="fx_in_ph"></div></div>
         <div class="p-field"><label for="in_temp_c">Temperatura <span class="hint">°C</span></label>
-          <input type="text" inputmode="decimal" autocomplete="off" id="in_temp_c" name="in_temp_c" />
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_temp_c" name="in_temp_c"
+                 value="{{ editing.in_temp_c if editing and editing.in_temp_c is not none else '' }}" />
           <div class="fx" id="fx_in_temp_c"></div></div>
         <div class="p-field"><label for="in_nh4_n">Amonio <span class="hint">NH₄-N, mg/L</span></label>
-          <input type="text" inputmode="decimal" autocomplete="off" id="in_nh4_n" name="in_nh4_n" />
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_nh4_n" name="in_nh4_n"
+                 value="{{ editing.in_nh4_n if editing and editing.in_nh4_n is not none else '' }}" />
           <div class="fx" id="fx_in_nh4_n"></div></div>
         <div class="p-field"><label for="in_no2_n">Nitrito <span class="hint">NO₂-N, mg/L</span></label>
-          <input type="text" inputmode="decimal" autocomplete="off" id="in_no2_n" name="in_no2_n" />
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_no2_n" name="in_no2_n"
+                 value="{{ editing.in_no2_n if editing and editing.in_no2_n is not none else '' }}" />
           <div class="fx" id="fx_in_no2_n"></div></div>
         <div class="p-field"><label for="in_no3_n">Nitrato <span class="hint">NO₃-N, mg/L</span></label>
-          <input type="text" inputmode="decimal" autocomplete="off" id="in_no3_n" name="in_no3_n" />
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_no3_n" name="in_no3_n"
+                 value="{{ editing.in_no3_n if editing and editing.in_no3_n is not none else '' }}" />
           <div class="fx" id="fx_in_no3_n"></div></div>
+        <div class="p-field"><label for="in_do_mg_l">O₂ disuelto <span class="hint">mg/L</span></label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_do_mg_l" name="in_do_mg_l"
+                 value="{{ editing.in_do_mg_l if editing and editing.in_do_mg_l is not none else '' }}" />
+          <div class="fx" id="fx_in_do_mg_l"></div></div>
+        <div class="p-field"><label for="in_alkalinity">Alcalinidad <span class="hint">mg CaCO₃/L · opcional</span></label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="in_alkalinity" name="in_alkalinity"
+                 value="{{ editing.in_alkalinity if editing and editing.in_alkalinity is not none else '' }}" />
+          <div class="fx" id="fx_in_alkalinity"></div></div>
+        <div class="dup-box">
+          <div class="dup-title">Duplicados <span class="hint">opcionales — si los cargas, se promedian</span></div>
+          <div class="dup-row">
+            <label for="in_nh4_n_2">NH₄-N (2ª)</label>
+            <input type="text" inputmode="decimal" autocomplete="off" id="in_nh4_n_2" name="in_nh4_n_2"
+                   value="{{ editing.in_nh4_n_2 if editing and editing.in_nh4_n_2 is not none else '' }}" />
+            <label for="in_no3_n_2">NO₃-N (2ª)</label>
+            <input type="text" inputmode="decimal" autocomplete="off" id="in_no3_n_2" name="in_no3_n_2"
+                   value="{{ editing.in_no3_n_2 if editing and editing.in_no3_n_2 is not none else '' }}" />
+          </div>
+        </div>
       </div>
       <div class="point out">
         <h3>Salida</h3>
         <div class="p-field"><label for="out_ph">pH</label>
-          <input type="text" inputmode="decimal" autocomplete="off" id="out_ph" name="out_ph" />
+          <input type="text" inputmode="decimal" autocomplete="off" id="out_ph" name="out_ph"
+                 value="{{ editing.out_ph if editing and editing.out_ph is not none else '' }}" />
           <div class="fx" id="fx_out_ph"></div></div>
         <div class="p-field"><label for="out_temp_c">Temperatura <span class="hint">°C</span></label>
-          <input type="text" inputmode="decimal" autocomplete="off" id="out_temp_c" name="out_temp_c" />
+          <input type="text" inputmode="decimal" autocomplete="off" id="out_temp_c" name="out_temp_c"
+                 value="{{ editing.out_temp_c if editing and editing.out_temp_c is not none else '' }}" />
           <div class="fx" id="fx_out_temp_c"></div></div>
         <div class="p-field"><label for="out_nh4_n">Amonio <span class="hint">NH₄-N, mg/L</span></label>
-          <input type="text" inputmode="decimal" autocomplete="off" id="out_nh4_n" name="out_nh4_n" />
+          <input type="text" inputmode="decimal" autocomplete="off" id="out_nh4_n" name="out_nh4_n"
+                 value="{{ editing.out_nh4_n if editing and editing.out_nh4_n is not none else '' }}" />
           <div class="fx" id="fx_out_nh4_n"></div></div>
         <div class="p-field"><label for="out_no2_n">Nitrito <span class="hint">NO₂-N, mg/L</span></label>
-          <input type="text" inputmode="decimal" autocomplete="off" id="out_no2_n" name="out_no2_n" />
+          <input type="text" inputmode="decimal" autocomplete="off" id="out_no2_n" name="out_no2_n"
+                 value="{{ editing.out_no2_n if editing and editing.out_no2_n is not none else '' }}" />
           <div class="fx" id="fx_out_no2_n"></div></div>
         <div class="p-field"><label for="out_no3_n">Nitrato <span class="hint">NO₃-N, mg/L</span></label>
-          <input type="text" inputmode="decimal" autocomplete="off" id="out_no3_n" name="out_no3_n" />
+          <input type="text" inputmode="decimal" autocomplete="off" id="out_no3_n" name="out_no3_n"
+                 value="{{ editing.out_no3_n if editing and editing.out_no3_n is not none else '' }}" />
           <div class="fx" id="fx_out_no3_n"></div></div>
+        <div class="p-field"><label for="out_do_mg_l">O₂ disuelto <span class="hint">mg/L · misma sonda</span></label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="out_do_mg_l" name="out_do_mg_l"
+                 value="{{ editing.out_do_mg_l if editing and editing.out_do_mg_l is not none else '' }}" />
+          <div class="fx" id="fx_out_do_mg_l"></div></div>
+        <div class="dup-box">
+          <div class="dup-title">Duplicados <span class="hint">opcionales</span></div>
+          <div class="dup-row">
+            <label for="out_nh4_n_2">NH₄-N (2ª)</label>
+            <input type="text" inputmode="decimal" autocomplete="off" id="out_nh4_n_2" name="out_nh4_n_2"
+                   value="{{ editing.out_nh4_n_2 if editing and editing.out_nh4_n_2 is not none else '' }}" />
+            <label for="out_no3_n_2">NO₃-N (2ª)</label>
+            <input type="text" inputmode="decimal" autocomplete="off" id="out_no3_n_2" name="out_no3_n_2"
+                   value="{{ editing.out_no3_n_2 if editing and editing.out_no3_n_2 is not none else '' }}" />
+          </div>
+        </div>
       </div>
     </div>
 
@@ -175,11 +233,15 @@
       </div>
     </div>
 
+    <div id="cero_warn" class="note" style="display:none;background:#fef2f2;border-color:#fca5a5;color:#991b1b"></div>
+
+    <div id="no2_warn" class="note" style="display:none;background:#fffbeb;border-color:#fcd34d;color:#92400e"></div>
+
     <div class="note">El sistema valida la conservación de N (suma entrada ≈ salida), ΔpH y Δtemperatura acotados,
       y evalúa NH₃ no ionizado (según pH y temperatura) y nitrito para las alarmas.</div>
 
     <div class="actions">
-      <button type="submit" class="btn btn-primary">Guardar muestreo</button>
+      <button type="submit" class="btn btn-primary">{{ "Guardar corrección" if editing else "Guardar muestreo" }}</button>
       <a href="/views/ui/calidad-agua" class="btn btn-ghost">Cancelar</a>
     </div>
   </form>
@@ -216,6 +278,68 @@
     var SPECS = {{ bf_test_specs | default({}, true) | tojson }};
     var PREV  = {{ prev_by_unit | default({}, true) | tojson }};
     var SELFTEST = {{ selftest_cases | default(none, true) | tojson }};
+
+    // Detector de outlier de nitrito: espejo del motor. Los coeficientes se
+    // reajustan en el servidor sobre las ultimas lecturas y llegan en el
+    // contexto; aca solo se repite la formula para avisar mientras se digita.
+    // Cero no es vacio. Un colorimetro no lee cero: tiene limite de deteccion.
+    // Si el operador escribe 0 queriendo decir "no lo medi", la lectura queda
+    // fuera del calculo de eta sin que nadie se entere. Se avisa al tipear.
+    var LOD = { in_nh4_n: 0.01, out_nh4_n: 0.01, in_no2_n: 0.001,
+                out_no2_n: 0.001, in_no3_n: 0.1, out_no3_n: 0.1 };
+    var LOD_LABEL = { in_nh4_n: "amonio de entrada", out_nh4_n: "amonio de salida",
+                      in_no2_n: "nitrito de entrada", out_no2_n: "nitrito de salida",
+                      in_no3_n: "nitrato de entrada", out_no3_n: "nitrato de salida" };
+    function chequearCeros() {
+      var box = document.getElementById("cero_warn");
+      if (!box) return;
+      var avisos = [];
+      Object.keys(LOD).forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el || el.value.trim() === "") return;
+        var v = parseFloat(el.value.replace(",", "."));
+        if (isNaN(v) || v > LOD[id]) return;
+        var rompe = (id === "in_nh4_n" || id === "out_nh4_n");
+        avisos.push("El " + LOD_LABEL[id] + " está en " + v + ", y el test resuelve " +
+                    "hasta " + LOD[id] + ". Si <b>no lo mediste</b>, deja el campo vacío. " +
+                    "Si <b>salió bajo el límite</b>, anótalo en la observación" +
+                    (rompe ? " — así cargado, este muestreo queda fuera del cálculo de η."
+                           : "."));
+      });
+      box.innerHTML = avisos.join("<br>");
+      box.style.display = avisos.length ? "block" : "none";
+    }
+    Object.keys(LOD).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener("input", chequearCeros);
+    });
+
+    var NO2_FIT = {{ no2_fit | tojson if no2_fit else 'null' }};
+    function chequearNitrito() {
+      var box = document.getElementById("no2_warn");
+      if (!box) return;
+      if (!NO2_FIT) { box.style.display = "none"; return; }
+      var avisos = [];
+      [["in_nh4_n", "in_no2_n", "entrada"], ["out_nh4_n", "out_no2_n", "salida"]]
+        .forEach(function (t) {
+          var a = parseFloat((document.getElementById(t[0]) || {}).value);
+          var b = parseFloat((document.getElementById(t[1]) || {}).value);
+          if (!(a > 0) || !(b > 0)) return;
+          var esp = NO2_FIT.a * Math.pow(a, NO2_FIT.b);
+          var sig = Math.abs(b - esp) / NO2_FIT.sd;
+          if (sig > 2.0) {
+            avisos.push("Nitrito de " + t[2] + ": se esperaba ~" + esp.toFixed(3) +
+                        " mg/L para ese amonio (" + sig.toFixed(1) + " sigmas). " +
+                        "Revisa la lectura; si es correcta, guarda igual.");
+          }
+        });
+      box.innerHTML = avisos.join("<br>");
+      box.style.display = avisos.length ? "block" : "none";
+    }
+    ["in_nh4_n", "in_no2_n", "out_nh4_n", "out_no2_n"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener("input", chequearNitrito);
+    });
 
     var NUM_FIELDS = ["in_ph", "in_temp_c", "in_nh4_n", "in_no2_n", "in_no3_n",
                       "out_ph", "out_temp_c", "out_nh4_n", "out_no2_n", "out_no3_n"];
