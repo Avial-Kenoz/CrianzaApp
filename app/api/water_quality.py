@@ -588,7 +588,7 @@ def _photosynthesis_evaluable(db: Session, now: datetime) -> set:
             if d >= wq.PHOTO_MIN_READINGS and n >= wq.PHOTO_MIN_READINGS}
 
 
-def _o2_hours_ago(reading, now: datetime):
+def _o2_hours_ago(reading, now: datetime, thresholds: Optional[dict] = None):
     """(horas de antiguedad, vencida) segun el turno vigente.
 
     No es un umbral parejo: la ronda es cada 4 h en el turno de dia de lunes a
@@ -598,7 +598,8 @@ def _o2_hours_ago(reading, now: datetime):
     if reading is None or reading.reading_datetime is None:
         return None, False
     hours = (now - reading.reading_datetime).total_seconds() / 3600.0
-    return round(hours, 1), hours > wq.o2_stale_thresholds(reading.reading_datetime)[1]
+    return round(hours, 1), hours > wq.o2_stale_thresholds(
+        reading.reading_datetime, thresholds)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -661,7 +662,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
 
             for p in u_ponds:
                 r = o2_latest.get(p.id)
-                hours, stale = _o2_hours_ago(r, now)
+                hours, stale = _o2_hours_ago(r, now, thresholds)
                 # saturation_pct viene NULL en todo el historico: se calcula
                 # desde OD y temperatura (Benson-Krause corregido por altitud).
                 sat = (wq.expected_saturation_pct(float(r.do_mg_l), float(r.water_temp_c))
@@ -778,7 +779,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
             # El vencimiento del O2 sigue al turno EN QUE SE TOMO la lectura:
             # cada 4 h en el turno de dia de lun-sab, cada 2 h el resto y el
             # domingo completo.
-            stale_o2 = wq.o2_stale_thresholds(o2_at)
+            stale_o2 = wq.o2_stale_thresholds(o2_at, thresholds)
             dims = wq.build_dimensions(o2_min, o2_pond, o2_hours, o2_state,
                                        eta, eta_n or 0, eta_hours, eta_state,
                                        (bf.alarm_level if bf is not None else None),
@@ -1340,10 +1341,16 @@ THRESHOLD_META = {
     "ph_delta_tol":       {"label": "ΔpH entrada→salida", "group": "val"},
     "temp_delta_tol":     {"label": "Δtemperatura entrada→salida", "group": "val"},
     "o2_consistency_tol": {"label": "Consistencia terna O₂/temp/saturación", "group": "val"},
+    # Rondas: aqui el par NO es alerta/alarma sino intervalo/vencido, y la
+    # vista les da encabezados propios para que no se lean mal.
+    "o2_round_day":       {"label": "Turno de día (lun-sáb)", "group": "ronda"},
+    "o2_round_off":       {"label": "Noche y domingo completo", "group": "ronda"},
+    "o2_day_window":      {"label": "Turno de día: inicio y término", "group": "ventana"},
 }
 # n_balance_k se edita en la página de especificaciones de test, no aquí.
 THRESHOLD_ORDER = ["o2_do_mg_l", "o2_saturation", "water_temp", "nh3_n", "nitrite_n",
-                   "ph_delta_tol", "temp_delta_tol", "o2_consistency_tol"]
+                   "ph_delta_tol", "temp_delta_tol", "o2_consistency_tol",
+                   "o2_round_day", "o2_round_off", "o2_day_window"]
 _COMPARATOR_TEXT = {
     "lt": "dispara si es menor que",
     "gt": "dispara si es mayor que",
@@ -1359,7 +1366,7 @@ def thresholds_form(request: Request, msg: Optional[str] = None):
     db = SessionLocal()
     try:
         by_param = {r.parameter: r for r in db.query(WaterQualityThreshold).all()}
-        bio, val = [], []
+        grupos: dict = {}
         for param in THRESHOLD_ORDER:
             r = by_param.get(param)
             if r is None:
@@ -1370,14 +1377,23 @@ def thresholds_form(request: Request, msg: Optional[str] = None):
                 "label": meta["label"],
                 "unit": r.unit or "",
                 "comparator": r.comparator,
-                "comparator_text": _COMPARATOR_TEXT.get(r.comparator, r.comparator),
+                # En las filas de ronda el comparador no significa nada: el par
+                # es intervalo/vencido, no un umbral que "dispara".
+                "comparator_text": (
+                    "horas entre rondas" if meta["group"] == "ronda"
+                    else ("horas del día (8,5 = 08:30)" if meta["group"] == "ventana"
+                          else _COMPARATOR_TEXT.get(r.comparator, r.comparator))),
                 "alert_value": _num(r.alert_value),
                 "alarm_value": _num(r.alarm_value),
                 "active": bool(r.active),
                 "is_validation": meta["group"] == "val",
             }
-            (val if meta["group"] == "val" else bio).append(row)
-        context = {"request": request, "msg": msg, "bio_rows": bio, "val_rows": val,
+            grupos.setdefault(meta["group"], []).append(row)
+        context = {"request": request, "msg": msg,
+                   "bio_rows": grupos.get("bio", []),
+                   "val_rows": grupos.get("val", []),
+                   "ronda_rows": grupos.get("ronda", []),
+                   "ventana_rows": grupos.get("ventana", []),
                    "altitude_m": wq.SITE_ALTITUDE_M}
         html = jinja_env.get_template("calidad_agua_umbrales.html").render(context)
         return HTMLResponse(content=html)

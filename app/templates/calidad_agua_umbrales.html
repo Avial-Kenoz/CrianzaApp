@@ -94,6 +94,27 @@
       </table>
     </div>
 
+    <div class="section-title">Rondas de medición de O₂</div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Turno</th><th>Intervalo</th><th>Vence a las</th><th>Estado</th></tr></thead>
+        <tbody>{{ rows(ronda_rows) }}</tbody>
+      </table>
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Ventana</th><th>Inicio</th><th>Término</th><th>Estado</th></tr></thead>
+        <tbody>{{ rows(ventana_rows) }}</tbody>
+      </table>
+    </div>
+    <div class="note">Acá el par no es alerta/alarma: <strong>Intervalo</strong> es cada cuánto
+      toca la ronda y <strong>Vence</strong> la antigüedad a la que la lectura se da por perdida
+      —la idea es que “vencido” signifique <em>se saltó una ronda</em>, no que pasaron N horas.
+      El turno que manda es el de <strong>la lectura</strong>, no el de ahora: una medición de las
+      06:00 se tomó en turno de noche y conserva ese plazo aunque se la mire a mediodía.
+      La ventana va en horas decimales: <strong>8,5 = 08:30</strong>. El domingo usa el intervalo
+      corto las 24 horas.</div>
+
     <div class="note">Para las validaciones, el motor solo distingue dentro / fuera de tolerancia (marca <em>sospechoso</em>);
       el desdoble alerta/alarma solo pesa en las biológicas. La saturación de O₂ dispara con valores <strong>menores</strong> al umbral;
       el resto, con valores mayores. Altitud del sitio para el cálculo de saturación: <strong>{{ altitude_m }} m</strong> (constante).</div>

@@ -96,6 +96,12 @@ DEFAULT_THRESHOLDS: dict[str, dict] = {
     # |N_ent - N_sal| > k · U, con U la incertidumbre combinada (ver abajo).
     "n_balance_k":        {"alert": None,   "alarm": 1.0,    "comparator": "gt"},
     "ph_delta_tol":       {"alert": 0.30,   "alarm": 0.50,   "comparator": "gt"},
+    # Rondas de O2: aqui `alert` es el INTERVALO de ronda y `alarm` la
+    # antiguedad a la que la lectura se da por vencida (se salto una ronda).
+    # `o2_day_window` guarda el turno de dia en horas decimales (8,5 = 08:30).
+    "o2_round_day":       {"alert": 4.0,    "alarm": 6.0,    "comparator": "gt"},
+    "o2_round_off":       {"alert": 2.0,    "alarm": 3.0,    "comparator": "gt"},
+    "o2_day_window":      {"alert": 8.5,    "alarm": 16.0,   "comparator": "gt"},
     "temp_delta_tol":     {"alert": 1.0,    "alarm": None,   "comparator": "gt"},
     "o2_consistency_tol": {"alert": None,   "alarm": 10.0,   "comparator": "gt"},
 }
@@ -1017,24 +1023,36 @@ def concentration_issues(reading: dict,
 # holgados que se podria perder una ronda entera sin que se note.
 #
 # "Vencido" tiene que significar SE SALTO UNA LECTURA, no "pasaron 4 horas".
-O2_INTERVAL_DAY = 4.0       # lun-sab 08:30-16:00
-O2_INTERVAL_OFF = 2.0       # resto de los turnos y domingo completo
-O2_DAY_START, O2_DAY_END = 8.5, 16.0
-O2_STALE_FACTOR = 1.5       # vencido = un intervalo y medio: se salto una ronda
+# Los valores viven en `water_quality_thresholds` (migracion 20260925_01):
+# `alert` es el intervalo de ronda y `alarm` la antiguedad a la que la lectura
+# se da por vencida. Lo de abajo es solo el respaldo si la fila no esta.
+O2_ROUND_DAY = {"alert": 4.0, "alarm": 6.0}    # lun-sab 08:30-16:00
+O2_ROUND_OFF = {"alert": 2.0, "alarm": 3.0}    # resto y domingo completo
+O2_DAY_WINDOW = {"alert": 8.5, "alarm": 16.0}  # inicio y fin del turno de dia
 
 
-def o2_interval_hours(when) -> float:
-    """Intervalo de ronda vigente en ese momento, en horas."""
-    if when is None:
-        return O2_INTERVAL_OFF
-    if when.weekday() == 6:                       # domingo: 24 h a 2 h
-        return O2_INTERVAL_OFF
+def o2_round(when, thresholds: Optional[dict] = None) -> dict:
+    """Fila de ronda que corresponde al momento `when`.
+
+    Domingo completo y todo lo que cae fuera de la ventana del turno de dia
+    usan el intervalo corto.
+    """
+    th = thresholds or {}
+    dia = th.get("o2_round_day") or O2_ROUND_DAY
+    off = th.get("o2_round_off") or O2_ROUND_OFF
+    if when is None or when.weekday() == 6:
+        return off
+    win = th.get("o2_day_window") or O2_DAY_WINDOW
     hora = when.hour + when.minute / 60.0
-    return (O2_INTERVAL_DAY if O2_DAY_START <= hora < O2_DAY_END
-            else O2_INTERVAL_OFF)
+    return dia if (win["alert"] <= hora < win["alarm"]) else off
 
 
-def o2_stale_thresholds(reading_at) -> tuple:
+def o2_interval_hours(when, thresholds: Optional[dict] = None) -> float:
+    """Intervalo de ronda vigente en ese momento, en horas."""
+    return o2_round(when, thresholds)["alert"]
+
+
+def o2_stale_thresholds(reading_at, thresholds: Optional[dict] = None) -> tuple:
     """(alerta, vencido) en horas, segun el turno EN QUE SE TOMO la lectura.
 
     El turno que manda es el de la lectura, no el de ahora. Una medicion de
@@ -1043,8 +1061,8 @@ def o2_stale_thresholds(reading_at) -> tuple:
     a mediodia. Al reves tambien: una lectura de las 09:00 tiene 4 h de plazo
     aunque uno la mire a las 17:00.
     """
-    iv = o2_interval_hours(reading_at)
-    return iv, iv * O2_STALE_FACTOR
+    r = o2_round(reading_at, thresholds)
+    return r["alert"], r["alarm"]
 
 
 DIM_STALE = {                     # (alerta, vencido) en horas
