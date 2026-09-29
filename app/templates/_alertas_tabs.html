@@ -1,0 +1,5 @@
+<div class="tabs">
+  {% for t in tabs %}
+  <a class="tab {{ 'on' if t.activa else '' }}" href="{{ t.href }}">{{ t.label }}</a>
+  {% endfor %}
+</div>

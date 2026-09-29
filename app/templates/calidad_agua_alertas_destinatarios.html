@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Destinatarios de alertas – Crianza</title>
+  {% include '_alertas_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/calidad-agua">Calidad de agua</a> ·
+    <a href="/views/ui/calidad-agua/alertas">Alertas</a> · Destinatarios</div>
+  <div class="page-title">Destinatarios</div>
+  <div class="page-sub">A quién le llega cada aviso por Telegram. Se edita acá, sin tocar el servidor.</div>
+
+  {% include '_alertas_tabs.html' %}
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+  <form method="post" action="/views/ui/calidad-agua/alertas/destinatarios">
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Persona</th><th>Chat de Telegram</th><th>Recibe desde</th>
+            <th>Tipos</th><th>Unidades</th><th>Horario</th>
+            <th class="num">Enviados</th><th>Activo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in destinatarios %}
+          <tr>
+            <td>
+              <input type="text" name="name_{{ d.id }}" value="{{ d.name }}" maxlength="120" />
+              <input type="text" name="note_{{ d.id }}" value="{{ d.note or '' }}"
+                     placeholder="turno, rol, observación" maxlength="200"
+                     style="margin-top:5px; font-size:.78rem;" />
+            </td>
+            <td><input type="text" name="chat_{{ d.id }}" value="{{ d.telegram_chat_id }}" maxlength="40" /></td>
+            <td>
+              <select name="min_level_{{ d.id }}">
+                <option value="alerta" {{ 'selected' if d.min_level == 'alerta' else '' }}>alerta</option>
+                <option value="alarma" {{ 'selected' if d.min_level == 'alarma' else '' }}>alarma</option>
+              </select>
+            </td>
+            <td>
+              <input type="text" name="kinds_{{ d.id }}" value="{{ d.kinds or '' }}" placeholder="todos" maxlength="120" />
+            </td>
+            <td>
+              <input type="text" name="units_{{ d.id }}" value="{{ d.unit_ids or '' }}" placeholder="todas" maxlength="120" />
+            </td>
+            <td class="nowrap">
+              <input type="number" step="any" name="hours_from_{{ d.id }}"
+                     value="{{ '%g'|format(d.hours_from) if d.hours_from is not none else '' }}" placeholder="0" />
+              <span class="muted">a</span>
+              <input type="number" step="any" name="hours_to_{{ d.id }}"
+                     value="{{ '%g'|format(d.hours_to) if d.hours_to is not none else '' }}" placeholder="24" />
+            </td>
+            <td class="num">{{ envios.get(d.id, 0) }}</td>
+            <td>
+              <label class="switch"><input type="checkbox" name="active_{{ d.id }}" {{ 'checked' if d.active else '' }} /> sí</label>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-title">Agregar destinatario</div>
+    <div class="card">
+      <table>
+        <tbody>
+          <tr>
+            <td style="width:26%"><input type="text" name="nuevo_name" placeholder="Nombre y apellido" maxlength="120" /></td>
+            <td style="width:20%"><input type="text" name="nuevo_chat" placeholder="chat_id de Telegram" maxlength="40" /></td>
+            <td style="width:16%">
+              <select name="nuevo_min_level">
+                <option value="alarma">alarma</option>
+                <option value="alerta">alerta</option>
+              </select>
+            </td>
+            <td><input type="text" name="nuevo_note" placeholder="turno, rol, observación" maxlength="200" /></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <strong>Cómo se saca un chat_id:</strong> la persona tiene que escribirle primero al bot
+      <strong>@AcuicolaAlertasBot</strong> (Telegram no entrega el identificador de nadie que no haya
+      iniciado la conversación). Después se lee con <code>scripts/telegram_chat_id.py</code>.<br>
+      <strong>Tipos</strong> y <strong>unidades</strong> son listas separadas por coma; vacío significa
+      todas. <strong>Horario</strong> en horas decimales (8,5 = 08:30); vacío significa siempre.<br>
+      Ojo con el horario: si nadie cubre una franja, en esa franja no se avisa nada. El turno de noche
+      es la razón de ser del módulo, así que conviene que siempre haya alguien sin restricción horaria.
+      Desactivar a alguien no borra su historial de envíos.
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Guardar destinatarios</button>
+      <a href="/views/ui/calidad-agua/alertas" class="btn btn-ghost">Volver</a>
+    </div>
+  </form>
+
+  <div class="section-title">Unidades (para la columna de filtros)</div>
+  <div class="card">
+    <table>
+      <thead><tr><th class="num">id</th><th>Unidad</th></tr></thead>
+      <tbody>
+        {% for u in units %}
+        <tr><td class="num">{{ u.id }}</td><td>{{ u.name }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+</div></div>
+</body>
+</html>

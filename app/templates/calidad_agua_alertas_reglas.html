@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reglas de aviso – Crianza</title>
+  {% include '_alertas_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/calidad-agua">Calidad de agua</a> ·
+    <a href="/views/ui/calidad-agua/alertas">Alertas</a> · Reglas</div>
+  <div class="page-title">Reglas de aviso</div>
+  <div class="page-sub">Qué se avisa y cada cuánto. Rige desde la próxima pasada del motor, sin reiniciar nada.</div>
+
+  {% include '_alertas_tabs.html' %}
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+  <form method="post" action="/views/ui/calidad-agua/alertas/reglas">
+    {% for r in reglas %}
+    <div class="section-title">{{ kind_labels.get(r.kind, r.kind) }}</div>
+    <div class="card">
+      <table>
+        <tbody>
+          <tr>
+            <td style="width:38%">
+              <div class="t-title">{{ r.label }}</div>
+              <div class="t-detail">{{ r.description }}</div>
+            </td>
+            <td>
+              <label class="switch">
+                <input type="checkbox" name="enabled_{{ r.kind }}" {{ 'checked' if r.enabled else '' }} /> activa
+              </label>
+              <div class="t-kind">Apagarla cierra lo que tenga abierto.</div>
+            </td>
+            <td>
+              <div class="t-kind">Avisar desde</div>
+              <select name="min_level_{{ r.kind }}">
+                <option value="alerta" {{ 'selected' if r.min_level == 'alerta' else '' }}>alerta (todo)</option>
+                <option value="alarma" {{ 'selected' if r.min_level == 'alarma' else '' }}>alarma (sólo lo grave)</option>
+              </select>
+            </td>
+            <td>
+              <div class="t-kind">Piso entre avisos</div>
+              <input type="number" name="cooldown_{{ r.kind }}" min="1" value="{{ r.cooldown_min }}" /> min
+            </td>
+            <td>
+              <div class="t-kind">Recordar cada</div>
+              <input type="number" name="renotify_{{ r.kind }}" min="1"
+                     value="{{ r.renotify_min if r.renotify_min is not none else '' }}"
+                     placeholder="nunca" /> min
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="t-kind">Ventana de silencio (horas decimales, 22 y 7)</div>
+              <div class="t-detail">Dentro de ella sólo pasa <strong>alarma</strong>. Vacío = sin silencio.</div>
+            </td>
+            <td colspan="2">
+              <input type="number" step="any" name="quiet_from_{{ r.kind }}"
+                     value="{{ '%g'|format(r.quiet_from) if r.quiet_from is not none else '' }}" placeholder="desde" />
+              <span class="muted">a</span>
+              <input type="number" step="any" name="quiet_to_{{ r.kind }}"
+                     value="{{ '%g'|format(r.quiet_to) if r.quiet_to is not none else '' }}" placeholder="hasta" />
+            </td>
+            <td colspan="2">
+              {% if r.kind == 'sin_reconocer' %}
+              <div class="t-kind">Escalar después de</div>
+              <input type="number" name="escalate_{{ r.kind }}" min="1"
+                     value="{{ r.escalate_after_min if r.escalate_after_min is not none else '' }}" /> min
+              {% else %}
+              <span class="muted">—</span>
+              <input type="hidden" name="escalate_{{ r.kind }}"
+                     value="{{ r.escalate_after_min if r.escalate_after_min is not none else '' }}" />
+              {% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+
+    <div class="note">
+      El riesgo de esto no es avisar de menos sino avisar de más: un canal que molesta se silencia el
+      primer día y después no sirve para nada. Si el volumen en
+      <a href="/views/ui/calidad-agua/alertas">Alertas</a> se ve alto, el orden para apretar es
+      <strong>nivel mínimo</strong> → <strong>piso entre avisos</strong> → apagar el tipo que domina.
+      El plazo de las rondas no se toca acá: vive en
+      <a href="/views/ui/calidad-agua/umbrales">Umbrales</a>, porque es el mismo que usa el panel.
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Guardar reglas</button>
+      <a href="/views/ui/calidad-agua/alertas" class="btn btn-ghost">Volver</a>
+    </div>
+  </form>
+</div>
+</div></div>
+</body>
+</html>

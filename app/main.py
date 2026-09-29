@@ -17,6 +17,7 @@ from app.api.feed_endpoints import router as feed_router
 from app.api.ovulation import router as ovulation_router
 from app.api.reproduccion import router as reproduccion_router, api_router as reproduccion_api_router
 from app.api.water_quality import router as water_quality_router
+from app.api.wq_alerts_views import router as wq_alerts_views_router
 from app.api.config import router as config_router
 from app.api.field import router as field_router
 from app.api.sexado import router as sexado_router, admin_router as sexado_admin_router
@@ -94,6 +95,7 @@ app.include_router(ovulation_router)
 app.include_router(reproduccion_router)
 app.include_router(reproduccion_api_router)
 app.include_router(water_quality_router)
+app.include_router(wq_alerts_views_router)
 app.include_router(config_router)
 app.include_router(field_router)
 app.include_router(sexado_router)

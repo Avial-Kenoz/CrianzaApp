@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alertas de calidad de agua – Crianza</title>
+  {% include '_alertas_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/calidad-agua">Calidad de agua</a> · Alertas</div>
+  <div class="page-title">Alertas de calidad de agua</div>
+  <div class="page-sub">
+    Lo que el motor detecta corra o no alguien mirando el panel.
+    Última revisión del motor: hace menos de 5 min ({{ now.strftime('%d-%m %H:%M') }}).
+  </div>
+
+  {% include '_alertas_tabs.html' %}
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+  <div class="kpis">
+    <div class="kpi {{ 'rojo' if n_alarma else '' }}">
+      <div class="kpi-n">{{ n_alarma }}</div><div class="kpi-l">En alarma</div>
+    </div>
+    <div class="kpi {{ 'ambar' if n_alerta else '' }}">
+      <div class="kpi-n">{{ n_alerta }}</div><div class="kpi-l">En alerta</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-n">{{ volumen.por_dia_txt }}</div><div class="kpi-l">Avisos / día</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-n">{{ destinatarios_activos }}</div><div class="kpi-l">Destinatarios</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-n">{{ total_envios }}</div><div class="kpi-l">Enviados</div>
+    </div>
+  </div>
+
+  <!-- ===================== ABIERTAS ===================== -->
+  <div class="section-title">Abiertas ahora ({{ abiertas|length }})</div>
+  <div class="card">
+    {% if abiertas %}
+    <table>
+      <thead>
+        <tr>
+          <th>Nivel</th><th>Qué pasa</th><th>Dónde</th>
+          <th class="nowrap">Desde</th><th class="nowrap">Lleva</th>
+          <th>Estado</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in abiertas %}
+        <tr>
+          <td><span class="pill {{ a.level }}">{{ a.level }}</span></td>
+          <td>
+            <div class="t-title">{{ a.title }}</div>
+            <div class="t-detail">{{ a.detail }}</div>
+            <div class="t-kind">{{ a.kind_label }}{% if a.envios %} · {{ a.envios }} aviso(s) enviado(s){% endif %}</div>
+          </td>
+          <td class="nowrap">{{ a.lugar }}</td>
+          <td class="nowrap muted">{{ a.opened_txt }}</td>
+          <td class="nowrap">{{ a.dur }}</td>
+          <td>
+            <span class="pill {{ a.state }}">{{ a.state }}</span>
+            {% if a.ack_note %}<div class="t-detail">{{ a.ack_note }}</div>{% endif %}
+          </td>
+          <td>
+            {% if a.state != 'reconocida' %}
+            <form class="ack-form" method="post" action="/views/ui/calidad-agua/alertas/{{ a.id }}/reconocer">
+              <input type="text" name="nota" placeholder="qué se hizo (opcional)" maxlength="160" />
+              <button type="submit" class="btn btn-ghost btn-sm">Reconocer</button>
+            </form>
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="vacio">Nada abierto. Todos los parámetros vigentes están en rango y las rondas al día.</div>
+    {% endif %}
+  </div>
+
+  <div class="note">
+    <strong>Reconocer</strong> no cierra la alerta: deja constancia de que alguien se hizo cargo y
+    frena el escalamiento. La alerta se cierra sola cuando el dato dice que se resolvió —una lectura
+    nueva en rango, o la ronda al fin tomada—. Es distinto del reconocimiento del operador en terreno
+    (re-ingreso + acción correctiva sobre la lectura), que también la marca como reconocida.
+  </div>
+
+  <!-- ===================== VOLUMEN ===================== -->
+  <div class="section-title">Volumen de los últimos {{ volumen.dias }} días</div>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Día</th>
+          <th class="num">Lectura</th>
+          <th class="num">Ronda</th>
+          <th class="num">Sin reconocer</th>
+          <th class="num">Detectadas</th>
+          <th class="num">Avisos</th>
+          <th style="width:32%"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in volumen.filas %}
+        <tr>
+          <td class="nowrap">{{ f.dia }}</td>
+          <td class="num">{{ f.lectura_alarma or '·' }}</td>
+          <td class="num">{{ f.ronda_vencida or '·' }}</td>
+          <td class="num">{{ f.sin_reconocer or '·' }}</td>
+          <td class="num muted">{{ f.total }}</td>
+          <td class="num"><strong>{{ f.avisos }}</strong></td>
+          <td>
+            <div class="bar"><span class="{{ 'rojo' if f.avisos > 10 else '' }}"
+                 style="width: {{ [f.avisos * 5, 100]|min }}%"></span></div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note {{ 'warn' if volumen.por_dia > 6 else '' }}">
+    <strong>Avisos</strong> es lo que a alguien le habría hecho vibrar el teléfono con las reglas
+    actuales, contando una vez por alerta: no es lo mismo que <strong>detectadas</strong>, porque las
+    reglas filtran por tipo y por nivel.
+    {% if volumen.por_dia > 6 %}
+    Con <strong>{{ volumen.por_dia_txt }} avisos al día</strong> el canal se vuelve ruido y la gente lo
+    silencia. Antes de encenderlo conviene subir el nivel mínimo, apagar el tipo que domina, o
+    aflojar el plazo de las rondas en
+    <a href="/views/ui/calidad-agua/umbrales">Umbrales</a>.
+    {% endif %}
+  </div>
+
+  <!-- ===================== HISTORIAL ===================== -->
+  <div class="section-title">Cerradas recientemente</div>
+  <div class="card">
+    {% if cerradas %}
+    <table>
+      <thead>
+        <tr><th>Nivel</th><th>Qué pasó</th><th>Dónde</th>
+            <th class="nowrap">Abrió</th><th class="nowrap">Cerró</th>
+            <th class="nowrap">Duró</th><th>Desenlace</th></tr>
+      </thead>
+      <tbody>
+        {% for a in cerradas %}
+        <tr>
+          <td><span class="pill {{ a.level }}">{{ a.level }}</span></td>
+          <td>
+            <div class="t-title">{{ a.title }}</div>
+            <div class="t-kind">{{ a.kind_label }}</div>
+          </td>
+          <td class="nowrap">{{ a.lugar }}</td>
+          <td class="nowrap muted">{{ a.opened_txt }}</td>
+          <td class="nowrap muted">{{ a.closed_txt }}</td>
+          <td class="nowrap">{{ a.dur }}</td>
+          <td class="muted">{{ a.close_label }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="vacio">Todavía no se ha cerrado ninguna alerta.</div>
+    {% endif %}
+  </div>
+
+  <div class="actions">
+    <a href="/views/ui/calidad-agua" class="btn btn-ghost">Volver al panel</a>
+    <a href="/views/ui/calidad-agua/alertas/reglas" class="btn btn-ghost">Ajustar reglas</a>
+  </div>
+</div>
+</div></div>
+</body>
+</html>
