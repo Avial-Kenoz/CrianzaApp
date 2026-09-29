@@ -56,6 +56,29 @@
           </tr>
           <tr>
             <td>
+              <div class="t-kind">Avisar recién si lleva abierta</div>
+              <input type="number" name="notify_after_{{ r.kind }}" min="1"
+                     value="{{ r.notify_after_min if r.notify_after_min is not none else '' }}"
+                     placeholder="al instante" /> min
+              <div class="t-detail">Como la alerta se cierra sola al llegar el dato,
+                “abierta 180 min” es “nadie midió en las 3 h siguientes al vencimiento”.</div>
+            </td>
+            <td colspan="2">
+              <div class="t-kind">Resumen diario a las</div>
+              <input type="number" step="any" name="digest_at_{{ r.kind }}"
+                     value="{{ '%g'|format(r.digest_at) if r.digest_at is not none else '' }}"
+                     placeholder="sin resumen" />
+              <div class="t-detail">Hora decimal. Con esto puesto, lo de rutina no suena:
+                se junta y sale una vez al día.</div>
+            </td>
+            <td colspan="2">
+              <div class="t-kind">Combinadas</div>
+              <div class="t-detail">Si están las dos, lo de rutina va al resumen y sólo
+                rompe el silencio la alerta que supera el atraso mínimo.</div>
+            </td>
+          </tr>
+          <tr>
+            <td>
               <div class="t-kind">Ventana de silencio (horas decimales, 22 y 7)</div>
               <div class="t-detail">Dentro de ella sólo pasa <strong>alarma</strong>. Vacío = sin silencio.</div>
             </td>

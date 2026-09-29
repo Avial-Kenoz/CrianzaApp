@@ -108,25 +108,52 @@ def _volumen(db, rules: dict, now: datetime) -> dict:
 
     El segundo número es el que importa antes de encender el canal: no es lo
     mismo "el motor detectó 20 cosas" que "a alguien le vibró el teléfono 20
-    veces". Las reglas filtran por nivel y por tipo, así que el volumen real de
-    mensajes puede ser una fracción del de alertas.
+    veces". Entre una cosa y la otra hay cuatro compuertas —tipo apagado, nivel
+    mínimo, atraso mínimo y resumen diario— y aplicarlas sobre el histórico real
+    es la única forma de saber el volumen ANTES de encender nada.
+
+    El resumen diario cuenta como **un** mensaje en el día en que hubo algo que
+    resumir, no como uno por alerta: de eso se trata.
     """
     desde = (now - timedelta(days=DIAS_VOLUMEN - 1)).replace(
         hour=0, minute=0, second=0, microsecond=0)
     filas: dict = {}
+    digest_dias: dict = {}
     for a in (db.query(WaterQualityAlert)
                 .filter(WaterQualityAlert.opened_at >= desde).all()):
         dia = a.opened_at.strftime("%d-%m")
         f = filas.setdefault(dia, {"dia": dia, "total": 0, "avisos": 0,
+                                   "digest": 0,
                                    al.KIND_LECTURA: 0, al.KIND_RONDA: 0,
                                    al.KIND_SIN_ACK: 0})
         f[a.kind] = f.get(a.kind, 0) + 1
         f["total"] += 1
+
         r = rules.get(a.kind)
-        pasa = (r is None or (r.enabled and
-                al.NIVEL.get(a.level, 0) >= al.NIVEL.get(r.min_level, 2)))
-        if pasa:
+        if r is not None and not r.enabled:
+            continue
+        if r is not None and al.NIVEL.get(a.level, 0) < al.NIVEL.get(r.min_level, 2):
+            continue
+
+        # Cuánto llegó a estar abierta: es lo que decide si habría roto el
+        # silencio del resumen. Las que siguen abiertas cuentan hasta ahora.
+        minutos = ((a.closed_at or now) - a.opened_at).total_seconds() / 60.0
+        umbral = (r.notify_after_min if r is not None else None)
+        alcanza = umbral is None or minutos >= umbral
+
+        if r is not None and r.digest_at is not None:
+            # Tipo en resumen: sólo sale al instante la que supera el atraso.
+            if umbral is not None and alcanza:
+                f["avisos"] += 1
+            else:
+                digest_dias.setdefault(dia, set()).add(a.kind)
+        elif alcanza:
             f["avisos"] += 1
+
+    for dia, kinds in digest_dias.items():
+        if dia in filas:
+            filas[dia]["digest"] = len(kinds)
+            filas[dia]["avisos"] += len(kinds)
     orden = sorted(filas.values(), key=lambda f: f["dia"])
     avisos = sum(f["avisos"] for f in orden)
     por_dia = round(avisos / max(len(orden), 1), 1)
@@ -297,6 +324,8 @@ async def reglas_save(request: Request):
             r.quiet_from = _float_o_none(form.get("quiet_from_" + k))
             r.quiet_to = _float_o_none(form.get("quiet_to_" + k))
             r.escalate_after_min = _int_o_none(form.get("escalate_" + k))
+            r.notify_after_min = _int_o_none(form.get("notify_after_" + k))
+            r.digest_at = _float_o_none(form.get("digest_at_" + k))
             r.updated_at = now
         db.commit()
         return RedirectResponse(

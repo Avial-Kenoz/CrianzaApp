@@ -116,7 +116,7 @@
           <td class="num">{{ f.ronda_vencida or '·' }}</td>
           <td class="num">{{ f.sin_reconocer or '·' }}</td>
           <td class="num muted">{{ f.total }}</td>
-          <td class="num"><strong>{{ f.avisos }}</strong></td>
+          <td class="num"><strong>{{ f.avisos }}</strong>{% if f.digest %}<span class="muted"> (1 resumen)</span>{% endif %}</td>
           <td>
             <div class="bar"><span class="{{ 'rojo' if f.avisos > 10 else '' }}"
                  style="width: {{ [f.avisos * 5, 100]|min }}%"></span></div>
@@ -129,8 +129,9 @@
 
   <div class="note {{ 'warn' if volumen.por_dia > 6 else '' }}">
     <strong>Avisos</strong> es lo que a alguien le habría hecho vibrar el teléfono con las reglas
-    actuales, contando una vez por alerta: no es lo mismo que <strong>detectadas</strong>, porque las
-    reglas filtran por tipo y por nivel.
+    actuales; <strong>detectadas</strong> es lo que el motor vio. Entre una cosa y la otra hay cuatro
+    compuertas: tipo apagado, nivel mínimo, <strong>atraso mínimo</strong> y <strong>resumen
+    diario</strong> —que cuenta como un mensaje al día, no como uno por alerta—.
     {% if volumen.por_dia > 6 %}
     Con <strong>{{ volumen.por_dia_txt }} avisos al día</strong> el canal se vuelve ruido y la gente lo
     silencia. Antes de encenderlo conviene subir el nivel mínimo, apagar el tipo que domina, o
