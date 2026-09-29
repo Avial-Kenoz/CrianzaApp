@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, time as dtime, timedelta
 from typing import Optional
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -80,6 +80,54 @@ def _code(name: Optional[str]) -> str:
 
 def load_rules(db: Session) -> dict:
     return {r.kind: r for r in db.query(WaterQualityAlertRule).all()}
+
+
+# ---------------------------------------------------------------------------
+# Turnos: el corte del consolidado
+# ---------------------------------------------------------------------------
+# No se inventa un horario para los avisos. El turno ya está definido en el
+# módulo (`o2_day_window`, por defecto 08:30-16:00, con el domingo `off`
+# completo) y es el mismo con que se miden las rondas. Si el mensaje de la
+# mañana se cortara a otra hora que el turno que resume, llegaría partido.
+def _win(thresholds: Optional[dict] = None) -> tuple:
+    w = (thresholds or {}).get("o2_day_window") or wq.O2_DAY_WINDOW
+    return float(w["alert"]), float(w["alarm"])
+
+
+def turno_de(cuando: datetime, thresholds: Optional[dict] = None) -> str:
+    """"dia" u "off" según el turno en que cayó ese momento."""
+    if cuando.weekday() == 6:          # domingo: un solo turno, como las rondas
+        return "off"
+    lo, hi = _win(thresholds)
+    h = cuando.hour + cuando.minute / 60.0
+    return "dia" if lo <= h < hi else "off"
+
+
+def _cortes_del_dia(d, thresholds) -> list:
+    """Los instantes en que cambia el turno ese día. El domingo no tiene."""
+    if d.weekday() == 6:
+        return []
+    lo, hi = _win(thresholds)
+    out = []
+    for h in (lo, hi):
+        out.append(datetime.combine(d, dtime(int(h), int(round((h % 1) * 60)))))
+    return out
+
+
+def turno_inicio(cuando: datetime, thresholds: Optional[dict] = None) -> datetime:
+    """Cuándo empezó el turno vigente: el último corte anterior a `cuando`.
+
+    Retrocede día a día porque el domingo no tiene cortes: un lunes a las 07:00
+    el turno vigente arrancó el sábado a las 16:00, y el consolidado de esa
+    mañana tiene que cubrir todo el fin de semana.
+    """
+    d = cuando.date()
+    for _ in range(9):
+        previos = [c for c in _cortes_del_dia(d, thresholds) if c <= cuando]
+        if previos:
+            return max(previos)
+        d = d - timedelta(days=1)
+    return cuando - timedelta(days=1)
 
 
 # ---------------------------------------------------------------------------
@@ -245,21 +293,26 @@ def _scan_sin_reconocer(db: Session, now, rules) -> list:
 def _touch(a: WaterQualityAlert, c: Candidata, now) -> bool:
     """Actualiza una alerta que sigue viva. Devuelve True si ESCALÓ.
 
-    Escalar (alerta → alarma) es un hecho nuevo, no la misma noticia: se
-    refresca el texto, se reabre si estaba reconocida y se limpia la
-    contabilidad de envíos para que vuelva a notificar. Mientras el nivel no
-    empeore, el texto queda como estaba — describe lo que la hizo notificable, y
-    reescribirlo en cada pasada haría que el historial dijera otra cosa que la
-    que se avisó.
+    **El detalle se refresca siempre.** Una alerta abierta describe una
+    condición que sigue pasando, así que sus números tienen que ser los de
+    ahora: congelado, el aviso de una ronda vencida hace catorce horas decía
+    "hace 3,0 h", que fue verdad sólo en el instante en que se abrió. Lo que sí
+    queda inmutable es `message_text` en la bitácora de envíos — ahí se guarda
+    palabra por palabra lo que se le mandó a alguien, que es donde importa que
+    el historial no cambie.
+
+    Escalar (alerta → alarma) es aparte: es un hecho nuevo y no la misma
+    noticia, así que reabre la alerta si estaba reconocida y limpia la
+    contabilidad de envíos para que vuelva a sonar.
     """
     a.last_seen_at = now
     a.updated_at = now
+    a.detail = c.detail
+    a.payload = c.payload
+    a.source_reading_id = c.reading_id
     if NIVEL.get(c.level, 0) > NIVEL.get(a.level, 0):
         a.level = c.level
         a.title = c.title
-        a.detail = c.detail
-        a.payload = c.payload
-        a.source_reading_id = c.reading_id
         a.state = "abierta"
         a.last_notified_at = None
         return True

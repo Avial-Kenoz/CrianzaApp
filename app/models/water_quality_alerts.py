@@ -27,10 +27,13 @@ class WaterQualityAlert(Base):
     es el caso normal. `caducada` es la que se cierra por antigüedad sin que
     nadie la tocara ni se resolviera.
 
-    `title`/`detail` se escriben al abrir y sólo se refrescan si la alerta
-    **escala** de nivel, que es el mismo momento en que vuelve a avisar. El
-    texto describe lo que la hizo notificable; reescribirlo en cada pasada del
-    motor haría que el historial dijera algo distinto de lo que se avisó.
+    `detail` se **refresca en cada pasada** mientras la alerta siga abierta: es
+    la descripción de algo que está pasando ahora, y sus números tienen que ser
+    los de ahora. Congelado, el aviso de una ronda vencida hace catorce horas
+    decía "hace 3,0 h" — verdad sólo en el instante en que se abrió. Lo
+    inmutable es `message_text` en la bitácora de envíos: ahí queda palabra por
+    palabra lo que se le mandó a alguien. El `title` sí se mantiene, y sólo
+    cambia si la alerta escala de nivel.
     """
 
     __tablename__ = "water_quality_alerts"

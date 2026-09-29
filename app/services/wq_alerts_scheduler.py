@@ -10,8 +10,9 @@ más importan son **ausencias** —la ronda que no se tomó, la alarma que nadie
 reconoció— y una ausencia no genera ningún POST que la delate. Sin este job,
 la única forma de enterarse de que nadie midió sería que alguien midiera.
 
-Cada 5 minutos, 24/7. El costo es una pasada del motor: un puñado de consultas
-sobre la última lectura por estanque.
+Cada 5 minutos, 24/7, y en la misma pasada se despachan los avisos que
+correspondan. El costo es un puñado de consultas sobre la última lectura por
+estanque.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.db.session import SessionLocal
 from app.services.wq_alerts import run_detection
+from app.services.wq_notify import dispatch
 
 logger = logging.getLogger("wq_alerts_scheduler")
 
@@ -39,6 +41,22 @@ def _run_detection() -> None:
     except Exception:
         db.rollback()
         logger.exception("fallo la pasada del motor de alertas")
+    finally:
+        db.close()
+
+    # El despacho va en su propia sesión y su propio try: que falle Telegram no
+    # puede dejar a medias la detección, que es la que sostiene el panel. Y al
+    # revés, las alertas quedaron comprometidas antes de intentar mandar nada,
+    # así que un error de red no pierde ninguna — la pasada siguiente las toma.
+    db = SessionLocal()
+    try:
+        res = dispatch(db)
+        if res.get("sin_token") or any(
+                (res.get(k) or {}).get("mensajes") for k in ("instantaneo", "consolidado")):
+            logger.info("despacho de alertas: %s", res)
+    except Exception:
+        db.rollback()
+        logger.exception("fallo el despacho de alertas")
     finally:
         db.close()
 

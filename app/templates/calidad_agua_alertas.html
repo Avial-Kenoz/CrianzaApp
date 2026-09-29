@@ -21,6 +21,20 @@
 
   {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
 
+  {% if not canal_ok %}
+  <div class="note warn">
+    <strong>El canal está apagado:</strong> falta <code>TELEGRAM_BOT_TOKEN</code> en el entorno del
+    servidor (se define en <code>PlantaAPP/server.env</code> y lo carga <code>start_server.cmd</code>).
+    El motor sigue detectando y esta vista sigue al día, pero <strong>no sale ningún mensaje</strong>.
+  </div>
+  {% elif ultimo_error %}
+  <div class="note warn">
+    <strong>Último envío fallido</strong> ({{ ultimo_error.sent_at.strftime('%d-%m %H:%M') }}
+    a {{ ultimo_error.address }}): {{ ultimo_error.error }}.
+    Si dice <em>403</em>, esa persona bloqueó al bot o nunca inició la conversación.
+  </div>
+  {% endif %}
+
   <div class="kpis">
     <div class="kpi {{ 'rojo' if n_alarma else '' }}">
       <div class="kpi-n">{{ n_alarma }}</div><div class="kpi-l">En alarma</div>

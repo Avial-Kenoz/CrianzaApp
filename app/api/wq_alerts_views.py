@@ -38,6 +38,7 @@ from app.models.water_quality_alerts import (
     WaterQualityAlertRecipient,
     WaterQualityAlertRule,
 )
+from app.services import notify_telegram as tg
 from app.services import water_quality as wq
 from app.services import wq_alerts as al
 from app.services.wq_queries import load_thresholds
@@ -221,8 +222,12 @@ def alertas(request: Request, msg: Optional[str] = None,
         ids = [a.id for a in abiertas_q] + [a.id for a in cerradas_q]
         envios: dict = {}
         if ids:
+            # Sólo los que salieron: un intento fallido queda en la bitácora
+            # para diagnóstico, pero contarlo como aviso haría creer que
+            # alguien se enteró.
             for n in (db.query(WaterQualityAlertNotification)
-                        .filter(WaterQualityAlertNotification.alert_id.in_(ids))
+                        .filter(WaterQualityAlertNotification.alert_id.in_(ids),
+                                WaterQualityAlertNotification.ok.is_(True))
                         .all()):
                 envios[n.alert_id] = envios.get(n.alert_id, 0) + 1
 
@@ -232,7 +237,12 @@ def alertas(request: Request, msg: Optional[str] = None,
         destinatarios_activos = (db.query(WaterQualityAlertRecipient)
                                    .filter(WaterQualityAlertRecipient.active.is_(True))
                                    .count())
-        total_envios = db.query(WaterQualityAlertNotification).count()
+        total_envios = (db.query(WaterQualityAlertNotification)
+                          .filter(WaterQualityAlertNotification.ok.is_(True)).count())
+        ultimo_error = (db.query(WaterQualityAlertNotification)
+                          .filter(WaterQualityAlertNotification.ok.is_(False))
+                          .order_by(WaterQualityAlertNotification.sent_at.desc())
+                          .first())
 
         html = jinja_env.get_template("calidad_agua_alertas.html").render(
             request=request, msg=msg, now=now,
@@ -245,6 +255,11 @@ def alertas(request: Request, msg: Optional[str] = None,
             volumen=_volumen(db, rules, now),
             destinatarios_activos=destinatarios_activos,
             total_envios=total_envios,
+            # Si falta el token, la app luce normal y no manda nada: sin este
+            # aviso, el modo de fallar es silencioso y se descubre el día que
+            # alguien esperaba un mensaje que nunca salió.
+            canal_ok=tg.configurado(),
+            ultimo_error=ultimo_error,
             kind_labels=KIND_LABELS,
         )
         return HTMLResponse(html)
