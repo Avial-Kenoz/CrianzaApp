@@ -57,6 +57,26 @@
         </div>
       </form>
 
+      <div class="section-title">Órdenes de trabajo</div>
+      <div class="card">
+        {% if ots_equipo %}
+        <table>
+          <thead><tr><th>OT</th><th>Detectada</th><th>Prioridad</th><th>Estado</th><th>Causa</th></tr></thead>
+          <tbody>
+            {% for o in ots_equipo %}
+            <tr>
+              <td><a class="row-link code" href="{{ prefix }}/ots/{{ o.id }}">{{ folio_ot(o.id) }}</a></td>
+              <td class="mono">{{ o.inicio_at.strftime('%d-%m-%Y %H:%M') }}</td>
+              <td><span class="pill pri-{{ o.prioridad }}">{{ o.prioridad }}</span></td>
+              <td><span class="pill ot-{{ o.estado }}">{{ estados_ot[o.estado] }}</span></td>
+              <td class="desc">{{ o.causa_texto or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<div class="empty">Sin órdenes de trabajo.</div>{% endif %}
+      </div>
+
       {% if historial %}
       <div class="section-title">Historial de criticidad</div>
       <div class="card">
@@ -108,6 +128,7 @@
       <div class="section-title">Acciones</div>
       <div style="display:grid; gap:8px">
         {% if equipo.estado != 'baja' %}
+        <a class="btn btn-primary" href="{{ prefix }}/avisos/nuevo?equipo_id={{ equipo.id }}">Registrar falla</a>
         <a class="btn btn-ghost" href="{{ prefix }}/equipos/nuevo?desde={{ equipo.id }}">Crear redundancia (copiar este equipo)</a>
         {% endif %}
         <a class="btn btn-ghost" href="{{ prefix }}/qr?sitio={{ equipo.sitio }}&codigos={{ equipo.codigo }}">Imprimir QR de este equipo</a>

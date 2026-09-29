@@ -7,16 +7,17 @@ indique; el que llama decide la transacción.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.maintenance import rules
 from app.maintenance.models import (
     SITIOS, MntSistema, MntTipoEquipo, MntContratista, MntPersona, MntEquipo,
-    MntEquipoDestino, MntCriticidadEvaluacion, MntParametro,
+    MntEquipoDestino, MntCriticidadEvaluacion, MntParametro, MntAviso, MntOt, MntOtEvento,
 )
 
 
@@ -528,6 +529,297 @@ def _id_valido(db: Session, modelo, valor, nombre: str) -> Optional[int]:
 
 def _sitio_o_none(valor) -> Optional[str]:
     return valor if valor in SITIOS else None
+
+
+# ---------------------------------------------------------------------------
+# Avisos y OT (PR2)
+# ---------------------------------------------------------------------------
+# Tolerancia para horas "en el futuro": el reloj del teléfono o del PC puede
+# ir un par de minutos adelantado respecto del servidor.
+_MARGEN_FUTURO = timedelta(minutes=5)
+ESTADOS_INICIALES = ("pendiente", "espera_contratista", "espera_repuesto", "en_ejecucion")
+
+
+def resolver_actor(db: Session, texto: Optional[str]) -> tuple[Optional[int], Optional[str]]:
+    """Nombre escrito en «Registra» → (persona_id, nombre). Si coincide con una
+    persona (sin mayúsculas) queda vinculado; si no, se guarda el texto tal
+    cual. En la web de Crianza no hay login: esto anota, no acredita."""
+    t = (texto or "").strip()
+    if not t:
+        return None, None
+    p = db.query(MntPersona).filter(func.lower(MntPersona.nombre) == t.lower()).first()
+    return (p.id, p.nombre) if p else (None, t)
+
+
+def _validar_hora(cuando: Optional[datetime], que: str, no_antes_de: Optional[datetime] = None,
+                  referencia: str = "al último registro de la OT") -> datetime:
+    """`referencia` incluye la preposición ("al último…", "a la detección…")."""
+    if cuando is None:
+        raise ErrorValidacion(f"Falta la hora de {que}.")
+    if cuando > datetime.now() + _MARGEN_FUTURO:
+        raise ErrorValidacion(f"La hora de {que} está en el futuro.")
+    if no_antes_de and cuando < no_antes_de:
+        raise ErrorValidacion(
+            f"La hora de {que} ({cuando:%d-%m %H:%M}) es anterior {referencia} "
+            f"({no_antes_de:%d-%m %H:%M}).")
+    return cuando
+
+
+def plazo_de(db: Session, prioridad: str) -> Optional[Decimal]:
+    """Plazo vigente para una prioridad. Se congela en la OT al asignarlo."""
+    valor = parametros(db).get(f"plazo_{prioridad.lower()}_horas")
+    try:
+        return Decimal(str(valor).replace(",", ".")) if valor else None
+    except InvalidOperation:
+        return None
+
+
+def crear_aviso(db: Session, *, equipo_id: int, condicion: str, origen: str,
+                detectado_at: Optional[datetime] = None, respaldo_entro: Optional[str] = None,
+                descripcion: Optional[str] = None, reportado_por_id: Optional[int] = None,
+                reportante_texto: Optional[str] = None, foto: Optional[bytes] = None) -> MntAviso:
+    """Registra un aviso de falla. La misma función la usará el bot (PR3).
+
+    La entrada nunca rechaza por falta de datos accesorios (spec §6.2): solo
+    exige el equipo y la condición, que es lo que calcula la prioridad.
+    """
+    equipo = db.get(MntEquipo, equipo_id) if equipo_id else None
+    if equipo is None:
+        raise ErrorValidacion("Elige el equipo que falla.")
+    if equipo.estado == "baja":
+        raise ErrorValidacion(f"{equipo.codigo} está dado de baja.")
+    if condicion not in rules.CONDICIONES:
+        raise ErrorValidacion("Indica cómo está el equipo (detenido, con problemas o algo raro).")
+    now = datetime.now()
+    detectado_at = _validar_hora(detectado_at or now, "detección")
+    # «¿Entró el respaldo?» solo tiene sentido si está detenido y tiene respaldo.
+    if condicion != "detenido" or not equipo.respaldo_equipo_id:
+        respaldo_entro = None
+    elif respaldo_entro not in rules.RESPALDO_ENTRO:
+        respaldo_entro = "no_se"
+    aviso = MntAviso(
+        equipo_id=equipo.id, origen=origen, detectado_at=detectado_at, condicion=condicion,
+        respaldo_entro=respaldo_entro, descripcion=(descripcion or "").strip() or None,
+        reportado_por_id=reportado_por_id,
+        reportante_texto=(reportante_texto or "").strip() or None,
+        foto=foto or None,
+        prioridad_sugerida=rules.prioridad_sugerida(equipo.criticidad, condicion, respaldo_entro),
+        estado="nuevo", created_at=now,
+    )
+    db.add(aviso)
+    db.flush()
+    return aviso
+
+
+def ot_abierta_de(db: Session, equipo_id: int) -> Optional[MntOt]:
+    return (db.query(MntOt)
+            .filter(MntOt.equipo_id == equipo_id, MntOt.estado.in_(rules.ESTADOS_ABIERTOS))
+            .order_by(MntOt.id).first())
+
+
+def _evento(db: Session, ot: MntOt, desde: Optional[str], hasta: str, cuando: datetime,
+            actor: tuple, nota: Optional[str] = None) -> None:
+    db.add(MntOtEvento(ot_id=ot.id, estado_desde=desde, estado_hasta=hasta,
+                       ocurrido_at=cuando, registrado_at=datetime.now(),
+                       actor_id=actor[0], actor_texto=actor[1],
+                       nota=(nota or "").strip()[:300] or None))
+
+
+def eventos_de(db: Session, ot_id: int) -> list:
+    return (db.query(MntOtEvento).filter(MntOtEvento.ot_id == ot_id)
+            .order_by(MntOtEvento.ocurrido_at, MntOtEvento.id).all())
+
+
+def _ultima_hora(db: Session, ot: MntOt) -> datetime:
+    ultimo = (db.query(func.max(MntOtEvento.ocurrido_at)).filter(MntOtEvento.ot_id == ot.id).scalar())
+    return ultimo or ot.inicio_at
+
+
+def aceptar_avisos(db: Session, aviso_ids: list[int], *, estado_inicial: str = "pendiente",
+                   cuando: Optional[datetime] = None, actor_texto: Optional[str] = None) -> dict:
+    """Acuse de recibo en lote (spec §5.3): «recibí estos avisos y los estoy
+    atendiendo». Un clic crea las OT y cierra el tramo de reacción de todas
+    con la misma hora.
+
+    Nunca deja dos OT abiertas para un mismo equipo: si el equipo ya tiene una,
+    el aviso se une a ella; y si en el lote vienen varios avisos del mismo
+    equipo, van a una sola OT.
+    """
+    if estado_inicial not in ESTADOS_INICIALES:
+        raise ErrorValidacion("Estado inicial inválido.")
+    avisos = (db.query(MntAviso).filter(MntAviso.id.in_(aviso_ids or []), MntAviso.estado == "nuevo")
+              .order_by(MntAviso.detectado_at, MntAviso.id).all())
+    if not avisos:
+        raise ErrorValidacion("Marca al menos un aviso nuevo.")
+    cuando = cuando or datetime.now()
+    mas_tardio = max(a.detectado_at for a in avisos)
+    _validar_hora(cuando, "acuse", mas_tardio, "a la detección del aviso más reciente")
+    actor = resolver_actor(db, actor_texto)
+
+    por_equipo: dict = {}
+    for a in avisos:
+        por_equipo.setdefault(a.equipo_id, []).append(a)
+
+    creadas, unidos = [], []
+    for equipo_id, grupo in por_equipo.items():
+        ot = ot_abierta_de(db, equipo_id)
+        if ot is not None:
+            for a in grupo:
+                unir_aviso(db, a, ot, actor_texto=actor_texto)
+                unidos.append((a, ot))
+            continue
+        prioridad = rules.prioridad_mas_alta([a.prioridad_sugerida for a in grupo])
+        detenidos = [a.detectado_at for a in grupo if a.condicion == "detenido"]
+        ot = MntOt(
+            tipo="correctiva", equipo_id=equipo_id, prioridad=prioridad,
+            plazo_horas=plazo_de(db, prioridad), estado=estado_inicial,
+            inicio_at=min(a.detectado_at for a in grupo),
+            equipo_detenido_desde=min(detenidos) if detenidos else None,
+            created_at=datetime.now(), updated_at=datetime.now(),
+        )
+        db.add(ot)
+        db.flush()
+        _evento(db, ot, "aviso", estado_inicial, cuando, actor,
+                "Acuse de recibo" + (f" ({len(grupo)} avisos)" if len(grupo) > 1 else ""))
+        for a in grupo:
+            a.estado, a.ot_id = "aceptado", ot.id
+        creadas.append(ot)
+    return {"creadas": creadas, "unidos": unidos}
+
+
+def unir_aviso(db: Session, aviso: MntAviso, ot: MntOt, actor_texto: Optional[str] = None) -> None:
+    """Suma un aviso duplicado a una OT abierta del mismo equipo.
+
+    Si el aviso es más urgente (el equipo empeoró: de «con problemas» a
+    «detenido»), la OT sube de prioridad y queda anotado el motivo.
+    """
+    if aviso.estado != "nuevo":
+        raise ErrorValidacion(f"El aviso {rules.folio_aviso(aviso.id)} ya fue procesado.")
+    if ot.estado not in rules.ESTADOS_ABIERTOS or ot.equipo_id != aviso.equipo_id:
+        raise ErrorValidacion("Solo se puede unir a una OT abierta del mismo equipo.")
+    aviso.estado, aviso.ot_id = "unido", ot.id
+    if aviso.condicion == "detenido" and not ot.equipo_detenido_desde:
+        ot.equipo_detenido_desde = aviso.detectado_at
+    if rules.prioridad_mas_alta([aviso.prioridad_sugerida, ot.prioridad]) != ot.prioridad:
+        cambiar_prioridad(db, ot, aviso.prioridad_sugerida,
+                          f"Aviso {rules.folio_aviso(aviso.id)} más urgente", actor_texto)
+    ot.updated_at = datetime.now()
+
+
+def descartar_aviso(db: Session, aviso: MntAviso, motivo: str) -> None:
+    if aviso.estado != "nuevo":
+        raise ErrorValidacion(f"El aviso {rules.folio_aviso(aviso.id)} ya fue procesado.")
+    motivo = (motivo or "").strip()
+    if not motivo:
+        raise ErrorValidacion("Para descartar un aviso hay que indicar el motivo.")
+    aviso.estado, aviso.motivo_descarte = "descartado", motivo[:200]
+
+
+def cambiar_estado(db: Session, ot: MntOt, nuevo: str, *, cuando: Optional[datetime] = None,
+                   actor_texto: Optional[str] = None, nota: Optional[str] = None) -> None:
+    """Transición de estado con su hora real (`ocurrido_at`, editable).
+
+    La hora no puede ser anterior al último registro de la OT: si lo fuera, los
+    tramos quedarían desordenados. Anular exige motivo.
+    """
+    if not rules.transicion_valida(ot.estado, nuevo):
+        raise ErrorValidacion(f"{rules.folio_ot(ot.id)}: no se puede pasar de "
+                              f"«{rules.ESTADOS_OT.get(ot.estado, ot.estado)}» a "
+                              f"«{rules.ESTADOS_OT.get(nuevo, nuevo)}».")
+    cuando = _validar_hora(cuando or datetime.now(), "el cambio", _ultima_hora(db, ot))
+    if nuevo == "anulada" and not (nota or "").strip():
+        raise ErrorValidacion("Para anular una OT hay que indicar el motivo.")
+    _evento(db, ot, ot.estado, nuevo, cuando, resolver_actor(db, actor_texto), nota)
+    ot.estado = nuevo
+    if nuevo == "anulada":
+        ot.cierre_at = cuando
+    ot.updated_at = datetime.now()
+
+
+def cambiar_prioridad(db: Session, ot: MntOt, prioridad: str, motivo: str,
+                      actor_texto: Optional[str] = None) -> bool:
+    """Cambia la prioridad con motivo obligatorio y vuelve a congelar el plazo.
+    Queda en la bitácora como un evento sin cambio de estado."""
+    if prioridad not in rules.PRIORIDADES:
+        raise ErrorValidacion("Prioridad inválida.")
+    if prioridad == ot.prioridad:
+        return False
+    motivo = (motivo or "").strip()
+    if not motivo:
+        raise ErrorValidacion("Para cambiar la prioridad hay que indicar el motivo.")
+    antes = ot.prioridad
+    ot.prioridad, ot.prioridad_motivo = prioridad, motivo[:200]
+    ot.plazo_horas = plazo_de(db, prioridad)
+    _evento(db, ot, ot.estado, ot.estado, max(datetime.now(), _ultima_hora(db, ot)),
+            resolver_actor(db, actor_texto), f"Prioridad {antes} → {prioridad}: {motivo}")
+    ot.updated_at = datetime.now()
+    return True
+
+
+def asignar_ejecutor(db: Session, ot: MntOt, ejecutor_tipo: Optional[str], tecnico_id=None,
+                     contratista_id=None, actor_texto: Optional[str] = None) -> None:
+    if ejecutor_tipo not in (None, "", "interno", "contratista"):
+        raise ErrorValidacion("Ejecutor inválido.")
+    tecnico_id = _id_valido(db, MntPersona, tecnico_id, "técnico") if ejecutor_tipo == "interno" else None
+    contratista_id = (_id_valido(db, MntContratista, contratista_id, "contratista")
+                      if ejecutor_tipo == "contratista" else None)
+    if ejecutor_tipo == "interno" and not tecnico_id:
+        raise ErrorValidacion("Elige el técnico interno.")
+    if ejecutor_tipo == "contratista" and not contratista_id:
+        raise ErrorValidacion("Elige el contratista.")
+    ot.ejecutor_tipo = ejecutor_tipo or None
+    ot.tecnico_id, ot.contratista_id = tecnico_id, contratista_id
+    if ejecutor_tipo:
+        quien = (db.get(MntPersona, tecnico_id).nombre if tecnico_id
+                 else db.get(MntContratista, contratista_id).empresa)
+        _evento(db, ot, ot.estado, ot.estado, max(datetime.now(), _ultima_hora(db, ot)),
+                resolver_actor(db, actor_texto), f"Ejecutor: {quien}")
+    ot.updated_at = datetime.now()
+
+
+def tramos_de(ot: MntOt, eventos: list, ahora: Optional[datetime] = None) -> dict:
+    """Desglose del tiempo de una OT (horas por tramo + total)."""
+    fin = ot.cierre_at or ahora or datetime.now()
+    return rules.tramos(ot.inicio_at, [(e.estado_hasta, e.ocurrido_at) for e in eventos], fin)
+
+
+def ot_fuera_de_plazo(ot: MntOt, ahora: Optional[datetime] = None) -> bool:
+    if ot.estado == "anulada":
+        return False
+    fin = ot.equipo_en_servicio_at or ot.cierre_at or ahora or datetime.now()
+    return rules.fuera_de_plazo(ot.inicio_at, ot.plazo_horas, fin)
+
+
+def avisos_nuevos(db: Session, sitio: Optional[str] = None) -> list:
+    q = db.query(MntAviso).join(MntEquipo, MntEquipo.id == MntAviso.equipo_id).filter(MntAviso.estado == "nuevo")
+    if sitio:
+        q = q.filter(MntEquipo.sitio == sitio)
+    return q.order_by(MntAviso.prioridad_sugerida, MntAviso.detectado_at).all()
+
+
+def ots(db: Session, *, sitio: Optional[str] = None, abiertas: bool = True,
+        desde: Optional[datetime] = None) -> list:
+    q = db.query(MntOt).join(MntEquipo, MntEquipo.id == MntOt.equipo_id)
+    if sitio:
+        q = q.filter(MntEquipo.sitio == sitio)
+    if abiertas:
+        q = q.filter(MntOt.estado.in_(rules.ESTADOS_ABIERTOS)).order_by(MntOt.prioridad, MntOt.inicio_at)
+    else:
+        q = q.filter(MntOt.estado.in_(rules.ESTADOS_FINALES))
+        if desde:
+            q = q.filter(MntOt.cierre_at >= desde)
+        q = q.order_by(MntOt.cierre_at.desc())
+    return q.all()
+
+
+def eventos_por_ot(db: Session, ot_ids: list[int]) -> dict:
+    """Eventos de varias OT en una sola consulta (para el tablero)."""
+    out: dict = {i: [] for i in ot_ids}
+    if ot_ids:
+        for e in (db.query(MntOtEvento).filter(MntOtEvento.ot_id.in_(ot_ids))
+                  .order_by(MntOtEvento.ocurrido_at, MntOtEvento.id).all()):
+            out[e.ot_id].append(e)
+    return out
 
 
 # ---------------------------------------------------------------------------

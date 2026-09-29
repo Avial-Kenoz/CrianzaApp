@@ -10,6 +10,7 @@ donde viven las reglas (las mismas que usarán la API de Planta y el bot).
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote_plus
@@ -22,8 +23,8 @@ from jinja2 import Environment, FileSystemLoader
 from app.db.session import SessionLocal
 from app.maintenance import rules, service
 from app.maintenance.models import (
-    SITIOS, SITIO_LABELS, MntContratista, MntEquipo, MntPersona, MntSistema,
-    MntTipoEquipo, MntParametro,
+    SITIOS, SITIO_LABELS, MntAviso, MntContratista, MntEquipo, MntOt, MntPersona,
+    MntSistema, MntTipoEquipo, MntParametro,
 )
 from app.maintenance.service import ErrorValidacion
 
@@ -98,8 +99,278 @@ def _bot_username() -> str:
 # ---------------------------------------------------------------------------
 @router.get("", response_class=HTMLResponse)
 def home():
-    # En PR2 la entrada pasa a ser el tablero de OT.
-    return RedirectResponse(url=f"{PREFIX}/equipos", status_code=303)
+    return RedirectResponse(url=f"{PREFIX}/tablero", status_code=303)
+
+
+def _parse_dt(valor: Optional[str]) -> Optional[datetime]:
+    """'2026-09-29T14:30' (datetime-local) → datetime; vacío → None."""
+    v = (valor or "").strip()
+    if not v:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(v, fmt)
+        except ValueError:
+            continue
+    raise ErrorValidacion(f"Hora inválida: {v}")
+
+
+def _ot_ctx() -> dict:
+    return {
+        "estados_ot": rules.ESTADOS_OT, "estados_abiertos": rules.ESTADOS_ABIERTOS,
+        "estados_iniciales": service.ESTADOS_INICIALES, "tramos_labels": rules.TRAMOS,
+        "prioridades": rules.PRIORIDADES, "condiciones": rules.CONDICIONES,
+        "respaldo_entro": rules.RESPALDO_ENTRO, "folio_ot": rules.folio_ot,
+        "folio_aviso": rules.folio_aviso, "dur": rules.formato_duracion,
+    }
+
+
+def _fila_ot(ot, equipo, eventos, ahora) -> dict:
+    t = service.tramos_de(ot, eventos, ahora)
+    return {
+        "ot": ot, "equipo": equipo, "tramos": t,
+        "vencida": service.ot_fuera_de_plazo(ot, ahora),
+        "edad": ((ot.cierre_at or ahora) - ot.inicio_at).total_seconds() / 3600.0,
+        "restante": (float(ot.plazo_horas) - ((ahora - ot.inicio_at).total_seconds() / 3600.0))
+                    if ot.plazo_horas is not None and ot.estado in rules.ESTADOS_ABIERTOS else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tablero
+# ---------------------------------------------------------------------------
+@router.get("/tablero", response_class=HTMLResponse)
+def tablero(request: Request, sitio: str = ""):
+    db = SessionLocal()
+    try:
+        sitio = sitio if sitio in SITIOS else ""
+        ahora = datetime.now()
+        equipos = {e.id: e for e in service.equipos(db, incluir_baja=True)}
+        avisos = service.avisos_nuevos(db, sitio or None)
+        abiertas = service.ots(db, sitio=sitio or None)
+        cerradas = service.ots(db, sitio=sitio or None, abiertas=False, desde=ahora - timedelta(days=14))
+        ev = service.eventos_por_ot(db, [o.id for o in abiertas + cerradas])
+        filas = [_fila_ot(o, equipos.get(o.equipo_id), ev[o.id], ahora) for o in abiertas]
+        filas_cerr = [_fila_ot(o, equipos.get(o.equipo_id), ev[o.id], ahora) for o in cerradas]
+        # Avisos nuevos cuyo equipo ya tiene OT abierta: se ofrecen para unir.
+        abierta_por_equipo = {o.equipo_id: o for o in abiertas}
+        return _render(
+            "mantenimiento_tablero.html", request, active="tablero", f_sitio=sitio,
+            avisos=[{"a": a, "equipo": equipos.get(a.equipo_id), "ot_abierta": abierta_por_equipo.get(a.equipo_id),
+                     "espera": (ahora - a.detectado_at).total_seconds() / 3600.0} for a in avisos],
+            filas=filas, filas_cerradas=filas_cerr, ahora=ahora,
+            kpi={"avisos": len(avisos), "abiertas": len(abiertas),
+                 "p1": sum(1 for o in abiertas if o.prioridad == "P1"),
+                 "vencidas": sum(1 for f in filas if f["vencida"])},
+            nombres_personas=[p.nombre for p in service.personas(db)],
+            **_ot_ctx(),
+        )
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Avisos
+# ---------------------------------------------------------------------------
+@router.get("/avisos/nuevo", response_class=HTMLResponse)
+def aviso_nuevo_form(request: Request, equipo_id: Optional[int] = None):
+    db = SessionLocal()
+    try:
+        return _render(
+            "mantenimiento_aviso_nuevo.html", request, active="tablero",
+            equipos=service.equipos(db), equipo_sel=equipo_id,
+            respaldos={e.id: e.respaldo_equipo_id for e in service.equipos(db)},
+            ahora=datetime.now(), nombres_personas=[p.nombre for p in service.personas(db)],
+            **_ot_ctx(),
+        )
+    finally:
+        db.close()
+
+
+@router.post("/avisos/nuevo")
+async def aviso_nuevo(request: Request):
+    form = await request.form()
+    foto = form.get("foto")
+    contenido = await foto.read() if foto is not None and hasattr(foto, "read") else None
+    db = SessionLocal()
+    try:
+        pid, ptxt = service.resolver_actor(db, form.get("reportante"))
+        aviso = service.crear_aviso(
+            db, equipo_id=int(form.get("equipo_id") or 0), condicion=form.get("condicion") or "",
+            origen="web", detectado_at=_parse_dt(form.get("detectado_at")),
+            respaldo_entro=form.get("respaldo_entro"), descripcion=form.get("descripcion"),
+            reportado_por_id=pid, reportante_texto=ptxt,
+            foto=contenido if contenido and len(contenido) <= 3 * 1024 * 1024 else None,
+        )
+        db.commit()
+        return _volver(f"{PREFIX}/tablero",
+                       msg=f"Aviso {rules.folio_aviso(aviso.id)} registrado · sugerida {aviso.prioridad_sugerida}.")
+    except (ErrorValidacion, ValueError) as e:
+        db.rollback()
+        destino = f"{PREFIX}/avisos/nuevo" + (f"?equipo_id={form.get('equipo_id')}" if form.get("equipo_id") else "")
+        return _volver(destino, err=str(e))
+    finally:
+        db.close()
+
+
+@router.post("/avisos/aceptar")
+async def avisos_aceptar(request: Request):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        ids = [int(x) for x in form.getlist("aviso_id") if str(x).isdigit()]
+        r = service.aceptar_avisos(db, ids, estado_inicial=form.get("estado_inicial") or "pendiente",
+                                   cuando=_parse_dt(form.get("cuando")), actor_texto=form.get("actor"))
+        db.commit()
+        partes = []
+        if r["creadas"]:
+            partes.append(f"{len(r['creadas'])} OT creada{'s' if len(r['creadas']) != 1 else ''} "
+                          f"({', '.join(rules.folio_ot(o.id) for o in r['creadas'])})")
+        if r["unidos"]:
+            partes.append(f"{len(r['unidos'])} aviso{'s' if len(r['unidos']) != 1 else ''} unido"
+                          f"{'s' if len(r['unidos']) != 1 else ''} a su OT abierta")
+        return _volver(f"{PREFIX}/tablero", msg="Recibido: " + " · ".join(partes) + ".")
+    except ErrorValidacion as e:
+        db.rollback()
+        return _volver(f"{PREFIX}/tablero", err=str(e))
+    finally:
+        db.close()
+
+
+@router.post("/avisos/{aviso_id}/unir")
+async def aviso_unir(request: Request, aviso_id: int):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        aviso = db.get(MntAviso, aviso_id)
+        ot = db.get(MntOt, int(form.get("ot_id") or 0))
+        if aviso is None or ot is None:
+            return _volver(f"{PREFIX}/tablero", err="Aviso u OT inexistente.")
+        service.unir_aviso(db, aviso, ot, actor_texto=form.get("actor"))
+        db.commit()
+        return _volver(f"{PREFIX}/tablero", msg=f"{rules.folio_aviso(aviso.id)} unido a {rules.folio_ot(ot.id)}.")
+    except ErrorValidacion as e:
+        db.rollback()
+        return _volver(f"{PREFIX}/tablero", err=str(e))
+    finally:
+        db.close()
+
+
+@router.post("/avisos/{aviso_id}/descartar")
+async def aviso_descartar(request: Request, aviso_id: int):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        aviso = db.get(MntAviso, aviso_id)
+        if aviso is None:
+            return _volver(f"{PREFIX}/tablero", err="Ese aviso no existe.")
+        service.descartar_aviso(db, aviso, form.get("motivo"))
+        db.commit()
+        return _volver(f"{PREFIX}/tablero", msg=f"Aviso {rules.folio_aviso(aviso.id)} descartado.")
+    except ErrorValidacion as e:
+        db.rollback()
+        return _volver(f"{PREFIX}/tablero", err=str(e))
+    finally:
+        db.close()
+
+
+@router.get("/avisos/{aviso_id}/foto")
+def aviso_foto(aviso_id: int):
+    db = SessionLocal()
+    try:
+        a = db.get(MntAviso, aviso_id)
+        if a is None or not a.foto:
+            return Response(status_code=404)
+        return Response(content=a.foto, media_type="image/jpeg")
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# OT: detalle y cambios
+# ---------------------------------------------------------------------------
+@router.get("/ots/{ot_id}", response_class=HTMLResponse)
+def ot_detalle(request: Request, ot_id: int):
+    db = SessionLocal()
+    try:
+        ot = db.get(MntOt, ot_id)
+        if ot is None:
+            return _volver(f"{PREFIX}/tablero", err="Esa OT no existe.")
+        ahora = datetime.now()
+        eventos = service.eventos_de(db, ot.id)
+        equipo = db.get(MntEquipo, ot.equipo_id)
+        return _render(
+            "mantenimiento_ot.html", request, active="tablero",
+            fila=_fila_ot(ot, equipo, eventos, ahora), ot=ot, equipo=equipo, eventos=eventos,
+            avisos=db.query(MntAviso).filter(MntAviso.ot_id == ot.id).order_by(MntAviso.detectado_at).all(),
+            personas_map={p.id: p.nombre for p in service.personas(db, solo_activas=False)},
+            tecnicos=[p for p in service.personas(db) if p.rol == "tecnico"],
+            contratistas=service.contratistas(db),
+            contratista=db.get(MntContratista, ot.contratista_id) if ot.contratista_id else None,
+            tecnico=db.get(MntPersona, ot.tecnico_id) if ot.tecnico_id else None,
+            ot_origen=db.get(MntOt, ot.ot_origen_id) if ot.ot_origen_id else None,
+            ot_derivadas=db.query(MntOt).filter(MntOt.ot_origen_id == ot.id).all(),
+            ahora=ahora, nombres_personas=[p.nombre for p in service.personas(db)],
+            **_ot_ctx(),
+        )
+    finally:
+        db.close()
+
+
+@router.post("/ots/{ot_id}/estado")
+async def ot_estado(request: Request, ot_id: int):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        ot = db.get(MntOt, ot_id)
+        if ot is None:
+            return _volver(f"{PREFIX}/tablero", err="Esa OT no existe.")
+        service.cambiar_estado(db, ot, form.get("estado") or "", cuando=_parse_dt(form.get("cuando")),
+                               actor_texto=form.get("actor"), nota=form.get("nota"))
+        db.commit()
+        return _volver(f"{PREFIX}/ots/{ot_id}", msg=f"{rules.folio_ot(ot.id)}: {rules.ESTADOS_OT[ot.estado]}.")
+    except ErrorValidacion as e:
+        db.rollback()
+        return _volver(f"{PREFIX}/ots/{ot_id}", err=str(e))
+    finally:
+        db.close()
+
+
+@router.post("/ots/{ot_id}/prioridad")
+async def ot_prioridad(request: Request, ot_id: int):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        ot = db.get(MntOt, ot_id)
+        if ot is None:
+            return _volver(f"{PREFIX}/tablero", err="Esa OT no existe.")
+        hubo = service.cambiar_prioridad(db, ot, form.get("prioridad") or "", form.get("motivo"), form.get("actor"))
+        db.commit()
+        return _volver(f"{PREFIX}/ots/{ot_id}", msg="Prioridad cambiada." if hubo else "La prioridad no cambió.")
+    except ErrorValidacion as e:
+        db.rollback()
+        return _volver(f"{PREFIX}/ots/{ot_id}", err=str(e))
+    finally:
+        db.close()
+
+
+@router.post("/ots/{ot_id}/ejecutor")
+async def ot_ejecutor(request: Request, ot_id: int):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        ot = db.get(MntOt, ot_id)
+        if ot is None:
+            return _volver(f"{PREFIX}/tablero", err="Esa OT no existe.")
+        service.asignar_ejecutor(db, ot, form.get("ejecutor_tipo") or None, form.get("tecnico_id"),
+                                 form.get("contratista_id"), form.get("actor"))
+        db.commit()
+        return _volver(f"{PREFIX}/ots/{ot_id}", msg="Ejecutor asignado.")
+    except ErrorValidacion as e:
+        db.rollback()
+        return _volver(f"{PREFIX}/ots/{ot_id}", err=str(e))
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +479,9 @@ def equipo_ficha(request: Request, equipo_id: int):
             historial=service.historial_criticidad(db, equipo.id),
             destinos_sel=destinos, destinos_labels=service.etiquetas_destinos(db, destinos),
             respaldo_incoherente=service.respaldo_incoherente(equipo, ev),
+            ots_equipo=db.query(MntOt).filter(MntOt.equipo_id == equipo.id)
+                        .order_by(MntOt.inicio_at.desc()).limit(30).all(),
+            **_ot_ctx(),
             respaldo=db.get(MntEquipo, equipo.respaldo_equipo_id) if equipo.respaldo_equipo_id else None,
             respaldado_por_este=[e for e in service.equipos(db) if e.respaldo_equipo_id == equipo.id],
             **_ficha_ctx(db, excluir_id=equipo.id),

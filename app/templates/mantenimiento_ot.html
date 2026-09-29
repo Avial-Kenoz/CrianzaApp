@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ folio_ot(ot.id) }} – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+{% set abierta = ot.estado in estados_abiertos %}
+<div class="page">
+  <div class="crumb"><a href="{{ prefix }}/tablero">Mantenimiento · Tablero</a> / {{ folio_ot(ot.id) }}</div>
+  <div class="page-title">
+    <span class="code" style="font-size:1.1rem">{{ folio_ot(ot.id) }}</span> ·
+    <a class="row-link" href="{{ prefix }}/equipos/{{ equipo.id }}">{{ equipo.codigo }} {{ equipo.nombre }}</a>
+  </div>
+  <div class="page-sub">
+    <span class="pill sitio-{{ equipo.sitio }}">{{ sitio_labels[equipo.sitio] }}</span>
+    <span class="pill pri-{{ ot.prioridad }}">{{ prioridades[ot.prioridad] }}</span>
+    <span class="pill ot-{{ ot.estado }}">{{ estados_ot[ot.estado] }}</span>
+    {% if equipo.criticidad %}<span class="pill crit-{{ equipo.criticidad }}">{{ criticidad_labels[equipo.criticidad] }}</span>{% endif %}
+    {% if ot.tipo == 'preventiva' %}<span class="pill muted">Preventiva</span>{% endif %}
+    {% if fila.vencida %}<span class="vencida" style="margin-left:6px">Fuera de plazo</span>{% endif %}
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+  {% if abierta %}{% include '_mnt_actor.html' %}{% endif %}
+
+  <div class="two-col">
+    <div>
+      <div class="section-title" style="margin-top:0">¿Dónde se va el tiempo?</div>
+      <div class="form-card">
+        {% with t = fila.tramos %}{% include '_mnt_tbar.html' %}{% endwith %}
+        <table style="margin-top:10px">
+          <tbody>
+            {% for k, l in tramos_labels.items() %}{% if fila.tramos[k] > 0 %}
+            <tr><td><span class="leyenda" style="margin:0"><span class="t-{{ k }}" style="background:none">{{ l }}</span></span></td>
+                <td class="num mono">{{ dur(fila.tramos[k]) }}</td>
+                <td class="num mono">{{ (fila.tramos[k] / fila.tramos.total * 100) | round | int if fila.tramos.total else 0 }} %</td></tr>
+            {% endif %}{% endfor %}
+            <tr><td><b>Total</b>{% if abierta %} <span class="mono">(sigue corriendo)</span>{% endif %}</td>
+                <td class="num mono"><b>{{ dur(fila.tramos.total) }}</b></td>
+                <td class="num mono">{% if ot.plazo_horas is not none %}plazo {{ dur(ot.plazo_horas|float) }}{% endif %}</td></tr>
+          </tbody>
+        </table>
+        <div class="hint">Desde la detección ({{ ot.inicio_at.strftime('%d-%m %H:%M') }}){% if ot.equipo_detenido_desde %} · equipo detenido desde {{ ot.equipo_detenido_desde.strftime('%d-%m %H:%M') }}{% endif %}.</div>
+      </div>
+
+      <div class="section-title">Bitácora</div>
+      <div class="card">
+        <table>
+          <thead><tr><th>Cuándo</th><th>Cambio</th><th>Nota</th><th>Registró</th></tr></thead>
+          <tbody>
+            {% for e in eventos %}
+            {% set tarde = (e.registrado_at - e.ocurrido_at).total_seconds() > 3600 %}
+            <tr>
+              <td class="mono">{{ e.ocurrido_at.strftime('%d-%m %H:%M') }}
+                {% if tarde %}<div title="Anotado el {{ e.registrado_at.strftime('%d-%m %H:%M') }}">anotado {{ e.registrado_at.strftime('%d-%m %H:%M') }}</div>{% endif %}</td>
+              <td>
+                {% if e.estado_desde == e.estado_hasta %}<span class="mono">—</span>
+                {% else %}{% if e.estado_desde and e.estado_desde != 'aviso' %}<span class="pill ot-{{ e.estado_desde }}">{{ estados_ot[e.estado_desde] }}</span> → {% elif e.estado_desde == 'aviso' %}<span class="mono">Aviso →</span> {% endif %}<span class="pill ot-{{ e.estado_hasta }}">{{ estados_ot[e.estado_hasta] }}</span>{% endif %}
+              </td>
+              <td class="desc">{{ e.nota or '' }}</td>
+              <td class="mono">{{ personas_map.get(e.actor_id) or e.actor_texto or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-title">Avisos de esta OT</div>
+      <div class="card">
+        <table>
+          <tbody>
+            {% for a in avisos %}
+            <tr>
+              <td><span class="code">{{ folio_aviso(a.id) }}</span><div class="mono">{{ a.detectado_at.strftime('%d-%m %H:%M') }}</div></td>
+              <td><span class="pill cond-{{ a.condicion }}">{{ condiciones[a.condicion] }}</span>
+                {% if a.respaldo_entro %}<div class="mono">Respaldo entró: {{ respaldo_entro[a.respaldo_entro] }}</div>{% endif %}</td>
+              <td class="desc">{{ a.descripcion or '—' }}{% if a.reportante_texto %}<div class="mono">— {{ a.reportante_texto }}</div>{% endif %}</td>
+              <td>{% if a.foto %}<a href="{{ prefix }}/avisos/{{ a.id }}/foto" target="_blank"><img class="thumb" src="{{ prefix }}/avisos/{{ a.id }}/foto" alt="foto"></a>{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td class="empty">Sin avisos (OT creada directamente).</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      {% if abierta %}
+      <div class="section-title" style="margin-top:0">Cambiar estado</div>
+      <form class="form-card con-actor" method="post" action="{{ prefix }}/ots/{{ ot.id }}/estado">
+        <div class="grid-form" style="grid-template-columns:1fr">
+          <div>
+            <label for="estado">Pasa a</label>
+            <select id="estado" name="estado" required>
+              {% for e in estados_abiertos if e != ot.estado %}<option value="{{ e }}">{{ estados_ot[e] }}</option>{% endfor %}
+            </select>
+          </div>
+          <div>
+            <label for="cuando">Cuándo</label>
+            <input type="datetime-local" id="cuando" name="cuando" data-ahora>
+            <div class="hint">Si pasó antes, corrige la hora: los tramos se miden con ella.</div>
+          </div>
+          <div><label for="nota">Nota</label><input type="text" id="nota" name="nota" maxlength="300" placeholder="Ej.: contratista dice que llega el jueves"></div>
+        </div>
+        <div style="margin-top:12px"><button class="btn btn-primary" type="submit">Guardar cambio</button></div>
+      </form>
+
+      <div class="section-title">Ejecutor</div>
+      <form class="form-card con-actor" method="post" action="{{ prefix }}/ots/{{ ot.id }}/ejecutor">
+        <div class="grid-form" style="grid-template-columns:1fr">
+          <div>
+            <select name="ejecutor_tipo" id="ejecutor_tipo">
+              <option value="">Sin asignar</option>
+              <option value="interno" {% if ot.ejecutor_tipo == 'interno' %}selected{% endif %}>Técnico interno</option>
+              <option value="contratista" {% if ot.ejecutor_tipo == 'contratista' %}selected{% endif %}>Contratista</option>
+            </select>
+          </div>
+          <div data-ej="interno">
+            <select name="tecnico_id"><option value="">—</option>{% for p in tecnicos %}<option value="{{ p.id }}" {% if ot.tecnico_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>{% endfor %}</select>
+            {% if not tecnicos %}<div class="hint">No hay personas con rol «Técnico interno».</div>{% endif %}
+          </div>
+          <div data-ej="contratista">
+            <select name="contratista_id"><option value="">—</option>{% for c in contratistas %}<option value="{{ c.id }}" {% if ot.contratista_id == c.id or (not ot.contratista_id and equipo.contratista_habitual_id == c.id) %}selected{% endif %}>{{ c.empresa }}</option>{% endfor %}</select>
+          </div>
+        </div>
+        <div style="margin-top:12px"><button class="btn btn-ghost" type="submit">Asignar</button></div>
+      </form>
+
+      <div class="section-title">Prioridad</div>
+      <form class="form-card con-actor" method="post" action="{{ prefix }}/ots/{{ ot.id }}/prioridad">
+        <div class="opts" style="margin-bottom:10px">
+          {% for k, l in prioridades.items() %}<label><input type="radio" name="prioridad" value="{{ k }}" {% if ot.prioridad == k %}checked{% endif %}> {{ l }}</label>{% endfor %}
+        </div>
+        <input type="text" name="motivo" maxlength="200" placeholder="Motivo del cambio (obligatorio)" style="width:100%">
+        {% if ot.prioridad_motivo %}<div class="hint">Último motivo: {{ ot.prioridad_motivo }}</div>{% endif %}
+        <div style="margin-top:12px"><button class="btn btn-ghost" type="submit">Cambiar prioridad</button></div>
+      </form>
+
+      <div class="section-title">Anular</div>
+      <form class="form-card con-actor" method="post" action="{{ prefix }}/ots/{{ ot.id }}/estado"
+            onsubmit="return confirm('¿Anular {{ folio_ot(ot.id) }}? No se puede deshacer.');">
+        <input type="hidden" name="estado" value="anulada">
+        <input type="hidden" name="cuando" data-ahora>
+        <input type="text" name="nota" maxlength="300" placeholder="Motivo (obligatorio): falsa alarma, duplicada…" style="width:100%" required>
+        <div style="margin-top:12px"><button class="btn btn-danger" type="submit">Anular OT</button></div>
+      </form>
+      {% else %}
+      <div class="section-title" style="margin-top:0">Resumen</div>
+      <div class="form-card">
+        <dl class="kv">
+          <dt>{{ 'Cerrada' if ot.estado == 'cerrada' else 'Anulada' }}</dt><dd>{{ ot.cierre_at.strftime('%d-%m-%Y %H:%M') if ot.cierre_at else '—' }}</dd>
+          {% if ot.equipo_en_servicio_at %}<dt>En servicio</dt><dd>{{ ot.equipo_en_servicio_at.strftime('%d-%m-%Y %H:%M') }}</dd>{% endif %}
+          {% if ot.causa_texto %}<dt>Causa</dt><dd>{{ ot.causa_texto }}</dd>{% endif %}
+          {% if ot.accion_texto %}<dt>Acción</dt><dd>{{ ot.accion_texto }}</dd>{% endif %}
+          {% if ot.provisorio %}<dt>Provisorio</dt><dd>Sí</dd>{% endif %}
+          {% if ot.repuestos_texto %}<dt>Repuestos</dt><dd>{{ ot.repuestos_texto }}</dd>{% endif %}
+          {% if ot.trabajo_realizado %}<dt>Trabajo</dt><dd>{{ ot.trabajo_realizado }}</dd>{% endif %}
+        </dl>
+      </div>
+      {% endif %}
+
+      <div class="section-title">Datos</div>
+      <div class="form-card">
+        <dl class="kv">
+          <dt>Ejecuta</dt><dd>{{ tecnico.nombre if tecnico else (contratista.empresa if contratista else '—') }}</dd>
+          {% if ot_origen %}<dt>Viene de</dt><dd><a class="row-link" href="{{ prefix }}/ots/{{ ot_origen.id }}">{{ folio_ot(ot_origen.id) }}</a> (arreglo provisorio)</dd>{% endif %}
+          {% for d in ot_derivadas %}<dt>Definitiva</dt><dd><a class="row-link" href="{{ prefix }}/ots/{{ d.id }}">{{ folio_ot(d.id) }}</a></dd>{% endfor %}
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  const sel = document.getElementById('ejecutor_tipo');
+  if (!sel) return;
+  const sync = () => document.querySelectorAll('[data-ej]').forEach(d => { d.hidden = d.dataset.ej !== sel.value; });
+  sel.addEventListener('change', sync); sync();
+})();
+</script>
+</body>
+</html>

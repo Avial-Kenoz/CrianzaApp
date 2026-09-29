@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tablero – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb">Mantenimiento</div>
+  <div class="page-title">Tablero</div>
+  <div class="page-sub">Avisos por atender y órdenes de trabajo abiertas de Crianza y Planta.</div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_mnt_tabs.html' %}
+  {% include '_mnt_actor.html' %}
+
+  <div class="kpis">
+    <div class="kpi {{ 'warn' if kpi.avisos }}"><div class="n">{{ kpi.avisos }}</div><div class="l">Avisos sin atender</div></div>
+    <div class="kpi hi"><div class="n">{{ kpi.abiertas }}</div><div class="l">OT abiertas</div></div>
+    <div class="kpi {{ 'bad' if kpi.p1 }}"><div class="n">{{ kpi.p1 }}</div><div class="l">P1 abiertas</div></div>
+    <div class="kpi {{ 'bad' if kpi.vencidas }}"><div class="n">{{ kpi.vencidas }}</div><div class="l">Fuera de plazo</div></div>
+  </div>
+
+  <form class="toolbar" method="get" style="margin-top:16px">
+    <div class="fld">
+      <label for="f-sitio">Sitio</label>
+      <select id="f-sitio" name="sitio" onchange="this.form.submit()">
+        <option value="">Ambos</option>
+        {% for k, l in sitio_labels.items() %}<option value="{{ k }}" {% if f_sitio == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select>
+    </div>
+    <div style="flex:1"></div>
+    <a class="btn btn-primary" href="{{ prefix }}/avisos/nuevo">+ Registrar falla</a>
+  </form>
+
+  {# ------------------------------------------------------------------ avisos #}
+  <div class="section-title">Avisos sin atender</div>
+  {% if avisos %}
+  <form method="post" action="{{ prefix }}/avisos/aceptar" class="card con-actor" id="form-acuse">
+    <table>
+      <thead>
+        <tr><th style="width:34px"><input type="checkbox" id="todos" title="Marcar todos"></th>
+            <th>Aviso</th><th>Equipo</th><th>Condición</th><th>Sugerida</th><th>Detectado</th><th>Qué pasa</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for x in avisos %}{% set a = x.a %}
+        <tr class="{{ 'fila-p1' if a.prioridad_sugerida == 'P1' }}">
+          <td><input type="checkbox" name="aviso_id" value="{{ a.id }}" class="chk-aviso"></td>
+          <td><span class="code">{{ folio_aviso(a.id) }}</span><div class="mono">{{ 'Telegram' if a.origen == 'telegram' else ('Planta' if a.origen == 'planta_web' else 'Web') }}</div></td>
+          <td>
+            <a class="row-link" href="{{ prefix }}/equipos/{{ x.equipo.id }}"><span class="code">{{ x.equipo.codigo }}</span> {{ x.equipo.nombre }}</a>
+            <div><span class="pill sitio-{{ x.equipo.sitio }}">{{ sitio_labels[x.equipo.sitio] }}</span></div>
+          </td>
+          <td>
+            <span class="pill cond-{{ a.condicion }}">{{ condiciones[a.condicion] }}</span>
+            {% if a.respaldo_entro %}<div class="mono">Respaldo entró: {{ respaldo_entro[a.respaldo_entro] }}</div>{% endif %}
+          </td>
+          <td><span class="pill pri-{{ a.prioridad_sugerida }}">{{ a.prioridad_sugerida }}</span></td>
+          <td class="mono">{{ a.detectado_at.strftime('%d-%m %H:%M') }}<div>hace {{ dur(x.espera) }}</div></td>
+          <td>
+            <div style="display:flex; gap:8px; align-items:flex-start">
+              {% if a.foto %}<a href="{{ prefix }}/avisos/{{ a.id }}/foto" target="_blank"><img class="thumb" src="{{ prefix }}/avisos/{{ a.id }}/foto" alt="foto"></a>{% endif %}
+              <div class="desc">{{ a.descripcion or '—' }}{% if a.reportante_texto %}<div class="mono">— {{ a.reportante_texto }}</div>{% endif %}</div>
+            </div>
+          </td>
+          <td style="white-space:nowrap">
+            {% if x.ot_abierta %}
+            <button class="btn btn-mini" type="submit" formaction="{{ prefix }}/avisos/{{ a.id }}/unir"
+                    name="ot_id" value="{{ x.ot_abierta.id }}" title="El equipo ya tiene esta OT abierta">Unir a {{ folio_ot(x.ot_abierta.id) }}</button>
+            {% endif %}
+            <button class="btn btn-mini" type="submit" formaction="{{ prefix }}/avisos/{{ a.id }}/descartar"
+                    onclick="const m = prompt('¿Por qué se descarta {{ folio_aviso(a.id) }}?'); if (!m) return false; this.form.querySelector('[name=motivo]').value = m;">Descartar</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <input type="hidden" name="motivo" value="">
+    <div class="acciones-lote">
+      <div class="fld">
+        <label for="estado_inicial">Quedan en</label>
+        <select id="estado_inicial" name="estado_inicial">
+          {% for e in estados_iniciales %}<option value="{{ e }}">{{ estados_ot[e] }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="fld">
+        <label for="cuando">Hora del acuse</label>
+        <input type="datetime-local" id="cuando" name="cuando" data-ahora>
+      </div>
+      <button class="btn btn-primary" type="submit" id="btn-acuse" disabled>Recibí estos avisos y los estoy atendiendo</button>
+      <span class="hint" style="margin:0">Crea sus OT; si el equipo ya tiene una abierta, el aviso se une a ella.</span>
+    </div>
+  </form>
+  {% else %}
+  <div class="card"><div class="empty">No hay avisos sin atender.</div></div>
+  {% endif %}
+
+  {# --------------------------------------------------------------- OT abiertas #}
+  <div class="section-title">OT abiertas</div>
+  <div class="card">
+    {% if filas %}
+    <table>
+      <thead><tr><th>OT</th><th>Equipo</th><th>Prioridad</th><th>Estado</th><th>Abierta hace</th><th>Plazo</th><th>Dónde se va el tiempo</th><th>Ejecuta</th></tr></thead>
+      <tbody>
+        {% for f in filas %}{% set o = f.ot %}
+        <tr class="{{ 'fila-p1' if o.prioridad == 'P1' }}">
+          <td><a class="row-link code" href="{{ prefix }}/ots/{{ o.id }}">{{ folio_ot(o.id) }}</a></td>
+          <td>
+            <span class="code">{{ f.equipo.codigo }}</span> {{ f.equipo.nombre }}
+            <div><span class="pill sitio-{{ f.equipo.sitio }}">{{ sitio_labels[f.equipo.sitio] }}</span></div>
+          </td>
+          <td><span class="pill pri-{{ o.prioridad }}">{{ o.prioridad }}</span></td>
+          <td><span class="pill ot-{{ o.estado }}">{{ estados_ot[o.estado] }}</span></td>
+          <td class="mono">{{ dur(f.edad) }}</td>
+          <td class="mono">
+            {% if f.vencida %}<span class="vencida">Vencida hace {{ dur(-f.restante) }}</span>
+            {% elif f.restante is not none %}Quedan {{ dur(f.restante) }}{% else %}—{% endif %}
+          </td>
+          <td>{% with t = f.tramos %}{% include '_mnt_tbar.html' %}{% endwith %}</td>
+          <td class="mono">{{ ('Contratista' if o.ejecutor_tipo == 'contratista' else 'Interno') if o.ejecutor_tipo else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No hay OT abiertas.</div>
+    {% endif %}
+  </div>
+  <div class="leyenda">
+    {% for k, l in tramos_labels.items() %}<span class="t-{{ k }}">{{ l }}</span>{% endfor %}
+  </div>
+
+  {# ------------------------------------------------------ cerradas recientes #}
+  {% if filas_cerradas %}
+  <div class="section-title">Cerradas o anuladas · últimos 14 días</div>
+  <div class="card">
+    <table>
+      <thead><tr><th>OT</th><th>Equipo</th><th>Prioridad</th><th>Estado</th><th>Duración</th><th>Plazo</th><th>Dónde se fue el tiempo</th></tr></thead>
+      <tbody>
+        {% for f in filas_cerradas %}{% set o = f.ot %}
+        <tr>
+          <td><a class="row-link code" href="{{ prefix }}/ots/{{ o.id }}">{{ folio_ot(o.id) }}</a></td>
+          <td><span class="code">{{ f.equipo.codigo }}</span> {{ f.equipo.nombre }}</td>
+          <td><span class="pill pri-{{ o.prioridad }}">{{ o.prioridad }}</span></td>
+          <td><span class="pill ot-{{ o.estado }}">{{ estados_ot[o.estado] }}</span></td>
+          <td class="mono">{{ dur(f.tramos.total) }}</td>
+          <td class="mono">{% if o.estado == 'anulada' %}—{% elif f.vencida %}<span class="vencida">Fuera de plazo</span>{% else %}En plazo{% endif %}</td>
+          <td>{% with t = f.tramos %}{% include '_mnt_tbar.html' %}{% endwith %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+<script>
+(function () {
+  const f = document.getElementById('form-acuse');
+  if (!f) return;
+  const checks = [...f.querySelectorAll('.chk-aviso')];
+  const btn = document.getElementById('btn-acuse');
+  const sync = () => { btn.disabled = !checks.some(c => c.checked); };
+  document.getElementById('todos').addEventListener('change', e => { checks.forEach(c => { c.checked = e.target.checked; }); sync(); });
+  checks.forEach(c => c.addEventListener('change', sync));
+})();
+</script>
+</body>
+</html>

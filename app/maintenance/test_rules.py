@@ -62,6 +62,83 @@ class CodigoTest(unittest.TestCase):
         self.assertEqual(rules.siguiente_codigo(["EQ-999"]), "EQ-1000")
 
 
+class PrioridadTest(unittest.TestCase):
+    def test_matriz(self):
+        casos = [
+            ("A", "detenido", "no", "P1"), ("A", "detenido", "no_se", "P1"), ("A", "detenido", None, "P1"),
+            ("A", "detenido", "si", "P2"), ("A", "degradado", None, "P2"), ("A", "anomalia", None, "P3"),
+            ("B", "detenido", "no", "P2"), ("B", "degradado", None, "P2"), ("B", "anomalia", None, "P3"),
+            ("C", "detenido", "no", "P3"), (None, "detenido", "no", "P3"),
+        ]
+        for crit, cond, resp, esperado in casos:
+            with self.subTest(crit=crit, cond=cond, resp=resp):
+                self.assertEqual(rules.prioridad_sugerida(crit, cond, resp), esperado)
+
+    def test_mas_alta(self):
+        self.assertEqual(rules.prioridad_mas_alta(["P3", "P1", "P2"]), "P1")
+        self.assertEqual(rules.prioridad_mas_alta([]), "P3")
+
+
+class EstadosTest(unittest.TestCase):
+    def test_transiciones(self):
+        self.assertTrue(rules.transicion_valida("pendiente", "espera_repuesto"))
+        self.assertTrue(rules.transicion_valida("espera_repuesto", "en_ejecucion"))
+        self.assertTrue(rules.transicion_valida("reparada", "en_ejecucion"))
+        self.assertTrue(rules.transicion_valida("en_ejecucion", "anulada"))
+        self.assertFalse(rules.transicion_valida("pendiente", "pendiente"))
+        self.assertFalse(rules.transicion_valida("en_ejecucion", "cerrada"))   # cerrar es un paso aparte
+        self.assertFalse(rules.transicion_valida("cerrada", "pendiente"))      # no se reabre
+        self.assertFalse(rules.transicion_valida("anulada", "en_ejecucion"))
+
+
+class TramosTest(unittest.TestCase):
+    from datetime import datetime as _dt
+    T0 = _dt(2026, 9, 29, 6, 0)
+
+    def h(self, horas):
+        from datetime import timedelta
+        return self.T0 + timedelta(hours=horas)
+
+    def test_desglose(self):
+        eventos = [("pendiente", self.h(1)), ("espera_repuesto", self.h(3)),
+                   ("en_ejecucion", self.h(27)), ("reparada", self.h(29))]
+        t = rules.tramos(self.T0, eventos, self.h(30))
+        self.assertEqual((t["reaccion"], t["gestion"], t["repuesto"], t["ejecucion"], t["verificacion"]),
+                         (1, 2, 24, 2, 1))
+        self.assertEqual(t["total"], 30)
+
+    def test_ida_y_vuelta_suma(self):
+        eventos = [("en_ejecucion", self.h(0.5)), ("espera_repuesto", self.h(1.5)),
+                   ("en_ejecucion", self.h(4.5)), ("reparada", self.h(5.5))]
+        t = rules.tramos(self.T0, eventos, self.h(5.5))
+        self.assertEqual(t["ejecucion"], 2.0)
+        self.assertEqual(t["repuesto"], 3.0)
+
+    def test_hora_desordenada_no_resta(self):
+        t = rules.tramos(self.T0, [("pendiente", self.h(2)), ("en_ejecucion", self.h(1))], self.h(3))
+        self.assertEqual(t["gestion"], 0.0)
+        self.assertEqual(t["ejecucion"], 2.0)
+
+    def test_fuera_de_plazo(self):
+        self.assertTrue(rules.fuera_de_plazo(self.T0, 4, self.h(5)))
+        self.assertFalse(rules.fuera_de_plazo(self.T0, 4, self.h(3)))
+        self.assertFalse(rules.fuera_de_plazo(self.T0, None, self.h(99)))
+
+
+class FormatoTest(unittest.TestCase):
+    def test_duracion(self):
+        self.assertEqual(rules.formato_duracion(0.2), "12 min")
+        self.assertEqual(rules.formato_duracion(2.5), "2 h 30 min")
+        self.assertEqual(rules.formato_duracion(3), "3 h")
+        self.assertEqual(rules.formato_duracion(30), "1 d 6 h")
+        self.assertEqual(rules.formato_duracion(48), "2 d")
+        self.assertEqual(rules.formato_duracion(None), "—")
+
+    def test_folios(self):
+        self.assertEqual(rules.folio_ot(7), "OT-0007")
+        self.assertEqual(rules.folio_aviso(42), "A-0042")
+
+
 class DestinosTest(unittest.TestCase):
     MAPA = {"10": "1", "11": "1", "20": "2"}   # estanque → unidad
 

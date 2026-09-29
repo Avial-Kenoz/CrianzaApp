@@ -115,6 +115,146 @@ def siguiente_codigo(codigos_existentes: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Prioridad sugerida (spec §5.1)
+# ---------------------------------------------------------------------------
+CONDICIONES = {
+    "detenido": "Detenido",
+    "degradado": "Funciona con problemas",
+    "anomalia": "Algo raro (sigue funcionando)",
+}
+RESPALDO_ENTRO = {"si": "Sí", "no": "No", "no_se": "No sé"}
+
+# Criticidad × columna de condición. Columna 0: detenido sin respaldo
+# operando; 1: detenido con respaldo operando, o degradado; 2: anomalía.
+_PRIORIDAD = {
+    "A": ("P1", "P2", "P3"),
+    "B": ("P2", "P2", "P3"),
+    "C": ("P3", "P3", "P3"),
+}
+PRIORIDADES = {"P1": "P1 · alarma", "P2": "P2 · en el día", "P3": "P3 · planificar"}
+
+
+def prioridad_sugerida(criticidad: Optional[str], condicion: str, respaldo_entro: Optional[str]) -> str:
+    """P1/P2/P3 según la criticidad del equipo y lo reportado.
+
+    "No sé" si entró el respaldo se trata como "no": ante la duda, el aviso
+    se atiende como si el equipo estuviera solo. Un equipo sin criticidad (no
+    debería existir: la encuesta es obligatoria) se trata como C.
+    """
+    if condicion == "detenido":
+        col = 1 if respaldo_entro == "si" else 0
+    elif condicion == "degradado":
+        col = 1
+    else:
+        col = 2
+    return _PRIORIDAD.get(criticidad or "C", _PRIORIDAD["C"])[col]
+
+
+def prioridad_mas_alta(prioridades: list[str]) -> str:
+    """P1 gana a P2 gana a P3 (el orden alfabético coincide)."""
+    return min(p for p in prioridades if p) if any(prioridades) else "P3"
+
+
+# ---------------------------------------------------------------------------
+# Estados de la OT y tramos de tiempo (spec §5.2)
+# ---------------------------------------------------------------------------
+ESTADOS_OT = {
+    "pendiente": "Pendiente",
+    "espera_contratista": "Espera contratista",
+    "espera_repuesto": "Espera repuesto",
+    "en_ejecucion": "En ejecución",
+    "reparada": "Reparada (por verificar)",
+    "cerrada": "Cerrada",
+    "anulada": "Anulada",
+}
+ESTADOS_ABIERTOS = ("pendiente", "espera_contratista", "espera_repuesto", "en_ejecucion", "reparada")
+ESTADOS_FINALES = ("cerrada", "anulada")
+
+# Cada estado dice quién tiene la pelota; el tramo es lo que acumula mientras
+# la OT está en él. "aviso" es el tiempo entre la detección y la aceptación.
+TRAMO_DE_ESTADO = {
+    "aviso": "reaccion",
+    "pendiente": "gestion",
+    "espera_contratista": "contratista",
+    "espera_repuesto": "repuesto",
+    "en_ejecucion": "ejecucion",
+    "reparada": "verificacion",
+}
+TRAMOS = {
+    "reaccion": "Reacción",
+    "gestion": "Gestión",
+    "contratista": "Contratista",
+    "repuesto": "Repuesto",
+    "ejecucion": "Ejecución",
+    "verificacion": "Verificación",
+}
+
+
+def transicion_valida(desde: str, hasta: str) -> bool:
+    """Entre estados abiertos se puede ir y volver (ejecución → espera de
+    repuesto → ejecución). Desde cualquier abierto se puede anular. Cerrar es
+    un paso aparte (pide causa y acción), no un cambio de estado suelto. Las
+    OT cerradas o anuladas no se reabren: una falla nueva es una OT nueva."""
+    if desde in ESTADOS_FINALES or desde == hasta:
+        return False
+    if hasta == "anulada":
+        return desde in ESTADOS_ABIERTOS
+    return desde in ESTADOS_ABIERTOS and hasta in ESTADOS_ABIERTOS
+
+
+def tramos(inicio, eventos: list, fin) -> dict:
+    """Horas acumuladas por tramo.
+
+    - `inicio`: detección de la falla (el reloj parte ahí, no al aceptar).
+    - `eventos`: [(estado_hasta, ocurrido_at)] en orden; el primero es la
+      aceptación, así que inicio → primer evento es la **reacción**.
+    - `fin`: cierre de la OT, o ahora si sigue abierta.
+
+    Un evento con hora anterior a la previa (hora mal digitada) aporta 0, no
+    horas negativas. Devuelve {tramo: horas, ..., "total": horas}.
+    """
+    out = {t: 0.0 for t in TRAMOS}
+    marcas = [("aviso", inicio)] + list(eventos)
+    for i, (estado, desde) in enumerate(marcas):
+        hasta = marcas[i + 1][1] if i + 1 < len(marcas) else fin
+        tramo = TRAMO_DE_ESTADO.get(estado)
+        if tramo and desde and hasta:
+            out[tramo] += max(0.0, (hasta - desde).total_seconds() / 3600.0)
+    out["total"] = sum(out[t] for t in TRAMOS)
+    return out
+
+
+def fuera_de_plazo(inicio, plazo_horas, fin) -> bool:
+    """El plazo se cuenta desde la detección hasta que el equipo vuelve a
+    servicio (o hasta ahora, si sigue abierta)."""
+    if not inicio or plazo_horas is None or not fin:
+        return False
+    return (fin - inicio).total_seconds() / 3600.0 > float(plazo_horas)
+
+
+def formato_duracion(horas: Optional[float]) -> str:
+    """2.5 → '2 h 30 min' · 30 → '1 d 6 h' · 0.2 → '12 min'."""
+    if horas is None:
+        return "—"
+    minutos = int(round(float(horas) * 60))
+    if minutos < 60:
+        return f"{minutos} min"
+    h, m = divmod(minutos, 60)
+    if h < 24:
+        return f"{h} h {m:02d} min" if m else f"{h} h"
+    d, h = divmod(h, 24)
+    return f"{d} d {h} h" if h else f"{d} d"
+
+
+def folio_aviso(i: int) -> str:
+    return f"A-{i:04d}"
+
+
+def folio_ot(i: int) -> str:
+    return f"OT-{i:04d}"
+
+
+# ---------------------------------------------------------------------------
 # Destinos de un equipo (a qué atiende)
 # ---------------------------------------------------------------------------
 def normalizar_destinos(refs: list[str], unidad_de_estanque: dict[str, str]) -> list[tuple[str, str]]:

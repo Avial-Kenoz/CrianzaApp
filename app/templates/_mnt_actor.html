@@ -1,0 +1,43 @@
+{# «Registra»: CrianzaApp no tiene login, así que quien anota se escribe una vez
+   por navegador y se recuerda (localStorage). Al enviar cualquier formulario
+   con clase `con-actor`, se le agrega como campo `actor`.
+
+   También resuelve las horas «ahora»: un <input data-ahora> que el usuario no
+   tocó se rellena con la hora del momento de ENVIAR, no la de cargar la página.
+   Si el tablero quedó abierto desde las 8:00 y el acuse se hace a las 10:00,
+   la reacción debe medirse hasta las 10:00. #}
+<div class="actor-bar no-print" id="actor-bar">
+  <label for="actor-global">Registra</label>
+  <input type="text" id="actor-global" list="dl-actor" maxlength="120" placeholder="Tu nombre" autocomplete="off" />
+  <datalist id="dl-actor">{% for n in nombres_personas %}<option value="{{ n }}">{% endfor %}</datalist>
+  <span class="hint" style="margin:0">Se recuerda en este navegador y queda en la bitácora de cada cambio.</span>
+</div>
+<script>
+(function () {
+  const input = document.getElementById('actor-global');
+  const bar = document.getElementById('actor-bar');
+  const KEY = 'mnt_actor';
+  try { input.value = localStorage.getItem(KEY) || ''; } catch (e) {}
+  const marcar = () => bar.classList.toggle('falta', !input.value.trim());
+  input.addEventListener('change', () => {
+    try { localStorage.setItem(KEY, input.value.trim()); } catch (e) {}
+    marcar();
+  });
+  marcar();
+
+  const pad = n => String(n).padStart(2, '0');
+  const ahora = () => { const d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+  document.querySelectorAll('input[data-ahora]').forEach(i => {
+    if (!i.value) i.value = ahora();
+    i.addEventListener('input', () => { i.dataset.tocado = '1'; });
+  });
+  document.addEventListener('submit', e => {
+    const f = e.target;
+    f.querySelectorAll('input[data-ahora]').forEach(i => { if (!i.dataset.tocado) i.value = ahora(); });
+    if (!f.classList.contains('con-actor')) return;
+    let h = f.querySelector('input[type=hidden][name=actor]');
+    if (!h) { h = document.createElement('input'); h.type = 'hidden'; h.name = 'actor'; f.appendChild(h); }
+    h.value = input.value.trim();
+  }, true);
+})();
+</script>

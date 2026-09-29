@@ -1,0 +1,5 @@
+{# Barra de tramos de una OT. Espera `t` = dict de rules.tramos (horas por tramo + total). #}
+{% set total = t.total or 0 %}
+<div class="tbar" title="{% for k, l in tramos_labels.items() %}{% if t[k] > 0 %}{{ l }}: {{ dur(t[k]) }}&#10;{% endif %}{% endfor %}">
+  {% if total > 0 %}{% for k in tramos_labels %}{% if t[k] > 0 %}<i class="t-{{ k }}" style="width: {{ (t[k] / total * 100) | round(2) }}%"></i>{% endif %}{% endfor %}{% endif %}
+</div>
