@@ -1,0 +1,77 @@
+{# Campos de la ficha de equipo, compartidos por el alta y la edición.
+   `src` es el equipo (edición) o el dict del formulario re-mostrado (alta con
+   error); en Jinja ambos se leen igual con src[campo].
+   `sitio` fijo (edición) o None (alta: lo decide el select #sitio y los campos
+   con data-sitio se muestran u ocultan según él). #}
+{% macro v(campo) %}{% if src and src[campo] is not none %}{{ src[campo] }}{% endif %}{% endmacro %}
+<div class="grid-form">
+  <div class="wide">
+    <label for="nombre" class="req">Nombre</label>
+    <input type="text" id="nombre" name="nombre" maxlength="120" required value="{{ v('nombre') }}"
+           placeholder="Ej.: Soplador 3 Nor-Central, Cámara de frío 2" />
+  </div>
+  <div>
+    <label for="sistema_id">Sistema</label>
+    <select id="sistema_id" name="sistema_id">
+      <option value="">—</option>
+      {% for s in sistemas %}{% set sel = src and (src['sistema_id']|string) == (s.id|string) %}{% if s.activo or sel %}
+      <option value="{{ s.id }}" {% if s.sitio %}data-sitio="{{ s.sitio }}"{% endif %}
+              {% if sel %}selected{% endif %}>{{ s.nombre }}{% if not s.activo %} (inactivo){% endif %}</option>
+      {% endif %}{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="tipo_id">Tipo de equipo</label>
+    <select id="tipo_id" name="tipo_id">
+      <option value="">—</option>
+      {% for t in tipos %}{% set sel = src and (src['tipo_id']|string) == (t.id|string) %}{% if t.activo or sel %}
+      <option value="{{ t.id }}" {% if sel %}selected{% endif %}>{{ t.nombre }}{% if not t.activo %} (inactivo){% endif %}</option>
+      {% endif %}{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="ubicacion_texto">Ubicación física</label>
+    <input type="text" id="ubicacion_texto" name="ubicacion_texto" maxlength="120" value="{{ v('ubicacion_texto') }}"
+           placeholder="Dónde está, para encontrarlo" />
+  </div>
+  <div data-sitio-campo="crianza" {% if sitio and sitio != 'crianza' %}hidden{% endif %}>
+    <label for="ref_ubicacion">Estanque o unidad que atiende</label>
+    <select id="ref_ubicacion" name="ref_ubicacion">
+      <option value="">—</option>
+      {% for val, label in ubicaciones %}
+      <option value="{{ val }}" {% if (ref_actual is defined and ref_actual == val) or (src and src['ref_ubicacion'] is defined and src['ref_ubicacion'] == val) %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <div class="hint">Sirve para cruzar sus fallas con el oxígeno de ese estanque.</div>
+  </div>
+  <div>
+    <label for="respaldo_equipo_id">Respaldo (qué lo cubre si falla)</label>
+    <select id="respaldo_equipo_id" name="respaldo_equipo_id">
+      <option value="">Sin respaldo</option>
+      {% for r in respaldos %}{% if not sitio or r.sitio == sitio %}
+      <option value="{{ r.id }}" data-sitio="{{ r.sitio }}"
+              {% if src and (src['respaldo_equipo_id']|string) == (r.id|string) %}selected{% endif %}>{{ r.codigo }} · {{ r.nombre }}</option>
+      {% endif %}{% endfor %}
+    </select>
+    <div class="hint">El bot preguntará si entró este respaldo cuando el equipo se detenga.</div>
+  </div>
+  <div>
+    <label for="contratista_habitual_id">Contratista habitual</label>
+    <select id="contratista_habitual_id" name="contratista_habitual_id">
+      <option value="">—</option>
+      {% for c in contratistas %}{% set sel = src and (src['contratista_habitual_id']|string) == (c.id|string) %}{% if c.activo or sel %}
+      <option value="{{ c.id }}" {% if sel %}selected{% endif %}>{{ c.empresa }}{% if not c.activo %} (inactivo){% endif %}</option>
+      {% endif %}{% endfor %}
+    </select>
+  </div>
+  <div><label for="marca">Marca</label><input type="text" id="marca" name="marca" maxlength="80" value="{{ v('marca') }}" /></div>
+  <div><label for="modelo">Modelo</label><input type="text" id="modelo" name="modelo" maxlength="80" value="{{ v('modelo') }}" /></div>
+  <div><label for="serie">N° de serie</label><input type="text" id="serie" name="serie" maxlength="80" value="{{ v('serie') }}" /></div>
+  <div><label for="potencia_kw">Potencia (kW)</label><input type="text" id="potencia_kw" name="potencia_kw" inputmode="decimal" value="{{ v('potencia_kw') }}" /></div>
+  <div><label for="voltaje">Voltaje</label><input type="text" id="voltaje" name="voltaje" maxlength="20" value="{{ v('voltaje') }}" placeholder="220 V, 380 V trifásico…" /></div>
+  <div><label for="fecha_instalacion">Fecha de instalación</label><input type="date" id="fecha_instalacion" name="fecha_instalacion" value="{{ v('fecha_instalacion') }}" /></div>
+  <div class="wide">
+    <label for="notas">Notas de mantenimiento</label>
+    <textarea id="notas" name="notas" placeholder="Correa, rodamientos, filtros, lubricante, particularidades…">{{ v('notas') }}</textarea>
+  </div>
+</div>

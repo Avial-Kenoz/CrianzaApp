@@ -1,0 +1,81 @@
+{# Encuesta de criticidad (spec §4). Variables:
+     sitio       'crianza' | 'planta' | None (None = el sitio lo elige un select #sitio del formulario)
+     resp        dict con respuestas previas (puede faltar)
+   La Q1 cambia de texto según el sitio; la escala y la regla son las mismas.
+   El resultado se previsualiza en el navegador con la misma tabla de rules.py,
+   pero el que vale es el que calcula el servidor al guardar. #}
+{% set resp = resp or {} %}
+<div class="encuesta" id="encuesta">
+  <div class="preg">
+    {% for s in ['crianza', 'planta'] %}
+    <div class="q q-impacto" data-sitio="{{ s }}" {% if sitio and sitio != s %}hidden{% endif %}><b>Q1</b>{{ preg_impacto[s] }}</div>
+    {% endfor %}
+    {# Un solo grupo de botones (la escala a/b/c es común); solo cambia el texto. #}
+    <div class="opts">
+      {% for val, _ in opc_impacto['crianza'] %}
+      <label><input type="radio" name="q_impacto" value="{{ val }}" {% if resp.get('impacto') == val %}checked{% endif %} required>
+        {% for s in ['crianza', 'planta'] %}<span data-sitio="{{ s }}" {% if sitio and sitio != s %}hidden{% endif %}>{{ impacto_txt[s][val] }}</span>{% endfor %}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="preg">
+    <div class="q"><b>Q2</b>{{ preg_respaldo }}</div>
+    <div class="opts">
+      {% for val, label in opc_respaldo %}
+      <label><input type="radio" name="q_respaldo" value="{{ val }}" {% if resp.get('respaldo') == val %}checked{% endif %} required> {{ label }}</label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="preg">
+    <div class="q"><b>Q3</b>{{ preg_reposicion }}</div>
+    <div class="opts">
+      {% for val, label in opc_reposicion %}
+      <label><input type="radio" name="q_reposicion" value="{{ val }}" {% if resp.get('reposicion') == val %}checked{% endif %} required> {{ label }}</label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="preg">
+    <div class="q"><b>Q4</b>{{ preg_seguridad }}</div>
+    <div class="opts">
+      {% for val, label in opc_seguridad %}
+      <label><input type="radio" name="q_seguridad_ambiente" value="{{ val }}" {% if resp.get('seguridad_ambiente') == val %}checked{% endif %} required> {{ label }}</label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="resultado">
+    <span class="big" id="crit-big">?</span>
+    <span id="crit-txt" style="color:#6b7280">Responde las cuatro preguntas para ver la criticidad.</span>
+  </div>
+</div>
+<script>
+(function () {
+  // Misma tabla que app/maintenance/rules.py (impacto × respaldo; reposición
+  // larga sube un nivel; riesgo a personas/ambiente fuerza A).
+  const M = {aa:'A', ab:'A', ac:'B', ba:'A', bb:'B', bc:'C', ca:'B', cb:'C', cc:'C'};
+  const UP = {C:'B', B:'A', A:'A'};
+  const TXT = {A:'Crítico: su falla sin respaldo es alarma P1.', B:'Importante.', C:'Menor.'};
+  const root = document.getElementById('encuesta');
+  const form = root.closest('form');
+  const val = n => { const x = form.querySelector('input[name="' + n + '"]:checked'); return x ? x.value : null; };
+  function calc() {
+    const i = val('q_impacto'), r = val('q_respaldo'), p = val('q_reposicion'), s = val('q_seguridad_ambiente');
+    const big = document.getElementById('crit-big'), txt = document.getElementById('crit-txt');
+    if (!i || !r || !p || !s) { big.textContent = '?'; big.className = 'big'; return; }
+    let c = M[i + r];
+    if (p === 'a') c = UP[c];
+    if (s === 'si') c = 'A';
+    big.textContent = c; big.className = 'big ' + c;
+    txt.textContent = 'Criticidad ' + c + ' · ' + TXT[c];
+  }
+  // Si el sitio lo elige un select del formulario, la Q1 sigue a ese select.
+  const sel = form.querySelector('#sitio');
+  function syncSitio() {
+    if (!sel) return;
+    root.querySelectorAll('[data-sitio]').forEach(el => { el.hidden = el.dataset.sitio !== sel.value; });
+  }
+  if (sel) { sel.addEventListener('change', syncSitio); syncSitio(); }
+  form.addEventListener('change', calc);
+  calc();
+})();
+</script>

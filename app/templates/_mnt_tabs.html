@@ -1,0 +1,9 @@
+{# Navegación común del módulo de mantenimiento. `active` marca la pestaña actual.
+   En PR2 se suman Tablero y Parte diario al comienzo. #}
+<div class="tabs">
+  <a href="{{ prefix }}/equipos" class="{{ 'on' if active == 'equipos' }}">Equipos</a>
+  <a href="{{ prefix }}/qr" class="{{ 'on' if active == 'qr' }}">Etiquetas QR</a>
+  <a href="{{ prefix }}/personas" class="{{ 'on' if active == 'personas' }}">Personas</a>
+  <a href="{{ prefix }}/contratistas" class="{{ 'on' if active == 'contratistas' }}">Contratistas</a>
+  <a href="{{ prefix }}/catalogos" class="{{ 'on' if active == 'catalogos' }}">Catálogos y parámetros</a>
+</div>

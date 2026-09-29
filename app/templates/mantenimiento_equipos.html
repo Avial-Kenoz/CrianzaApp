@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Equipos – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb">Mantenimiento</div>
+  <div class="page-title">Equipos</div>
+  <div class="page-sub">
+    Catálogo de mantenimiento de Crianza y Planta. No es el activo fijo del ERP: solo lo que sirve para reparar.
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_mnt_tabs.html' %}
+
+  <div class="kpis">
+    <div class="kpi hi"><div class="n">{{ conteo.total }}</div><div class="l">Equipos activos</div></div>
+    <div class="kpi"><div class="n">{{ conteo.crianza }}</div><div class="l">En Crianza</div></div>
+    <div class="kpi"><div class="n">{{ conteo.planta }}</div><div class="l">En Planta</div></div>
+    <div class="kpi {{ 'bad' if conteo.A }}"><div class="n">{{ conteo.A }}</div><div class="l">Criticidad A</div></div>
+  </div>
+
+  <div class="section-title">Listado</div>
+  <form class="toolbar" method="get">
+    <div class="fld">
+      <label for="f-sitio">Sitio</label>
+      <select id="f-sitio" name="sitio" onchange="this.form.submit()">
+        <option value="">Ambos</option>
+        {% for k, l in sitio_labels.items() %}<option value="{{ k }}" {% if f_sitio == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="fld">
+      <label for="f-sis">Sistema</label>
+      <select id="f-sis" name="sistema_id" onchange="this.form.submit()">
+        <option value="">Todos</option>
+        {% for s in sistemas %}<option value="{{ s.id }}" {% if f_sistema == s.id %}selected{% endif %}>{{ s.nombre }}</option>{% endfor %}
+      </select>
+    </div>
+    <label class="chk" style="align-self:center"><input type="checkbox" name="baja" value="1" {% if f_baja %}checked{% endif %} onchange="this.form.submit()"> Incluir dados de baja</label>
+    <div style="flex:1"></div>
+    <a class="btn btn-primary" href="{{ prefix }}/equipos/nuevo{% if f_sitio %}?sitio={{ f_sitio }}{% endif %}">+ Nuevo equipo</a>
+  </form>
+
+  <div class="card">
+    {% if equipos %}
+    <table>
+      <thead>
+        <tr><th>Código</th><th>Equipo</th><th>Sitio</th><th>Sistema</th><th>Tipo</th><th>Criticidad</th><th>Estado</th></tr>
+      </thead>
+      <tbody>
+        {% for e in equipos %}
+        <tr class="{{ 'baja' if e.estado == 'baja' }}">
+          <td><span class="code">{{ e.codigo }}</span></td>
+          <td>
+            <a class="row-link" href="{{ prefix }}/equipos/{{ e.id }}">{{ e.nombre }}</a>
+            {% if e.ubicacion_texto %}<div class="mono">{{ e.ubicacion_texto }}</div>{% endif %}
+          </td>
+          <td><span class="pill sitio-{{ e.sitio }}">{{ sitio_labels[e.sitio] }}</span></td>
+          <td>{{ sistemas_map.get(e.sistema_id, '—') }}</td>
+          <td>{{ tipos_map.get(e.tipo_id, '—') }}</td>
+          <td>{% if e.criticidad %}<span class="pill crit-{{ e.criticidad }}">{{ criticidad_labels[e.criticidad] }}</span>{% else %}—{% endif %}</td>
+          <td><span class="pill est-{{ e.estado }}">{{ estados_equipo.get(e.estado, e.estado) }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+      {% if conteo.total %}Ningún equipo coincide con el filtro.{% else %}Todavía no hay equipos. Da de alta el primero con «+ Nuevo equipo».{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+</body>
+</html>

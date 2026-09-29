@@ -23,6 +23,7 @@ from app.api.field import router as field_router
 from app.api.sexado import router as sexado_router, admin_router as sexado_admin_router
 from app.api.silage import router as silage_router
 from app.api.silage_views import router as silage_views_router
+from app.maintenance.router import router as maintenance_router
 from app.services.pond_cache_scheduler import start_scheduler, shutdown_scheduler
 from app.services.wq_alerts_scheduler import (
     start_scheduler as start_wq_alerts_scheduler,
@@ -102,6 +103,7 @@ app.include_router(sexado_router)
 app.include_router(sexado_admin_router)
 app.include_router(silage_router)
 app.include_router(silage_views_router)
+app.include_router(maintenance_router)
 
 @app.get("/")
 def root():

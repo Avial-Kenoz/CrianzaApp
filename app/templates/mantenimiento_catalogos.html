@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Catálogos y parámetros – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb">Mantenimiento</div>
+  <div class="page-title">Catálogos y parámetros</div>
+  <div class="page-sub">Sistemas y tipos de equipo para ordenar el catálogo, y los parámetros del módulo.</div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_mnt_tabs.html' %}
+
+  <div class="two-col" style="grid-template-columns: 1fr 1fr">
+    <div>
+      <div class="section-title" style="margin-top:0">Sistemas</div>
+      <form class="newform" method="post" action="{{ prefix }}/catalogos/sistemas" style="margin-bottom:10px">
+        <div class="fld" style="flex:1; min-width:150px"><label for="s-nombre">Nombre</label><input type="text" id="s-nombre" name="nombre" maxlength="80" required style="width:100%" /></div>
+        <div class="fld">
+          <label for="s-sitio">Sitio</label>
+          <select id="s-sitio" name="sitio"><option value="">Ambos</option>{% for s in sitios %}<option value="{{ s }}">{{ sitio_labels[s] }}</option>{% endfor %}</select>
+        </div>
+        <div class="fld"><label for="s-orden">Orden</label><input type="number" id="s-orden" name="orden" style="width:80px" /></div>
+        <button class="btn btn-primary" type="submit">Agregar</button>
+      </form>
+      <div class="card">
+        <table>
+          <thead><tr><th>Sistema</th><th>Sitio</th><th class="num">Equipos</th><th></th></tr></thead>
+          <tbody>
+            {% for s in sistemas %}
+            <tr class="{{ 'baja' if not s.activo }}">
+              <td>{{ s.nombre }}</td>
+              <td>{% if s.sitio %}<span class="pill sitio-{{ s.sitio }}">{{ sitio_labels[s.sitio] }}</span>{% else %}Ambos{% endif %}</td>
+              <td class="num">{{ uso_sis.get(s.id, 0) }}</td>
+              <td>
+                <form class="inline" method="post" action="{{ prefix }}/catalogos/sistemas/{{ s.id }}/activo">
+                  <input type="hidden" name="activo" value="{{ '0' if s.activo else '1' }}" />
+                  <button class="btn btn-mini" type="submit">{{ 'Desactivar' if s.activo else 'Activar' }}</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title" style="margin-top:0">Tipos de equipo</div>
+      <form class="newform" method="post" action="{{ prefix }}/catalogos/tipos" style="margin-bottom:10px">
+        <div class="fld" style="flex:1; min-width:150px"><label for="t-nombre">Nombre</label><input type="text" id="t-nombre" name="nombre" maxlength="80" required style="width:100%" /></div>
+        <button class="btn btn-primary" type="submit">Agregar</button>
+      </form>
+      <div class="card">
+        <table>
+          <thead><tr><th>Tipo</th><th class="num">Equipos</th><th></th></tr></thead>
+          <tbody>
+            {% for t in tipos %}
+            <tr class="{{ 'baja' if not t.activo }}">
+              <td>{{ t.nombre }}</td>
+              <td class="num">{{ uso_tipo.get(t.id, 0) }}</td>
+              <td>
+                <form class="inline" method="post" action="{{ prefix }}/catalogos/tipos/{{ t.id }}/activo">
+                  <input type="hidden" name="activo" value="{{ '0' if t.activo else '1' }}" />
+                  <button class="btn btn-mini" type="submit">{{ 'Desactivar' if t.activo else 'Activar' }}</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="note">Desactivar no borra: el sistema o tipo deja de ofrecerse en el alta, pero los equipos que ya lo usan lo conservan.</div>
+    </div>
+  </div>
+
+  <div class="section-title">Parámetros</div>
+  <form method="post" action="{{ prefix }}/parametros">
+    <div class="card">
+      <table>
+        <thead><tr><th>Parámetro</th><th style="width:180px">Valor</th><th>Unidad</th></tr></thead>
+        <tbody>
+          {% for p in parametros %}
+          <tr>
+            <td>{{ p.descripcion }}<div class="mono">{{ p.clave }}</div></td>
+            <td><input type="{{ 'date' if p.clave == 'inicio_registro' else 'text' }}" name="{{ p.clave }}" value="{{ p.valor or '' }}" style="width:100%" /></td>
+            <td class="mono">{{ p.unidad or '' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      Los plazos por prioridad se <b>congelan en cada OT al aceptarla</b>: cambiarlos no altera el «fuera de
+      plazo» de OT ya registradas, así los indicadores históricos no cambian de golpe.
+    </div>
+    <div style="margin-top:12px"><button class="btn btn-primary" type="submit">Guardar parámetros</button></div>
+  </form>
+</div>
+</body>
+</html>

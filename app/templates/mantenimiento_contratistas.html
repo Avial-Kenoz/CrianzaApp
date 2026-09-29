@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contratistas – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb">Mantenimiento</div>
+  <div class="page-title">Contratistas</div>
+  <div class="page-sub">
+    Empresas externas. No usan el sistema: le reportan al encargado, que registra en la OT.
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_mnt_tabs.html' %}
+
+  {% set c = editando %}
+  <div class="section-title">{{ 'Editar ' ~ c.empresa if c else 'Agregar contratista' }}</div>
+  <form class="form-card" method="post" action="{{ prefix }}/contratistas">
+    {% if c %}<input type="hidden" name="contratista_id" value="{{ c.id }}" />{% endif %}
+    <div class="grid-form">
+      <div><label for="empresa" class="req">Empresa</label><input type="text" id="empresa" name="empresa" maxlength="120" required value="{{ c.empresa if c else '' }}" /></div>
+      <div><label for="contacto">Contacto</label><input type="text" id="contacto" name="contacto" maxlength="120" value="{{ (c.contacto or '') if c else '' }}" /></div>
+      <div><label for="telefono">Teléfono</label><input type="text" id="telefono" name="telefono" maxlength="40" value="{{ (c.telefono or '') if c else '' }}" /></div>
+      <div><label for="especialidad">Especialidad</label><input type="text" id="especialidad" name="especialidad" maxlength="120" value="{{ (c.especialidad or '') if c else '' }}" placeholder="Eléctrico, motores, frío…" /></div>
+      <div class="wide"><label for="notas">Notas</label><textarea id="notas" name="notas">{{ (c.notas or '') if c else '' }}</textarea></div>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:16px">
+      <button class="btn btn-primary" type="submit">{{ 'Guardar' if c else 'Agregar' }}</button>
+      {% if c %}<a class="btn btn-ghost" href="{{ prefix }}/contratistas">Cancelar</a>{% endif %}
+    </div>
+  </form>
+
+  <div class="section-title">Registrados</div>
+  <div class="card">
+    {% if contratistas %}
+    <table>
+      <thead><tr><th>Empresa</th><th>Contacto</th><th>Teléfono</th><th>Especialidad</th><th class="num">Equipos</th><th></th></tr></thead>
+      <tbody>
+        {% for x in contratistas %}
+        <tr class="{{ 'baja' if not x.activo }}">
+          <td><b>{{ x.empresa }}</b></td>
+          <td>{{ x.contacto or '—' }}</td>
+          <td class="mono">{{ x.telefono or '—' }}</td>
+          <td>{{ x.especialidad or '—' }}</td>
+          <td class="num">{{ uso.get(x.id, 0) }}</td>
+          <td style="white-space:nowrap">
+            <a class="btn btn-mini" href="{{ prefix }}/contratistas?editar={{ x.id }}">Editar</a>
+            <form class="inline" method="post" action="{{ prefix }}/contratistas/{{ x.id }}/activo">
+              <input type="hidden" name="activo" value="{{ '0' if x.activo else '1' }}" />
+              <button class="btn btn-mini" type="submit">{{ 'Desactivar' if x.activo else 'Activar' }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Todavía no hay contratistas.</div>
+    {% endif %}
+  </div>
+</div>
+</body>
+</html>

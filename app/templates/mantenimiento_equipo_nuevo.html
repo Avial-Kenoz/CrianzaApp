@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nuevo equipo – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="{{ prefix }}/equipos">Mantenimiento · Equipos</a> / Nuevo</div>
+  <div class="page-title">Nuevo equipo</div>
+  <div class="page-sub">Se le asignará el código <span class="code">{{ siguiente }}</span>, que va impreso en su etiqueta QR.</div>
+
+  {% if error_form %}<div class="flash err">{{ error_form }}</div>{% endif %}
+
+  <form method="post" action="{{ prefix }}/equipos/nuevo">
+    <div class="section-title">Ficha</div>
+    <div class="form-card">
+      <div class="grid-form" style="margin-bottom:14px">
+        <div>
+          <label for="sitio" class="req">Sitio</label>
+          <select id="sitio" name="sitio" required>
+            {% for k, l in sitio_labels.items() %}<option value="{{ k }}" {% if sitio == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+          </select>
+          <div class="hint">No se puede cambiar después.</div>
+        </div>
+        <div>
+          <label for="autor">Registrado por</label>
+          <input type="text" id="autor" name="autor" list="lista-personas" maxlength="120" value="{{ previo.autor if previo else '' }}" />
+          <datalist id="lista-personas">{% for n in nombres_personas %}<option value="{{ n }}">{% endfor %}</datalist>
+        </div>
+      </div>
+      {% with src = previo, sitio = none %}{% include '_mnt_equipo_campos.html' %}{% endwith %}
+    </div>
+
+    <div class="section-title">Criticidad</div>
+    <div class="form-card">
+      <div class="note" style="margin:0 0 14px">
+        Obligatoria: sin estas cuatro respuestas el equipo no se puede dar de alta. El sistema calcula
+        A, B o C; la criticidad no se elige a mano.
+      </div>
+      {% with sitio = none, resp = previo_resp %}{% include '_mnt_encuesta.html' %}{% endwith %}
+    </div>
+
+    <div style="display:flex; gap:10px; margin-top:18px">
+      <button class="btn btn-primary" type="submit">Dar de alta</button>
+      <a class="btn btn-ghost" href="{{ prefix }}/equipos">Cancelar</a>
+    </div>
+  </form>
+</div>
+<script>
+  // En el alta el sitio se elige arriba: los campos y opciones que solo aplican
+  // a un sitio (vínculo a estanque, respaldos, sistemas) siguen a ese select.
+  (function () {
+    const sel = document.getElementById('sitio');
+    function sync() {
+      const s = sel.value;
+      document.querySelectorAll('[data-sitio-campo]').forEach(el => { el.hidden = el.dataset.sitioCampo !== s; });
+      document.querySelectorAll('#respaldo_equipo_id option[data-sitio], #sistema_id option[data-sitio]').forEach(o => {
+        const fuera = o.dataset.sitio !== s;
+        o.hidden = fuera; o.disabled = fuera;
+        if (fuera && o.selected) o.parentElement.value = '';
+      });
+    }
+    sel.addEventListener('change', sync);
+    sync();
+  })();
+</script>
+</body>
+</html>

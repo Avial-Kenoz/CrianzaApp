@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ equipo.codigo }} {{ equipo.nombre }} – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="{{ prefix }}/equipos">Mantenimiento · Equipos</a> / {{ equipo.codigo }}</div>
+  <div class="page-title">
+    <span class="code" style="font-size:1.1rem">{{ equipo.codigo }}</span> · {{ equipo.nombre }}
+  </div>
+  <div class="page-sub">
+    <span class="pill sitio-{{ equipo.sitio }}">{{ sitio_labels[equipo.sitio] }}</span>
+    {% if equipo.criticidad %}<span class="pill crit-{{ equipo.criticidad }}">{{ criticidad_labels[equipo.criticidad] }}</span>{% endif %}
+    <span class="pill est-{{ equipo.estado }}">{{ estados_equipo.get(equipo.estado, equipo.estado) }}</span>
+    {% if equipo.alta_por or equipo.created_at %}
+    <span class="mono" style="margin-left:6px">Alta {{ equipo.created_at.strftime('%d-%m-%Y') if equipo.created_at else '' }}{% if equipo.alta_por %} · {{ equipo.alta_por }}{% endif %}{% if equipo.alta_origen == 'planta' %} (desde PlantaApp){% endif %}</span>
+    {% endif %}
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  <div class="two-col">
+    <div>
+      <div class="section-title" style="margin-top:0">Ficha</div>
+      <form class="form-card" method="post" action="{{ prefix }}/equipos/{{ equipo.id }}">
+        {% with src = equipo, sitio = equipo.sitio %}{% include '_mnt_equipo_campos.html' %}{% endwith %}
+        <div style="margin-top:14px"><button class="btn btn-primary" type="submit">Guardar ficha</button></div>
+      </form>
+
+      <div class="section-title">Criticidad</div>
+      <form class="form-card" method="post" action="{{ prefix }}/equipos/{{ equipo.id }}/criticidad">
+        <div class="note" style="margin:0 0 14px">
+          Cambia una respuesta y guarda para reevaluar. Queda en el historial con fecha y autor; la
+          evaluación anterior no se borra.
+        </div>
+        {% with sitio = equipo.sitio, resp = (evaluacion.respuestas if evaluacion else {}) %}{% include '_mnt_encuesta.html' %}{% endwith %}
+        <div class="grid-form" style="margin-top:14px; align-items:end">
+          <div>
+            <label for="autor">Evaluado por</label>
+            <input type="text" id="autor" name="autor" list="lista-personas" maxlength="120" />
+            <datalist id="lista-personas">{% for n in nombres_personas %}<option value="{{ n }}">{% endfor %}</datalist>
+          </div>
+          <div><button class="btn btn-ghost" type="submit">Reevaluar criticidad</button></div>
+        </div>
+      </form>
+
+      {% if historial %}
+      <div class="section-title">Historial de criticidad</div>
+      <div class="card">
+        <table>
+          <thead><tr><th>Fecha</th><th>Resultado</th><th>Tolerancia</th><th>Respuestas</th><th>Por</th></tr></thead>
+          <tbody>
+            {% for h in historial %}
+            <tr>
+              <td class="mono">{{ h.evaluado_at.strftime('%d-%m-%Y %H:%M') }}</td>
+              <td><span class="pill crit-{{ h.resultado }}">{{ h.resultado }}</span></td>
+              <td class="mono">{{ ('%.0f h'|format(h.tolerancia_horas)) if h.tolerancia_horas is not none else '—' }}</td>
+              <td class="mono">Q1 {{ h.respuestas.impacto }} · Q2 {{ h.respuestas.respaldo }} · Q3 {{ h.respuestas.reposicion }} · Q4 {{ h.respuestas.seguridad_ambiente }}</td>
+              <td class="mono">{{ h.evaluado_por or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+
+    <div>
+      <div class="section-title" style="margin-top:0">Foto</div>
+      {% if equipo.foto %}
+      <img class="foto" src="{{ prefix }}/equipos/{{ equipo.id }}/foto?v={{ equipo.updated_at.timestamp()|int if equipo.updated_at else 0 }}" alt="Foto de {{ equipo.nombre }}" />
+      {% else %}
+      <div class="foto-vacia">Sin foto. Una foto de la placa ahorra buscar el modelo cuando falla.</div>
+      {% endif %}
+      <form id="foto-form" style="margin-top:10px">
+        <input type="file" id="foto-input" accept="image/*" capture="environment" style="font-size:.8rem" />
+        <div class="hint" id="foto-estado">Se reduce en el navegador antes de subir.</div>
+      </form>
+
+      <div class="section-title">Resumen</div>
+      <div class="form-card">
+        <dl class="kv">
+          <dt>Respaldo</dt>
+          <dd>{% if respaldo %}<a class="row-link" href="{{ prefix }}/equipos/{{ respaldo.id }}">{{ respaldo.codigo }} · {{ respaldo.nombre }}</a>{% else %}Sin respaldo{% endif %}</dd>
+          <dt>Respalda a</dt>
+          <dd>{% for r in respaldado_por_este %}<a class="row-link" href="{{ prefix }}/equipos/{{ r.id }}">{{ r.codigo }}</a>{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</dd>
+          {% if equipo.sitio == 'crianza' %}
+          <dt>Atiende a</dt><dd>{{ ref_label or '—' }}</dd>
+          {% endif %}
+          <dt>Tolerancia</dt>
+          <dd>{% if evaluacion and evaluacion.tolerancia_horas is not none %}{{ '%.0f'|format(evaluacion.tolerancia_horas) }} h detenido{% else %}Sin definir{% endif %}</dd>
+        </dl>
+      </div>
+
+      <div class="section-title">Etiqueta</div>
+      <a class="btn btn-ghost" href="{{ prefix }}/qr?sitio={{ equipo.sitio }}&codigos={{ equipo.codigo }}">Imprimir QR de este equipo</a>
+
+      <div class="section-title">Estado</div>
+      <form method="post" action="{{ prefix }}/equipos/{{ equipo.id }}/baja"
+            onsubmit="return confirm('{{ '¿Dar de baja ' ~ equipo.codigo ~ '? Deja de aparecer en listas y en el bot; su historia se conserva.' if equipo.estado != 'baja' else '¿Reactivar ' ~ equipo.codigo ~ '?' }}')">
+        {% if equipo.estado != 'baja' %}
+        <input type="hidden" name="accion" value="baja" />
+        <button class="btn btn-danger" type="submit">Dar de baja</button>
+        {% else %}
+        <input type="hidden" name="accion" value="reactivar" />
+        <button class="btn btn-ghost" type="submit">Reactivar</button>
+        {% endif %}
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+  // Reduce la foto a ~1280 px (JPEG) en el navegador antes de subirla: una foto
+  // de celular pesa 3-5 MB y aquí basta con que se lea la placa. Así no hace
+  // falta Pillow en el servidor.
+  (function () {
+    const input = document.getElementById('foto-input');
+    const estado = document.getElementById('foto-estado');
+    input.addEventListener('change', async () => {
+      const f = input.files[0];
+      if (!f) return;
+      estado.textContent = 'Reduciendo…';
+      try {
+        const bmp = await createImageBitmap(f);
+        const escala = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(bmp.width * escala); c.height = Math.round(bmp.height * escala);
+        c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+        const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
+        const fd = new FormData();
+        fd.append('foto', blob, 'foto.jpg');
+        estado.textContent = 'Subiendo ' + Math.round(blob.size / 1024) + ' KB…';
+        const resp = await fetch('{{ prefix }}/equipos/{{ equipo.id }}/foto', {method: 'POST', body: fd});
+        window.location = resp.url;
+      } catch (e) {
+        estado.textContent = 'No se pudo procesar la foto: ' + e;
+      }
+    });
+  })();
+</script>
+</body>
+</html>

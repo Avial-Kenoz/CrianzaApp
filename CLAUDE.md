@@ -1,7 +1,8 @@
 # CrianzaApp — Guía para Claude
 
 App **FastAPI** (Python, español) de crianza de esturión: estanques, peces (PIT),
-muestreos, reproducción, **sexado offline**, **calidad de agua** y **molienda/ensilaje**.
+muestreos, reproducción, **sexado offline**, **calidad de agua**, **molienda/ensilaje** y
+**mantenimiento de maquinaria** (núcleo común con PlantaApp).
 Puerto **8002**.
 
 ## Base de datos — LEER ANTES DE CUALQUIER SCRIPT ⚠️
@@ -170,3 +171,28 @@ PWA abre con una **ventana de seguridad bloqueante** (se trabaja con ácido) en 
 ahí dejó el botón "acepto" muerto y al operador encerrado. Es contenido de emergencia y no
 puede depender de que cargue el resto de la app. Al tocar la PWA hay que **subir `CACHE` en
 `sw.js`** o la tablet sigue sirviendo la versión anterior.
+
+## Módulo Mantenimiento de Maquinaria
+
+Ver `especificacion_mantenimiento_v1.md`. **PR1 hecho** (catálogo de equipos con encuesta de
+criticidad, personas, contratistas, catálogos/parámetros, hoja de QR); pendientes PR2 (OT),
+PR3 (bot), PR3P (satélite de Planta), PR4… A diferencia del resto de la app, vive en **su propio
+paquete** `app/maintenance/` (`models.py`, `rules.py`, `service.py`, `router.py` →
+`/views/ui/mantenimiento/*`; plantillas `mantenimiento_*.html` + parciales `_mnt_*`).
+Invariantes:
+
+- **Núcleo único para Crianza y Planta.** Las tablas `mnt_*` guardan también los equipos de
+  Planta (`sitio`). PlantaApp **no** tiene tablas de mantenimiento: es un satélite que llamará a
+  una API firmada (PR3P). No duplicar lógica allá.
+- **Toda regla va en `service.py`/`rules.py`**, nunca en el router: la web, la API de Planta y el
+  bot llaman a las mismas funciones. `rules.py` es puro y tiene pruebas sin pytest:
+  `.venv\Scripts\python.exe -m unittest app.maintenance.test_rules`.
+- **La criticidad no se elige, se calcula** de la encuesta (tabla en `rules.py`, replicada en JS
+  en `_mnt_encuesta.html` solo como vista previa: si se cambia una, cambiar la otra). Cada
+  evaluación se guarda con sus respuestas y `regla_version`; nunca se borra.
+- **Sin FK a tablas de otros módulos** (`users`, `ponds`): el vínculo a estanque es la referencia
+  blanda `ref_ubicacion_tipo:ref_ubicacion_id` (`pond:12`, `unit:3`).
+- El QR apunta a `t.me/<bot>?start=EQ-xxx` y **no se imprime** sin `MNT_TELEGRAM_BOT_USERNAME`
+  (un QR con destino equivocado queda pegado en terreno).
+- Para probar sin los schedulers de calidad de agua (que en `start_dev.cmd` correrían en paralelo
+  a producción sobre la misma BD), montar solo `app.maintenance.router` en una app FastAPI mínima.

@@ -66,3 +66,18 @@ from .silage_grinding_events import SilageGrindingEvent
 from .silage_weekly_inspections import SilageWeeklyInspection
 from .silage_acid import SilageAcidLot, SilageAcidMovement
 from .silage_thresholds import SilageThreshold
+# Mantenimiento de maquinaria: el módulo vive en su propio paquete
+# (app/maintenance); se registra aquí para que Alembic vea sus tablas.
+from app.maintenance.models import (
+    MntSistema,
+    MntTipoEquipo,
+    MntContratista,
+    MntPersona,
+    MntEquipo,
+    MntCriticidadEvaluacion,
+    MntParametro,
+    MntDiccionario,
+    MntOt,
+    MntAviso,
+    MntOtEvento,
+)

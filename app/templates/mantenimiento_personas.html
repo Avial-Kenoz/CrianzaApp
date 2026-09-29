@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Personas – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb">Mantenimiento</div>
+  <div class="page-title">Personas</div>
+  <div class="page-sub">
+    Quién reporta, gestiona, ejecuta o recibe avisos. Las alarmas P1 no tienen horario; el horario solo
+    decide cuándo sale el resumen de fallas menores.
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_mnt_tabs.html' %}
+
+  {% if advertencias %}
+  <ul class="warn-list">
+    {% for a in advertencias %}<li class="note warn" style="margin:0">⚠️ {{ a }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {% set p = editando %}
+  <div class="section-title">{{ 'Editar ' ~ p.nombre if p else 'Agregar persona' }}</div>
+  <form class="form-card" method="post" action="{{ prefix }}/personas">
+    {% if p %}<input type="hidden" name="persona_id" value="{{ p.id }}" />{% endif %}
+    <div class="grid-form">
+      <div>
+        <label for="nombre" class="req">Nombre</label>
+        <input type="text" id="nombre" name="nombre" maxlength="120" required value="{{ p.nombre if p else '' }}" />
+      </div>
+      <div>
+        <label for="rol">Rol</label>
+        <select id="rol" name="rol">
+          {% for k, l in roles_persona.items() %}<option value="{{ k }}" {% if p and p.rol == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="sitio">Sitio</label>
+        <select id="sitio" name="sitio">
+          <option value="">Ambos</option>
+          {% for k, l in sitio_labels.items() %}<option value="{{ k }}" {% if p and p.sitio == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="telegram_user_id">ID de Telegram</label>
+        <input type="text" id="telegram_user_id" name="telegram_user_id" maxlength="40" inputmode="numeric" value="{{ p.telegram_user_id or '' if p else '' }}" />
+        <div class="hint">Desde PR3 se vincula solo, desde la bandeja de «no vinculados».</div>
+      </div>
+      <div>
+        <label for="planta_username">Usuario en PlantaApp</label>
+        <input type="text" id="planta_username" name="planta_username" maxlength="80" value="{{ p.planta_username or '' if p else '' }}" />
+        <div class="hint">Para atribuirle lo que registre desde Planta.</div>
+      </div>
+      <div class="wide">
+        <label>Recibe alarmas P1 de</label>
+        {% for s in sitios %}
+        <label class="chk"><input type="checkbox" name="alarmas_sitios" value="{{ s }}" {% if p and s in (p.alarmas_sitios or '').split(',') %}checked{% endif %}> {{ sitio_labels[s] }}</label>
+        {% endfor %}
+        <div class="hint">
+          Siempre y a cualquier hora. El encargado de mantenimiento recibe ambos; el supervisor de Planta,
+          Planta. El semanero de Crianza no se marca aquí: sale solo de la rotación de calidad de agua.
+        </div>
+      </div>
+      <div class="wide">
+        <label class="chk"><input type="checkbox" name="recibe_resumen" value="1" {% if p and p.recibe_resumen %}checked{% endif %}> Recibe el resumen de fallas menores</label>
+      </div>
+      <div class="wide">
+        <label>Días del horario</label>
+        {% for i, d in dias %}
+        <label class="chk"><input type="checkbox" name="horario_dias" value="{{ i }}" {% if p and (i|string) in (p.horario_dias or '').split(',') %}checked{% endif %}> {{ d }}</label>
+        {% endfor %}
+      </div>
+      <div>
+        <label for="horario_desde">Desde</label>
+        <input type="text" id="horario_desde" name="horario_desde" placeholder="8:30" value="{{ fmt_hora(p.horario_desde) if p else '' }}" />
+      </div>
+      <div>
+        <label for="horario_hasta">Hasta</label>
+        <input type="text" id="horario_hasta" name="horario_hasta" placeholder="17:30" value="{{ fmt_hora(p.horario_hasta) if p else '' }}" />
+      </div>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:16px">
+      <button class="btn btn-primary" type="submit">{{ 'Guardar' if p else 'Agregar' }}</button>
+      {% if p %}<a class="btn btn-ghost" href="{{ prefix }}/personas">Cancelar</a>{% endif %}
+    </div>
+  </form>
+
+  <div class="section-title">Registradas</div>
+  <form class="toolbar" method="get">
+    <label class="chk"><input type="checkbox" name="inactivas" value="1" {% if f_inactivas %}checked{% endif %} onchange="this.form.submit()"> Incluir inactivas</label>
+  </form>
+  <div class="card">
+    {% if personas %}
+    <table>
+      <thead><tr><th>Nombre</th><th>Rol</th><th>Sitio</th><th>Telegram</th><th>Alarmas P1</th><th>Resumen</th><th></th></tr></thead>
+      <tbody>
+        {% for x in personas %}
+        <tr class="{{ 'baja' if not x.activo }}">
+          <td><b>{{ x.nombre }}</b>{% if x.planta_username %}<div class="mono">Planta: {{ x.planta_username }}</div>{% endif %}</td>
+          <td>{{ roles_persona.get(x.rol, x.rol) }}</td>
+          <td>{{ sitio_labels.get(x.sitio, 'Ambos') }}</td>
+          <td>
+            {% if x.telegram_user_id %}
+              <span class="mono">{{ x.telegram_user_id }}</span>
+              {% if x.bot_iniciado %}<span class="pill ok">bot OK</span>{% else %}<span class="pill pend">sin /start</span>{% endif %}
+            {% else %}<span class="pill muted">sin vincular</span>{% endif %}
+          </td>
+          <td>{% for s in (x.alarmas_sitios or '').split(',') if s %}<span class="pill sitio-{{ s }}">{{ sitio_labels[s] }}</span> {% else %}—{% endfor %}</td>
+          <td class="mono">
+            {% if x.recibe_resumen %}
+              {% for d in (x.horario_dias or '').split(',') if d %}{{ dias[d|int][1] }}{% if not loop.last %} {% endif %}{% endfor %}
+              · {{ fmt_hora(x.horario_desde) }}–{{ fmt_hora(x.horario_hasta) }}
+            {% else %}—{% endif %}
+          </td>
+          <td style="white-space:nowrap">
+            <a class="btn btn-mini" href="{{ prefix }}/personas?editar={{ x.id }}">Editar</a>
+            <form class="inline" method="post" action="{{ prefix }}/personas/{{ x.id }}/activo">
+              <input type="hidden" name="activo" value="{{ '0' if x.activo else '1' }}" />
+              <button class="btn btn-mini" type="submit">{{ 'Desactivar' if x.activo else 'Activar' }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Todavía no hay personas. Parte por el encargado de mantenimiento.</div>
+    {% endif %}
+  </div>
+</div>
+</body>
+</html>

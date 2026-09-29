@@ -57,6 +57,18 @@ CONFIG_SECTIONS = [
         "icon": "🧪",
     },
     {
+        "title": "Mantenimiento: personas y avisos",
+        "desc": "Encargado, supervisores y técnicos; quién recibe las alarmas P1 y el resumen, y en qué horario.",
+        "url": "/views/ui/mantenimiento/personas",
+        "icon": "🔧",
+    },
+    {
+        "title": "Mantenimiento: catálogos y plazos",
+        "desc": "Sistemas, tipos de equipo y plazos objetivo por prioridad.",
+        "url": "/views/ui/mantenimiento/catalogos",
+        "icon": "⚙️",
+    },
+    {
         "title": "Gestión de usuarios",
         "desc": "Activa o desactiva usuarios. Los activos aparecen en los selectores de operador.",
         "url": "/views/ui/config/usuarios",

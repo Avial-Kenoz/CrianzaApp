@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Etiquetas QR – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+  <style>
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+    .label { background: #fff; border: 1px solid #cbd0d6; border-radius: 12px; padding: 14px; text-align: center;
+             page-break-inside: avoid; break-inside: avoid; }
+    .label img { width: 150px; height: 150px; }
+    .label .codigo { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 1.05rem; font-weight: 800; margin-top: 6px; }
+    .label .nombre { font-size: .9rem; font-weight: 650; margin-top: 2px; }
+    .label .ubic { font-size: .74rem; color: #6b7280; }
+    .label .instr { font-size: .68rem; color: #9ca3af; margin-top: 6px; }
+    @media print {
+      @page { size: A4 portrait; margin: 12mm; }
+      .no-print, .app-shell .sidebar, .sidebar-toggle, .sidebar-overlay { display: none !important; }
+      .main-content { margin-left: 0 !important; }
+      .label { border-color: #999; }
+    }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="no-print">
+    <div class="crumb">Mantenimiento</div>
+    <div class="page-title">Etiquetas QR</div>
+    <div class="page-sub">
+      Al escanear la etiqueta se abre el bot de mantenimiento con el equipo ya elegido: el aviso de falla
+      toma menos de 30 segundos.
+    </div>
+    {% include '_mnt_tabs.html' %}
+
+    <form class="toolbar" method="get">
+      <div class="fld">
+        <label for="f-sitio">Sitio</label>
+        <select id="f-sitio" name="sitio" onchange="this.form.submit()">
+          {% for k, l in sitio_labels.items() %}<option value="{{ k }}" {% if sitio == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+        </select>
+      </div>
+      <div style="flex:1"></div>
+      {% if etiquetas %}<button class="btn btn-primary" type="button" onclick="window.print()">Imprimir</button>{% endif %}
+    </form>
+  </div>
+
+  {% if not bot %}
+  <div class="note bad">
+    <b>Falta configurar el bot de mantenimiento.</b> Cada QR apunta a <span class="code">t.me/&lt;bot&gt;?start=EQ-…</span>,
+    así que no se puede imprimir hasta saber el nombre del bot. Agrega <span class="code">MNT_TELEGRAM_BOT_USERNAME</span>
+    a <span class="code">PlantaAPP/server.env</span> y reinicia CrianzaApp. No se genera una etiqueta provisoria a propósito:
+    un QR impreso con un destino equivocado queda pegado en terreno.
+  </div>
+  {% elif etiquetas %}
+  <div class="grid">
+    {% for e in etiquetas %}
+    <div class="label">
+      <img src="{{ e.svg }}" alt="QR {{ e.codigo }}" />
+      <div class="codigo">{{ e.codigo }}</div>
+      <div class="nombre">{{ e.nombre }}</div>
+      {% if e.ubicacion %}<div class="ubic">{{ e.ubicacion }}</div>{% endif %}
+      <div class="instr">¿Falla? Escanea y avisa</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">No hay equipos activos de {{ sitio_labels[sitio] }} para etiquetar.</div>
+  {% endif %}
+</div>
+</body>
+</html>
