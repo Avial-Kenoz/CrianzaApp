@@ -421,6 +421,9 @@ def catalogo_tecnico(db: Session) -> list[dict]:
 def cambiar_baja(db: Session, equipo: MntEquipo, dar_de_baja: bool) -> None:
     equipo.estado = "baja" if dar_de_baja else "operativo"
     equipo.updated_at = datetime.now()
+    if not dar_de_baja:
+        # Al reactivarlo, su estado vuelve a salir de sus fallas vigentes.
+        recalcular_estado_equipo(db, equipo.id)
 
 
 def guardar_foto(equipo: MntEquipo, contenido: bytes, mime: str) -> None:
@@ -553,14 +556,14 @@ def resolver_actor(db: Session, texto: Optional[str]) -> tuple[Optional[int], Op
 
 def _validar_hora(cuando: Optional[datetime], que: str, no_antes_de: Optional[datetime] = None,
                   referencia: str = "al último registro de la OT") -> datetime:
-    """`referencia` incluye la preposición ("al último…", "a la detección…")."""
+    """`que` y `referencia` incluyen su preposición ("del cambio", "al último…")."""
     if cuando is None:
-        raise ErrorValidacion(f"Falta la hora de {que}.")
+        raise ErrorValidacion(f"Falta la hora {que}.")
     if cuando > datetime.now() + _MARGEN_FUTURO:
-        raise ErrorValidacion(f"La hora de {que} está en el futuro.")
+        raise ErrorValidacion(f"La hora {que} está en el futuro.")
     if no_antes_de and cuando < no_antes_de:
         raise ErrorValidacion(
-            f"La hora de {que} ({cuando:%d-%m %H:%M}) es anterior {referencia} "
+            f"La hora {que} ({cuando:%d-%m %H:%M}) es anterior {referencia} "
             f"({no_antes_de:%d-%m %H:%M}).")
     return cuando
 
@@ -591,7 +594,7 @@ def crear_aviso(db: Session, *, equipo_id: int, condicion: str, origen: str,
     if condicion not in rules.CONDICIONES:
         raise ErrorValidacion("Indica cómo está el equipo (detenido, con problemas o algo raro).")
     now = datetime.now()
-    detectado_at = _validar_hora(detectado_at or now, "detección")
+    detectado_at = _validar_hora(detectado_at or now, "de detección")
     # «¿Entró el respaldo?» solo tiene sentido si está detenido y tiene respaldo.
     if condicion != "detenido" or not equipo.respaldo_equipo_id:
         respaldo_entro = None
@@ -608,6 +611,7 @@ def crear_aviso(db: Session, *, equipo_id: int, condicion: str, origen: str,
     )
     db.add(aviso)
     db.flush()
+    recalcular_estado_equipo(db, equipo.id)
     return aviso
 
 
@@ -653,7 +657,7 @@ def aceptar_avisos(db: Session, aviso_ids: list[int], *, estado_inicial: str = "
         raise ErrorValidacion("Marca al menos un aviso nuevo.")
     cuando = cuando or datetime.now()
     mas_tardio = max(a.detectado_at for a in avisos)
-    _validar_hora(cuando, "acuse", mas_tardio, "a la detección del aviso más reciente")
+    _validar_hora(cuando, "del acuse", mas_tardio, "a la detección del aviso más reciente")
     actor = resolver_actor(db, actor_texto)
 
     por_equipo: dict = {}
@@ -684,6 +688,8 @@ def aceptar_avisos(db: Session, aviso_ids: list[int], *, estado_inicial: str = "
         for a in grupo:
             a.estado, a.ot_id = "aceptado", ot.id
         creadas.append(ot)
+    for equipo_id in por_equipo:
+        recalcular_estado_equipo(db, equipo_id)
     return {"creadas": creadas, "unidos": unidos}
 
 
@@ -704,6 +710,7 @@ def unir_aviso(db: Session, aviso: MntAviso, ot: MntOt, actor_texto: Optional[st
         cambiar_prioridad(db, ot, aviso.prioridad_sugerida,
                           f"Aviso {rules.folio_aviso(aviso.id)} más urgente", actor_texto)
     ot.updated_at = datetime.now()
+    recalcular_estado_equipo(db, ot.equipo_id)
 
 
 def descartar_aviso(db: Session, aviso: MntAviso, motivo: str) -> None:
@@ -713,6 +720,7 @@ def descartar_aviso(db: Session, aviso: MntAviso, motivo: str) -> None:
     if not motivo:
         raise ErrorValidacion("Para descartar un aviso hay que indicar el motivo.")
     aviso.estado, aviso.motivo_descarte = "descartado", motivo[:200]
+    recalcular_estado_equipo(db, aviso.equipo_id)
 
 
 def cambiar_estado(db: Session, ot: MntOt, nuevo: str, *, cuando: Optional[datetime] = None,
@@ -726,7 +734,7 @@ def cambiar_estado(db: Session, ot: MntOt, nuevo: str, *, cuando: Optional[datet
         raise ErrorValidacion(f"{rules.folio_ot(ot.id)}: no se puede pasar de "
                               f"«{rules.ESTADOS_OT.get(ot.estado, ot.estado)}» a "
                               f"«{rules.ESTADOS_OT.get(nuevo, nuevo)}».")
-    cuando = _validar_hora(cuando or datetime.now(), "el cambio", _ultima_hora(db, ot))
+    cuando = _validar_hora(cuando or datetime.now(), "del cambio", _ultima_hora(db, ot))
     if nuevo == "anulada" and not (nota or "").strip():
         raise ErrorValidacion("Para anular una OT hay que indicar el motivo.")
     _evento(db, ot, ot.estado, nuevo, cuando, resolver_actor(db, actor_texto), nota)
@@ -734,6 +742,7 @@ def cambiar_estado(db: Session, ot: MntOt, nuevo: str, *, cuando: Optional[datet
     if nuevo == "anulada":
         ot.cierre_at = cuando
     ot.updated_at = datetime.now()
+    recalcular_estado_equipo(db, ot.equipo_id)
 
 
 def cambiar_prioridad(db: Session, ot: MntOt, prioridad: str, motivo: str,
@@ -775,6 +784,109 @@ def asignar_ejecutor(db: Session, ot: MntOt, ejecutor_tipo: Optional[str], tecni
         _evento(db, ot, ot.estado, ot.estado, max(datetime.now(), _ultima_hora(db, ot)),
                 resolver_actor(db, actor_texto), f"Ejecutor: {quien}")
     ot.updated_at = datetime.now()
+
+
+def cerrar_ot(db: Session, ot: MntOt, *, causa: str, accion: str, en_servicio_at: Optional[datetime],
+              provisorio: Optional[bool], cuando: Optional[datetime] = None,
+              repuestos: Optional[str] = None, trabajo: Optional[str] = None,
+              actor_texto: Optional[str] = None) -> None:
+    """Cierre de la OT (spec §5.4). Causa y acción en texto libre hasta que
+    exista el diccionario; «¿provisorio?» es el único dato estructurado."""
+    if ot.estado not in rules.ESTADOS_ABIERTOS:
+        raise ErrorValidacion(f"{rules.folio_ot(ot.id)} ya está {rules.ESTADOS_OT[ot.estado].lower()}.")
+    causa, accion = (causa or "").strip(), (accion or "").strip()
+    if not causa or not accion:
+        raise ErrorValidacion("Para cerrar hay que anotar qué falló (causa) y qué se hizo (acción).")
+    if provisorio is None:
+        raise ErrorValidacion("Indica si el arreglo es provisorio.")
+    cuando = _validar_hora(cuando or datetime.now(), "del cierre", _ultima_hora(db, ot))
+    en_servicio_at = _validar_hora(en_servicio_at, "de vuelta a servicio", ot.inicio_at,
+                                   "a la detección de la falla")
+    if en_servicio_at > cuando:
+        raise ErrorValidacion("El equipo no puede volver a servicio después del cierre de la OT.")
+    _evento(db, ot, ot.estado, "cerrada", cuando, resolver_actor(db, actor_texto),
+            "Arreglo provisorio" if provisorio else None)
+    ot.estado, ot.cierre_at, ot.equipo_en_servicio_at = "cerrada", cuando, en_servicio_at
+    ot.causa_texto, ot.accion_texto, ot.provisorio = causa, accion, bool(provisorio)
+    ot.repuestos_texto = (repuestos or "").strip() or None
+    ot.trabajo_realizado = (trabajo or "").strip() or None
+    ot.updated_at = datetime.now()
+    recalcular_estado_equipo(db, ot.equipo_id)
+
+
+def crear_ot_definitiva(db: Session, origen: MntOt, actor_texto: Optional[str] = None) -> MntOt:
+    """OT del arreglo definitivo tras uno provisorio. El equipo funciona, así
+    que nace como P3 (se planifica) y su reloj parte con el cierre del
+    provisorio: el tiempo que tarde en hacerse el definitivo también se mide."""
+    if origen.estado != "cerrada" or not origen.provisorio:
+        raise ErrorValidacion("Solo una OT cerrada con arreglo provisorio genera la del definitivo.")
+    if db.query(MntOt).filter(MntOt.ot_origen_id == origen.id).first():
+        raise ErrorValidacion(f"{rules.folio_ot(origen.id)} ya tiene su OT del arreglo definitivo.")
+    ot = MntOt(tipo="correctiva", equipo_id=origen.equipo_id, prioridad="P3",
+               prioridad_motivo=f"Arreglo definitivo de {rules.folio_ot(origen.id)}",
+               plazo_horas=plazo_de(db, "P3"), estado="pendiente", inicio_at=origen.cierre_at,
+               ot_origen_id=origen.id, created_at=datetime.now(), updated_at=datetime.now())
+    db.add(ot)
+    db.flush()
+    _evento(db, ot, "aviso", "pendiente", origen.cierre_at, resolver_actor(db, actor_texto),
+            f"Definitivo de {rules.folio_ot(origen.id)}: {origen.accion_texto or ''}")
+    return ot
+
+
+def recalcular_estado_equipo(db: Session, equipo_id: int) -> None:
+    """El estado del equipo sale de sus fallas vigentes (spec §3.1): detenido o
+    degradado mientras tenga un aviso sin atender o una OT abierta con esa
+    condición; operativo si no. Una OT en «reparada» ya no lo detiene. Un
+    equipo dado de baja no se toca."""
+    equipo = db.get(MntEquipo, equipo_id)
+    if equipo is None or equipo.estado == "baja":
+        return
+    db.flush()
+    condiciones = {c for (c,) in (
+        db.query(MntAviso.condicion)
+        .outerjoin(MntOt, MntOt.id == MntAviso.ot_id)
+        .filter(MntAviso.equipo_id == equipo_id)
+        .filter((MntAviso.estado == "nuevo")
+                | (MntOt.estado.in_([e for e in rules.ESTADOS_ABIERTOS if e != "reparada"])))
+        .all())}
+    nuevo = ("detenido" if "detenido" in condiciones
+             else "degradado" if "degradado" in condiciones else "operativo")
+    if equipo.estado != nuevo:
+        equipo.estado = nuevo
+        equipo.updated_at = datetime.now()
+
+
+def guardar_parte(db: Session, filas: list[dict], actor_texto: Optional[str] = None) -> tuple[int, list[str]]:
+    """Parte diario (spec §5.3): una sola pantalla y un solo guardar.
+
+    Cada fila trae {ot_id, estado, cuando, nota}. Una fila sin estado nuevo ni
+    nota se ignora («sin cambios» no exige clic). Solo nota = anotación en la
+    bitácora sin cambiar de estado. Cada fila se aplica por separado: si una
+    falla (hora inválida, transición imposible), las demás se guardan igual y
+    el error se informa con su folio.
+    """
+    aplicadas, errores = 0, []
+    for f in filas:
+        nuevo, nota = (f.get("estado") or "").strip(), (f.get("nota") or "").strip()
+        if not nuevo and not nota:
+            continue
+        ot = db.get(MntOt, f["ot_id"])
+        if ot is None:
+            continue
+        sp = db.begin_nested()
+        try:
+            if nuevo:
+                cambiar_estado(db, ot, nuevo, cuando=f.get("cuando"), actor_texto=actor_texto, nota=nota)
+            else:
+                cuando = _validar_hora(f.get("cuando") or datetime.now(), "de la nota", _ultima_hora(db, ot))
+                _evento(db, ot, ot.estado, ot.estado, cuando, resolver_actor(db, actor_texto), nota)
+                ot.updated_at = datetime.now()
+            sp.commit()
+            aplicadas += 1
+        except ErrorValidacion as e:
+            sp.rollback()
+            errores.append(f"{rules.folio_ot(ot.id)}: {e}")
+    return aplicadas, errores
 
 
 def tramos_de(ot: MntOt, eventos: list, ahora: Optional[datetime] = None) -> dict:

@@ -174,9 +174,10 @@ puede depender de que cargue el resto de la app. Al tocar la PWA hay que **subir
 
 ## Módulo Mantenimiento de Maquinaria
 
-Ver `especificacion_mantenimiento_v1.md`. **PR1 hecho** (catálogo de equipos con encuesta de
-criticidad, personas, contratistas, catálogos/parámetros, hoja de QR); pendientes PR2 (OT),
-PR3 (bot), PR3P (satélite de Planta), PR4… A diferencia del resto de la app, vive en **su propio
+Ver `especificacion_mantenimiento_v1.md`. **PR1 y PR2 hechos** (catálogo de equipos con encuesta
+de criticidad, personas, contratistas, hoja de QR; avisos, acuse en lote, OT con estados y
+tramos, parte diario, cierre); pendientes PR3 (bot), PR3P (satélite de Planta), PR4 (alarmas y
+resumen por Telegram, vista agregada de tiempos)… A diferencia del resto de la app, vive en **su propio
 paquete** `app/maintenance/` (`models.py`, `rules.py`, `service.py`, `router.py` →
 `/views/ui/mantenimiento/*`; plantillas `mantenimiento_*.html` + parciales `_mnt_*`).
 Invariantes:
@@ -197,6 +198,15 @@ Invariantes:
 - **Redundancia** (`/equipos/nuevo?desde=<id>`) precarga una copia y ofrece respaldo mutuo, pero
   **nunca pisa** el respaldo que el original ya tenía. La ficha avisa si un equipo tiene respaldo
   y su encuesta dice «sin respaldo» (`service.respaldo_incoherente`).
+- **Los tiempos salen de `mnt_ot_eventos`, nunca de columnas sueltas.** Cada cambio guarda
+  `ocurrido_at` (editable) y `registrado_at`; `rules.tramos` reparte las horas por estado
+  (reacción = detección → acuse). Por eso una hora nueva no puede ser anterior al último evento
+  ni futura (`_validar_hora`). Cambios de prioridad/ejecutor/notas son eventos sin cambio de
+  estado (mismo `estado_desde`/`estado_hasta`): no alteran los tramos.
+- **Nunca dos OT abiertas por equipo**: aceptar un aviso de un equipo con OT abierta lo *une*.
+- **El estado del equipo se deriva** (`recalcular_estado_equipo`): detenido/degradado si tiene un
+  aviso sin atender o una OT abierta (no «reparada») con esa condición. Llamarlo en todo lo que
+  cambie avisos u OT.
 - Sistemas y tipos crecen desde la ficha («+ Nuevo…», `POST /catalogos/{que}/rapido`, JSON) y se
   limpian con **fusionar** (mueve equipos y desactiva el duplicado; no borra).
 - ⚠️ **Producción corre desde este mismo árbol de trabajo** (sin `--reload`): cualquier reinicio,

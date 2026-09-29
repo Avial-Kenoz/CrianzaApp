@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Parte diario – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+  <style>
+    tr.cambiada td { background: #eff6ff; }
+    .parte select, .parte input[type=text] { width: 100%; }
+    .parte input[type=datetime-local] { width: 170px; }
+    .sin-mov { color: #b45309; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb">Mantenimiento</div>
+  <div class="page-title">Parte diario</div>
+  <div class="page-sub">
+    Todas las OT abiertas en una pantalla. Toca solo las que cambiaron y guarda una vez: las que no tocas
+    siguen igual.
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_mnt_tabs.html' %}
+  {% include '_mnt_actor.html' %}
+
+  <form class="toolbar" method="get">
+    <div class="fld">
+      <label for="f-sitio">Sitio</label>
+      <select id="f-sitio" name="sitio" onchange="this.form.submit()">
+        <option value="">Ambos</option>
+        {% for k, l in sitio_labels.items() %}<option value="{{ k }}" {% if f_sitio == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select>
+    </div>
+  </form>
+
+  {% if filas %}
+  <form method="post" action="{{ prefix }}/parte" class="card con-actor parte" id="form-parte">
+    <input type="hidden" name="sitio" value="{{ f_sitio }}">
+    <table>
+      <thead>
+        <tr><th>OT</th><th>Equipo</th><th>Estado actual</th><th>Último movimiento</th>
+            <th style="width:190px">Pasa a</th><th>Cuándo <span style="text-transform:none">(vacío = ahora)</span></th><th style="min-width:200px">Nota</th></tr>
+      </thead>
+      <tbody>
+        {% for f in filas %}{% set o = f.ot %}
+        <tr class="{{ 'fila-p1' if o.prioridad == 'P1' }}">
+          <td>
+            <input type="hidden" name="ot_id" value="{{ o.id }}">
+            <a class="row-link code" href="{{ prefix }}/ots/{{ o.id }}">{{ folio_ot(o.id) }}</a>
+            <div><span class="pill pri-{{ o.prioridad }}">{{ o.prioridad }}</span></div>
+          </td>
+          <td>
+            <span class="code">{{ f.equipo.codigo }}</span> {{ f.equipo.nombre }}
+            <div><span class="pill sitio-{{ f.equipo.sitio }}">{{ sitio_labels[f.equipo.sitio] }}</span>
+              {% if f.vencida %}<span class="vencida mono">fuera de plazo</span>{% endif %}</div>
+          </td>
+          <td>
+            <span class="pill ot-{{ o.estado }}">{{ estados_ot[o.estado] }}</span>
+            <div style="margin-top:5px">{% with t = f.tramos %}{% include '_mnt_tbar.html' %}{% endwith %}</div>
+          </td>
+          <td class="mono">
+            {% if f.ultimo %}
+            <span class="{{ 'sin-mov' if f.sin_mov and f.sin_mov > 24 }}">hace {{ dur(f.sin_mov) }}</span>
+            {% if f.ultimo.nota %}<div class="desc">{{ f.ultimo.nota }}</div>{% endif %}
+            {% endif %}
+          </td>
+          <td>
+            <select name="estado_{{ o.id }}" class="cambio">
+              <option value="">(sigue igual)</option>
+              {% for e in estados_abiertos if e != o.estado %}<option value="{{ e }}">{{ estados_ot[e] }}</option>{% endfor %}
+            </select>
+            <a class="mono" href="{{ prefix }}/ots/{{ o.id }}#cerrar">Cerrar…</a>
+          </td>
+          <td><input type="datetime-local" name="cuando_{{ o.id }}" class="cambio"></td>
+          <td><input type="text" name="nota_{{ o.id }}" maxlength="300" class="cambio" placeholder="Ej.: repuesto llega el jueves"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="acciones-lote">
+      <button class="btn btn-primary" type="submit">Guardar parte</button>
+      <span class="hint" style="margin:0" id="n-cambios">Sin cambios todavía.</span>
+    </div>
+  </form>
+  <div class="note">
+    Para <b>cerrar</b> una OT se abre su detalle (pide causa, acción y hora de vuelta a servicio). Solo una
+    nota, sin cambiar el estado, queda en la bitácora igual: sirve para dejar constancia de por qué sigue esperando.
+  </div>
+  {% else %}
+  <div class="card"><div class="empty">No hay OT abiertas. 🎉</div></div>
+  {% endif %}
+</div>
+<script>
+(function () {
+  const f = document.getElementById('form-parte');
+  if (!f) return;
+  const contar = () => {
+    let n = 0;
+    f.querySelectorAll('tbody tr').forEach(tr => {
+      const c = [...tr.querySelectorAll('.cambio')].some(i => i.value.trim());
+      tr.classList.toggle('cambiada', c);
+      if (c) n++;
+    });
+    document.getElementById('n-cambios').textContent = n ? n + ' OT con cambios.' : 'Sin cambios todavía.';
+  };
+  f.addEventListener('input', contar);
+  f.addEventListener('change', contar);
+  // Avisa antes de salir con cambios sin guardar: un parte a medio llenar se pierde.
+  let enviando = false;
+  f.addEventListener('submit', () => { enviando = true; });
+  window.addEventListener('beforeunload', e => {
+    if (!enviando && f.querySelector('tr.cambiada')) { e.preventDefault(); e.returnValue = ''; }
+  });
+})();
+</script>
+</body>
+</html>

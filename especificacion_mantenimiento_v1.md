@@ -5,8 +5,8 @@ Fecha: 2026-09-29
 Crianza y Planta, así que el núcleo vive solo en CrianzaApp y PlantaApp es un satélite que da de alta
 sus equipos y ve sus OT a través de una API firmada. Reemplaza la idea anterior de copiar el módulo a
 PlantaApp.)
-Estado: **Especificación cerrada** — decisiones de §10 resueltas. **PR1 hecho** (2026-09-29);
-siguiente: PR2 (OT en la web)
+Estado: **Especificación cerrada** — decisiones de §10 resueltas. **PR1 y PR2 hechos**
+(2026-09-29); siguiente: PR3 (bot de Telegram)
 Origen: hoy no hay registro alguno ("un paño sucio, un overall y una caja de herramientas").
 Dolor principal: **los tiempos de mantenimiento son muy largos** y nadie sabe dónde se va el tiempo.
 Objetivo: registrar fallas en 30 segundos desde terreno, gestionar la orden de trabajo (OT) hasta
@@ -566,6 +566,7 @@ la hora real de detección. **No** se construye una PWA sin conexión para esto.
 | | PR2 | Crianza | OT en la web: aviso manual, aceptar/unir/descartar, acuse de recibo en lote, estados con `ocurrido_at`, parte diario, cierre con texto libre, tablero con filtro por sitio, desglose de tiempos por OT |
 | | PR3 | Crianza | Bot de Telegram: lector, conversación de aviso (condición con botones + texto/audio/foto libre), bandeja de vinculación, notificaciones básicas (aviso nuevo al encargado, cierre al reportante) |
 | | PR3P | Crianza + **Planta** | **Satélite de Planta** (§8): API firmada en CrianzaApp + router `/mantenimiento` en PlantaApp con alta/edición de equipos y encuesta, mis OT (solo lectura), aviso de respaldo y QR |
+| | *(nota PR2)* | Crianza | Hecho en dos commits. Se adelantó a PR2 el **cálculo** de la prioridad sugerida (§5.1) porque la OT la necesita al nacer; el envío por Telegram sigue en PR4. Precisiones de implementación: el plazo se mide desde la detección hasta la vuelta a servicio; el estado del equipo cuenta también los avisos aún sin atender; el parte diario guarda las filas válidas y reporta las inválidas con su folio; «Registra» se recuerda por navegador (sin login) |
 | **F2** | PR4 | Crianza | Matriz de prioridad (§5.1), plazos, **ruteo de alarmas por sitio** y resumen en horario (§6.4), repetición de P1 sin movimiento, vista "¿Dónde se va el tiempo?" |
 | **Diccionario** | PR4b | Crianza | Cuando haya ~100 avisos o 6 meses (§5.6): exportación de textos, carga del diccionario, pantalla de recodificación, botones en bot y cierre con "Otro (escribir)" |
 | **F3** | PR5 | Crianza | Preventivo por **calendario**: planes por equipo (cada N días) que generan OT preventivas con anticipación; % de cumplimiento. Horómetros no, porque serían lecturas manuales poco confiables. Planta ve sus preventivas en "mis OT" sin cambios en el satélite |

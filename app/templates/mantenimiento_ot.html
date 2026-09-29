@@ -111,6 +111,31 @@
         <div style="margin-top:12px"><button class="btn btn-primary" type="submit">Guardar cambio</button></div>
       </form>
 
+      <div class="section-title" id="cerrar">Cerrar OT</div>
+      <form class="form-card con-actor" method="post" action="{{ prefix }}/ots/{{ ot.id }}/cerrar">
+        <div class="grid-form" style="grid-template-columns:1fr">
+          <div><label for="causa" class="req">¿Qué falló? (causa)</label>
+            <textarea id="causa" name="causa" required placeholder="Ej.: rodamiento del motor gastado"></textarea></div>
+          <div><label for="accion" class="req">¿Qué se hizo? (acción)</label>
+            <textarea id="accion" name="accion" required placeholder="Ej.: cambio de rodamientos 6205"></textarea></div>
+          <div>
+            <label class="req">¿Arreglo provisorio?</label>
+            <div class="opts">
+              <label><input type="radio" name="provisorio" value="no" required> No, quedó definitivo</label>
+              <label><input type="radio" name="provisorio" value="si" required> Sí, falta el definitivo</label>
+            </div>
+          </div>
+          <div><label for="en_servicio_at" class="req">Equipo en servicio desde</label>
+            <input type="datetime-local" id="en_servicio_at" name="en_servicio_at" data-ahora required></div>
+          <div><label for="cuando-cierre">Cierre de la OT</label>
+            <input type="datetime-local" id="cuando-cierre" name="cuando" data-ahora>
+            <div class="hint">Si se verificó después, el cierre puede ser posterior a la vuelta a servicio.</div></div>
+          <div><label for="repuestos">Repuestos usados</label><input type="text" id="repuestos" name="repuestos" maxlength="500"></div>
+          <div><label for="trabajo">Detalle del trabajo</label><textarea id="trabajo" name="trabajo"></textarea></div>
+        </div>
+        <div style="margin-top:12px"><button class="btn btn-primary" type="submit">Cerrar OT</button></div>
+      </form>
+
       <div class="section-title">Ejecutor</div>
       <form class="form-card con-actor" method="post" action="{{ prefix }}/ots/{{ ot.id }}/ejecutor">
         <div class="grid-form" style="grid-template-columns:1fr">
@@ -163,6 +188,13 @@
           {% if ot.trabajo_realizado %}<dt>Trabajo</dt><dd>{{ ot.trabajo_realizado }}</dd>{% endif %}
         </dl>
       </div>
+      {% if ot.estado == 'cerrada' and ot.provisorio and not ot_derivadas %}
+      {% include '_mnt_actor.html' %}
+      <form class="note warn con-actor" method="post" action="{{ prefix }}/ots/{{ ot.id }}/definitiva" style="margin-top:12px">
+        Este arreglo quedó <b>provisorio</b>. Si no se crea la OT del definitivo, se pierde de vista.
+        <div style="margin-top:8px"><button class="btn btn-primary" type="submit">Crear OT del arreglo definitivo</button></div>
+      </form>
+      {% endif %}
       {% endif %}
 
       <div class="section-title">Datos</div>

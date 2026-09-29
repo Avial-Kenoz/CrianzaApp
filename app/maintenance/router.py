@@ -336,6 +336,104 @@ async def ot_estado(request: Request, ot_id: int):
         db.close()
 
 
+@router.post("/ots/{ot_id}/cerrar")
+async def ot_cerrar(request: Request, ot_id: int):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        ot = db.get(MntOt, ot_id)
+        if ot is None:
+            return _volver(f"{PREFIX}/tablero", err="Esa OT no existe.")
+        prov = form.get("provisorio")
+        service.cerrar_ot(
+            db, ot, causa=form.get("causa"), accion=form.get("accion"),
+            en_servicio_at=_parse_dt(form.get("en_servicio_at")),
+            provisorio=None if prov not in ("si", "no") else prov == "si",
+            cuando=_parse_dt(form.get("cuando")), repuestos=form.get("repuestos"),
+            trabajo=form.get("trabajo"), actor_texto=form.get("actor"))
+        db.commit()
+        extra = " Quedó como provisorio: crea la OT del arreglo definitivo abajo." if ot.provisorio else ""
+        return _volver(f"{PREFIX}/ots/{ot_id}", msg=f"{rules.folio_ot(ot.id)} cerrada.{extra}")
+    except ErrorValidacion as e:
+        db.rollback()
+        return _volver(f"{PREFIX}/ots/{ot_id}", err=str(e))
+    finally:
+        db.close()
+
+
+@router.post("/ots/{ot_id}/definitiva")
+async def ot_definitiva(request: Request, ot_id: int):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        origen = db.get(MntOt, ot_id)
+        if origen is None:
+            return _volver(f"{PREFIX}/tablero", err="Esa OT no existe.")
+        nueva = service.crear_ot_definitiva(db, origen, form.get("actor"))
+        db.commit()
+        return _volver(f"{PREFIX}/ots/{nueva.id}",
+                       msg=f"{rules.folio_ot(nueva.id)} creada para el arreglo definitivo (P3).")
+    except ErrorValidacion as e:
+        db.rollback()
+        return _volver(f"{PREFIX}/ots/{ot_id}", err=str(e))
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Parte diario
+# ---------------------------------------------------------------------------
+@router.get("/parte", response_class=HTMLResponse)
+def parte(request: Request, sitio: str = ""):
+    db = SessionLocal()
+    try:
+        sitio = sitio if sitio in SITIOS else ""
+        ahora = datetime.now()
+        equipos = {e.id: e for e in service.equipos(db, incluir_baja=True)}
+        abiertas = service.ots(db, sitio=sitio or None)
+        ev = service.eventos_por_ot(db, [o.id for o in abiertas])
+        filas = []
+        for o in abiertas:
+            f = _fila_ot(o, equipos.get(o.equipo_id), ev[o.id], ahora)
+            ult = ev[o.id][-1] if ev[o.id] else None
+            f["ultimo"] = ult
+            f["sin_mov"] = ((ahora - ult.ocurrido_at).total_seconds() / 3600.0) if ult else None
+            filas.append(f)
+        return _render("mantenimiento_parte.html", request, active="parte", f_sitio=sitio,
+                       filas=filas, ahora=ahora,
+                       nombres_personas=[p.nombre for p in service.personas(db)], **_ot_ctx())
+    finally:
+        db.close()
+
+
+@router.post("/parte")
+async def parte_guardar(request: Request):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        filas = []
+        for oid in form.getlist("ot_id"):
+            if not str(oid).isdigit():
+                continue
+            try:
+                cuando = _parse_dt(form.get(f"cuando_{oid}"))
+            except ErrorValidacion:
+                cuando = None
+            filas.append({"ot_id": int(oid), "estado": form.get(f"estado_{oid}"),
+                          "cuando": cuando, "nota": form.get(f"nota_{oid}")})
+        n, errores = service.guardar_parte(db, filas, form.get("actor"))
+        db.commit()
+        sitio = form.get("sitio") or ""
+        destino = f"{PREFIX}/parte" + (f"?sitio={sitio}" if sitio in SITIOS else "")
+        if errores:
+            return _volver(destino, err=(f"{n} cambio{'s' if n != 1 else ''} guardado{'s' if n != 1 else ''}. "
+                                         f"No se guardó: " + " · ".join(errores)))
+        return _volver(destino, msg=("Sin cambios." if n == 0 else
+                                     f"Parte guardado: {n} OT actualizada{'s' if n != 1 else ''}."))
+    finally:
+        db.close()
+
+
 @router.post("/ots/{ot_id}/prioridad")
 async def ot_prioridad(request: Request, ot_id: int):
     form = await request.form()
