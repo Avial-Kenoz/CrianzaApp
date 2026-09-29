@@ -16,7 +16,7 @@ from urllib.parse import quote_plus
 
 import segno
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from jinja2 import Environment, FileSystemLoader
 
 from app.db.session import SessionLocal
@@ -82,7 +82,8 @@ def _ficha_ctx(db, sitio: Optional[str] = None, excluir_id: Optional[int] = None
         "tipos": service.tipos(db, solo_activos=False),
         "contratistas": service.contratistas(db, solo_activos=False),
         "respaldos": candidatos,
-        "ubicaciones": service.ubicaciones_vinculables(db),
+        "destinos_disp": service.destinos_disponibles(db),
+        "catalogo_tecnico": service.catalogo_tecnico(db),
         "nombres_personas": [p.nombre for p in service.personas(db)],
         **_encuesta_ctx(),
     }
@@ -131,14 +132,24 @@ def equipos_lista(request: Request, sitio: str = "", sistema_id: str = "", baja:
 
 
 @router.get("/equipos/nuevo", response_class=HTMLResponse)
-def equipo_nuevo_form(request: Request, sitio: str = "crianza"):
+def equipo_nuevo_form(request: Request, sitio: str = "crianza", desde: Optional[int] = None):
+    """Alta de equipo. Con `desde=<id>` es una **redundancia**: el formulario
+    llega precargado con la copia del equipo original (spec: equipos gemelos)."""
     db = SessionLocal()
     try:
+        extra = {}
+        original = db.get(MntEquipo, desde) if desde else None
+        if original is not None:
+            datos, resp = service.datos_redundancia(db, original)
+            sitio = original.sitio
+            extra = {"previo": datos, "previo_resp": resp, "destinos_sel": datos["destinos"],
+                     "redundancia_de": original,
+                     "original_con_respaldo": bool(original.respaldo_equipo_id)}
         return _render(
             "mantenimiento_equipo_nuevo.html", request, active="equipos",
             sitio=sitio if sitio in SITIOS else "crianza",
             siguiente=rules.siguiente_codigo([c for (c,) in db.query(MntEquipo.codigo).all()]),
-            **_ficha_ctx(db),
+            **_ficha_ctx(db), **extra,
         )
     finally:
         db.close()
@@ -148,23 +159,34 @@ def equipo_nuevo_form(request: Request, sitio: str = "crianza"):
 async def equipo_nuevo(request: Request):
     form = await request.form()
     datos = dict(form)
+    datos["destinos"] = form.getlist("destino")
     respuestas = _respuestas(form)
     db = SessionLocal()
     try:
         equipo = service.crear_equipo(db, datos, respuestas, origen="crianza",
                                       autor=datos.get("autor"))
+        msg = f"Equipo {equipo.codigo} creado · criticidad {equipo.criticidad}."
+        original = db.get(MntEquipo, int(datos["redundancia_de"])) if datos.get("redundancia_de", "").isdigit() else None
+        if original is not None and datos.get("respaldo_mutuo"):
+            if service.vincular_respaldo_mutuo(db, original, equipo):
+                msg += (f" {original.codigo} quedó respaldado por {equipo.codigo}: revisa su criticidad,"
+                        f" porque su encuesta puede seguir diciendo «sin respaldo».")
+            else:
+                msg += f" {original.codigo} ya tenía respaldo y no se cambió."
         db.commit()
-        return _volver(f"{PREFIX}/equipos/{equipo.id}",
-                       msg=f"Equipo {equipo.codigo} creado · criticidad {equipo.criticidad}.")
+        return _volver(f"{PREFIX}/equipos/{equipo.id}", msg=msg)
     except ErrorValidacion as e:
         db.rollback()
         # Se vuelve a mostrar el formulario con lo que ya se había escrito:
         # perder una ficha completa por una respuesta faltante desanima a usarla.
+        original = db.get(MntEquipo, int(datos["redundancia_de"])) if datos.get("redundancia_de", "").isdigit() else None
         return _render(
             "mantenimiento_equipo_nuevo.html", request, active="equipos",
             sitio=datos.get("sitio") if datos.get("sitio") in SITIOS else "crianza",
             siguiente=rules.siguiente_codigo([c for (c,) in db.query(MntEquipo.codigo).all()]),
-            previo=datos, previo_resp=respuestas, error_form=str(e),
+            previo=datos, previo_resp=respuestas, destinos_sel=datos["destinos"], error_form=str(e),
+            redundancia_de=original,
+            original_con_respaldo=bool(original and original.respaldo_equipo_id),
             **_ficha_ctx(db),
         )
     finally:
@@ -179,13 +201,13 @@ def equipo_ficha(request: Request, equipo_id: int):
         if equipo is None:
             return _volver(f"{PREFIX}/equipos", err="Ese equipo no existe.")
         ev = service.ultima_evaluacion(db, equipo.id)
-        ubic = dict(service.ubicaciones_vinculables(db))
-        ref = f"{equipo.ref_ubicacion_tipo}:{equipo.ref_ubicacion_id}" if equipo.ref_ubicacion_tipo else ""
+        destinos = service.destinos_de(db, equipo.id)
         return _render(
             "mantenimiento_equipo.html", request, active="equipos",
             equipo=equipo, evaluacion=ev,
             historial=service.historial_criticidad(db, equipo.id),
-            ref_actual=ref, ref_label=ubic.get(ref, ref),
+            destinos_sel=destinos, destinos_labels=service.etiquetas_destinos(db, destinos),
+            respaldo_incoherente=service.respaldo_incoherente(equipo, ev),
             respaldo=db.get(MntEquipo, equipo.respaldo_equipo_id) if equipo.respaldo_equipo_id else None,
             respaldado_por_este=[e for e in service.equipos(db) if e.respaldo_equipo_id == equipo.id],
             **_ficha_ctx(db, excluir_id=equipo.id),
@@ -202,7 +224,9 @@ async def equipo_editar(request: Request, equipo_id: int):
         equipo = db.get(MntEquipo, equipo_id)
         if equipo is None:
             return _volver(f"{PREFIX}/equipos", err="Ese equipo no existe.")
-        service.actualizar_equipo(db, equipo, dict(form))
+        datos = dict(form)
+        datos["destinos"] = form.getlist("destino")
+        service.actualizar_equipo(db, equipo, datos)
         db.commit()
         return _volver(f"{PREFIX}/equipos/{equipo_id}", msg="Ficha guardada.")
     except ErrorValidacion as e:
@@ -461,6 +485,65 @@ def tipo_nuevo(nombre: str = Form("")):
         service.crear_tipo(db, nombre)
         db.commit()
         return _volver(f"{PREFIX}/catalogos", msg=f"Tipo «{nombre.strip()}» agregado.")
+    except ErrorValidacion as e:
+        db.rollback()
+        return _volver(f"{PREFIX}/catalogos", err=str(e))
+    finally:
+        db.close()
+
+
+@router.post("/catalogos/{que}/rapido")
+def catalogo_rapido(que: str, nombre: str = Form(""), sitio: str = Form("")):
+    """Crear un sistema o tipo desde la misma ficha del equipo, sin ir a
+    Catálogos: así el catálogo crece cuando hace falta. Responde JSON para que
+    la ficha agregue la opción sin recargar (y sin perder lo ya escrito)."""
+    db = SessionLocal()
+    try:
+        if que == "sistemas":
+            item = service.crear_sistema(db, nombre, sitio, None)
+        elif que == "tipos":
+            item = service.crear_tipo(db, nombre)
+        else:
+            return JSONResponse({"error": "Catálogo desconocido."}, status_code=400)
+        db.commit()
+        return JSONResponse({"id": item.id, "nombre": item.nombre,
+                             "sitio": getattr(item, "sitio", None)})
+    except ErrorValidacion as e:
+        db.rollback()
+        return JSONResponse({"error": str(e)}, status_code=400)
+    finally:
+        db.close()
+
+
+@router.post("/catalogos/sistemas/{sistema_id}/editar")
+def sistema_editar(sistema_id: int, nombre: str = Form(""), sitio: str = Form(""), orden: str = Form("")):
+    db = SessionLocal()
+    try:
+        s = db.get(MntSistema, sistema_id)
+        if s is None:
+            return _volver(f"{PREFIX}/catalogos", err="Ese sistema no existe.")
+        service.actualizar_sistema(db, s, nombre, sitio, int(orden) if orden.strip().lstrip("-").isdigit() else None)
+        db.commit()
+        return _volver(f"{PREFIX}/catalogos", msg=f"Sistema «{s.nombre}» guardado.")
+    except ErrorValidacion as e:
+        db.rollback()
+        return _volver(f"{PREFIX}/catalogos", err=str(e))
+    finally:
+        db.close()
+
+
+@router.post("/catalogos/{que}/{item_id}/fusionar")
+def catalogo_fusionar(que: str, item_id: int, destino_id: str = Form("")):
+    if que not in ("sistemas", "tipos"):
+        return _volver(f"{PREFIX}/catalogos", err="Catálogo desconocido.")
+    if not destino_id.isdigit():
+        return _volver(f"{PREFIX}/catalogos", err="Elige en cuál fusionar.")
+    db = SessionLocal()
+    try:
+        origen, destino, n = service.fusionar(db, que, item_id, int(destino_id))
+        db.commit()
+        return _volver(f"{PREFIX}/catalogos",
+                       msg=f"«{origen}» fusionado en «{destino}»: {n} equipo{'s' if n != 1 else ''} movido{'s' if n != 1 else ''}.")
     except ErrorValidacion as e:
         db.rollback()
         return _volver(f"{PREFIX}/catalogos", err=str(e))

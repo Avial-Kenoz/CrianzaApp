@@ -123,7 +123,6 @@ síntomas**: el diccionario llega después y vive en su propia tabla (§3.6).
 | nombre | String(120) | "Soplador 3 Nor-Central", "Cámara de frío 2" |
 | tipo_id / sistema_id | FK | |
 | ubicacion_texto | String(120) | Dónde está físicamente |
-| ref_ubicacion_tipo / ref_ubicacion_id | String(30) / String(40) nullable | **Referencia blanda**, solo en Crianza (`pond:12`, `biofilter:3`). Se usa en F4 |
 | marca, modelo, serie | String | |
 | potencia_kw, voltaje | Numeric / String | |
 | fecha_instalacion | Date nullable | |
@@ -139,6 +138,40 @@ síntomas**: el diccionario llega después y vive en su propia tabla (§3.6).
 
 Explícitamente **sin**: valor, depreciación, centro de costo, cuenta contable, número de activo fijo.
 Si algún día hace falta cruzar con el ERP, basta un campo `codigo_erp` opcional.
+
+**`mnt_equipo_destinos`**: a qué atiende un equipo de Crianza. **Varios por equipo**, porque los
+sopladores centralizados atienden todos los estanques. Se agregó en la migración `20260929_07` y
+reemplaza el vínculo único `ref_ubicacion` de PR1. Tiene tres niveles, para no marcar decenas de
+estanques uno por uno:
+
+| ref_tipo:ref_id | Significa |
+|---|---|
+| `sitio:crianza` | Todo el sitio (sopladores centralizados) |
+| `unit:<id>` | Una unidad de cultivo completa |
+| `pond:<id>` | Un estanque suelto |
+
+Al guardar se normaliza: lo cubierto por un nivel más amplio sobra (`rules.normalizar_destinos`).
+Es una referencia blanda, sin FK. Se usa en F4 para asociar una baja de oxígeno disuelto a la
+falla de un equipo que atiende ese estanque.
+
+**Redundancias (equipos gemelos).** Desde la ficha, **"Crear redundancia"** abre el alta
+precargada con la copia del equipo:
+
+- Nombre con el número siguiente libre ("Soplador 3" → "Soplador 4").
+- Se copian los datos técnicos, los destinos, el contratista y las respuestas de criticidad.
+- No se copian la serie, la foto ni la fecha de instalación, que son de cada unidad.
+- La copia queda respaldada por el original y se ofrece el **respaldo mutuo**, que nunca pisa un
+  respaldo que el original ya tuviera.
+- Si un equipo tiene respaldo y su encuesta dice "sin respaldo", la ficha avisa que hay que
+  reevaluar.
+
+**Marca y modelo con memoria.** Los campos sugieren lo ya ingresado; el modelo se filtra por marca.
+Si la combinación ya existe, se ofrece copiar tipo, potencia y voltaje, solo en los campos vacíos.
+
+**Catálogo de sistemas y tipos que crece.** Es una lista plana: se pueden crear sistemas y tipos
+desde la misma ficha ("+ Nuevo…") y **fusionar** duplicados en Catálogos. Fusionar mueve los
+equipos al destino y desactiva el sobrante, sin borrarlo. Se descartó una jerarquía de dos niveles:
+dónde está cada equipo ya lo dicen su ubicación y sus destinos.
 
 ### 3.2 Personas y contratistas
 

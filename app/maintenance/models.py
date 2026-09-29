@@ -118,8 +118,6 @@ class MntEquipo(Base):
     tipo_id = Column(BigInteger, ForeignKey("mnt_tipos_equipo.id"))
     sistema_id = Column(BigInteger, ForeignKey("mnt_sistemas.id"))
     ubicacion_texto = Column(String(120))
-    ref_ubicacion_tipo = Column(String(30))
-    ref_ubicacion_id = Column(String(40))
     marca = Column(String(80))
     modelo = Column(String(80))
     serie = Column(String(80))
@@ -137,6 +135,24 @@ class MntEquipo(Base):
     alta_por = Column(String(120))
     created_at = Column(TIMESTAMP)
     updated_at = Column(TIMESTAMP)
+
+
+class MntEquipoDestino(Base):
+    """A qué atiende un equipo de Crianza: puede ser más de un destino (los
+    sopladores centralizados atienden todos los estanques).
+
+    Tres niveles, de más amplio a más fino, para no marcar decenas de estanques:
+    `sitio:crianza` (todo el sitio), `unit:<id>` (una unidad completa) y
+    `pond:<id>` (un estanque). Referencia blanda: sin FK a ponds ni a
+    cultivation_units. Se usa en F4 para cruzar fallas con calidad de agua.
+    """
+
+    __tablename__ = "mnt_equipo_destinos"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    equipo_id = Column(BigInteger, ForeignKey("mnt_equipos.id", ondelete="CASCADE"), nullable=False, index=True)
+    ref_tipo = Column(String(10), nullable=False)
+    ref_id = Column(String(40), nullable=False)
 
 
 class MntCriticidadEvaluacion(Base):

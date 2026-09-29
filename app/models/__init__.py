@@ -74,6 +74,7 @@ from app.maintenance.models import (
     MntContratista,
     MntPersona,
     MntEquipo,
+    MntEquipoDestino,
     MntCriticidadEvaluacion,
     MntParametro,
     MntDiccionario,

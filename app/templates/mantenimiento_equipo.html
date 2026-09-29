@@ -25,6 +25,12 @@
 
   {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
   {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+  {% if respaldo_incoherente %}
+  <div class="note warn" style="margin:0 0 16px">
+    ⚠️ Este equipo tiene respaldo (<b>{{ respaldo.codigo }}</b>) pero su encuesta de criticidad dice «sin respaldo»,
+    así que su criticidad {{ equipo.criticidad }} puede estar sobrestimada. Responde de nuevo la Q2 más abajo y reevalúa.
+  </div>
+  {% endif %}
 
   <div class="two-col">
     <div>
@@ -92,15 +98,20 @@
           <dt>Respalda a</dt>
           <dd>{% for r in respaldado_por_este %}<a class="row-link" href="{{ prefix }}/equipos/{{ r.id }}">{{ r.codigo }}</a>{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</dd>
           {% if equipo.sitio == 'crianza' %}
-          <dt>Atiende a</dt><dd>{{ ref_label or '—' }}</dd>
+          <dt>Atiende a</dt><dd>{{ destinos_labels | join(', ') or '—' }}</dd>
           {% endif %}
           <dt>Tolerancia</dt>
           <dd>{% if evaluacion and evaluacion.tolerancia_horas is not none %}{{ '%.0f'|format(evaluacion.tolerancia_horas) }} h detenido{% else %}Sin definir{% endif %}</dd>
         </dl>
       </div>
 
-      <div class="section-title">Etiqueta</div>
-      <a class="btn btn-ghost" href="{{ prefix }}/qr?sitio={{ equipo.sitio }}&codigos={{ equipo.codigo }}">Imprimir QR de este equipo</a>
+      <div class="section-title">Acciones</div>
+      <div style="display:grid; gap:8px">
+        {% if equipo.estado != 'baja' %}
+        <a class="btn btn-ghost" href="{{ prefix }}/equipos/nuevo?desde={{ equipo.id }}">Crear redundancia (copiar este equipo)</a>
+        {% endif %}
+        <a class="btn btn-ghost" href="{{ prefix }}/qr?sitio={{ equipo.sitio }}&codigos={{ equipo.codigo }}">Imprimir QR de este equipo</a>
+      </div>
 
       <div class="section-title">Estado</div>
       <form method="post" action="{{ prefix }}/equipos/{{ equipo.id }}/baja"

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.maintenance import rules
 from app.maintenance.models import (
     SITIOS, MntSistema, MntTipoEquipo, MntContratista, MntPersona, MntEquipo,
-    MntCriticidadEvaluacion, MntParametro,
+    MntEquipoDestino, MntCriticidadEvaluacion, MntParametro,
 )
 
 
@@ -131,6 +131,44 @@ def crear_tipo(db: Session, nombre: str) -> MntTipoEquipo:
     t = MntTipoEquipo(nombre=nombre, activo=True)
     db.add(t)
     return t
+
+
+def actualizar_sistema(db: Session, sistema: MntSistema, nombre: str, sitio: Optional[str],
+                       orden: Optional[int]) -> MntSistema:
+    nombre = (nombre or "").strip()
+    if not nombre:
+        raise ErrorValidacion("El sistema necesita un nombre.")
+    otro = db.query(MntSistema).filter(MntSistema.nombre.ilike(nombre), MntSistema.id != sistema.id).first()
+    if otro:
+        raise ErrorValidacion(f"Ya existe el sistema «{otro.nombre}». Si son el mismo, fusiónalos.")
+    sistema.nombre = nombre
+    sistema.sitio = _sitio_o_none(sitio)
+    if orden is not None:
+        sistema.orden = orden
+    return sistema
+
+
+def fusionar(db: Session, que: str, origen_id: int, destino_id: int) -> tuple[str, str, int]:
+    """Mueve los equipos de un sistema (o tipo) duplicado a otro y desactiva el
+    sobrante. No lo borra: si el diccionario o una OT futura lo referencian,
+    la referencia sigue siendo válida.
+
+    Devuelve (nombre origen, nombre destino, equipos movidos).
+    """
+    modelo, columna = {
+        "sistemas": (MntSistema, MntEquipo.sistema_id),
+        "tipos": (MntTipoEquipo, MntEquipo.tipo_id),
+    }[que]
+    if origen_id == destino_id:
+        raise ErrorValidacion("Elige un destino distinto para fusionar.")
+    origen, destino = db.get(modelo, origen_id), db.get(modelo, destino_id)
+    if origen is None or destino is None:
+        raise ErrorValidacion("El elemento a fusionar no existe.")
+    movidos = (db.query(MntEquipo).filter(columna == origen_id)
+               .update({columna: destino_id}, synchronize_session=False))
+    origen.activo = False
+    destino.activo = True
+    return origen.nombre, destino.nombre, movidos
 
 
 def guardar_contratista(db: Session, datos: dict, contratista: Optional[MntContratista] = None) -> MntContratista:
@@ -280,6 +318,7 @@ def crear_equipo(db: Session, datos: dict, respuestas: dict, *, origen: str, aut
     _aplicar_ficha(db, equipo, datos)
     db.add(equipo)
     db.flush()
+    _guardar_destinos(db, equipo, datos.get("destinos") or [])
     _registrar_evaluacion(db, equipo, respuestas, criticidad, tolerancia, autor, now)
     return equipo
 
@@ -288,6 +327,7 @@ def actualizar_equipo(db: Session, equipo: MntEquipo, datos: dict) -> MntEquipo:
     """Edita la ficha. El sitio no cambia: un equipo no se muda de Crianza a
     Planta, y cambiarlo rompería la Q1 con que se evaluó su criticidad."""
     _aplicar_ficha(db, equipo, datos)
+    _guardar_destinos(db, equipo, datos.get("destinos"))
     equipo.updated_at = datetime.now()
     return equipo
 
@@ -307,6 +347,74 @@ def reevaluar_criticidad(db: Session, equipo: MntEquipo, respuestas: dict, autor
         return False
     _registrar_evaluacion(db, equipo, limpio, criticidad, tolerancia, autor, datetime.now())
     return True
+
+
+def datos_redundancia(db: Session, original: MntEquipo) -> tuple[dict, dict]:
+    """Datos para precargar el alta de una redundancia (copia de un equipo).
+
+    Copia lo que comparten dos equipos gemelos y deja fuera lo que es propio de
+    cada unidad física (serie, foto, fecha de instalación). La copia queda con
+    el original como respaldo; el vínculo inverso lo decide el alta (§ respaldo
+    mutuo en `vincular_respaldo_mutuo`). Devuelve (datos de ficha, respuestas
+    de criticidad del original).
+    """
+    nombres = [n for (n,) in db.query(MntEquipo.nombre).all()]
+    datos = {
+        "sitio": original.sitio,
+        "nombre": rules.nombre_redundancia(original.nombre, nombres),
+        "sistema_id": original.sistema_id,
+        "tipo_id": original.tipo_id,
+        "ubicacion_texto": original.ubicacion_texto,
+        "destinos": destinos_de(db, original.id),
+        "marca": original.marca,
+        "modelo": original.modelo,
+        "potencia_kw": original.potencia_kw,
+        "voltaje": original.voltaje,
+        "contratista_habitual_id": original.contratista_habitual_id,
+        "notas": original.notas,
+        "respaldo_equipo_id": original.id,
+    }
+    ev = ultima_evaluacion(db, original.id)
+    return datos, dict(ev.respuestas) if ev else {}
+
+
+def vincular_respaldo_mutuo(db: Session, original: MntEquipo, nuevo: MntEquipo) -> bool:
+    """Deja al original respaldado por su redundancia, si no tenía respaldo.
+
+    Si ya tenía uno (p. ej. al crear la tercera unidad de un trío), no se pisa:
+    cambiar el respaldo de un equipo existente sin que nadie lo decida sería
+    un cambio silencioso. Devuelve True si vinculó.
+    """
+    if original.sitio != nuevo.sitio or original.respaldo_equipo_id:
+        return False
+    original.respaldo_equipo_id = nuevo.id
+    original.updated_at = datetime.now()
+    return True
+
+
+def respaldo_incoherente(equipo: MntEquipo, evaluacion: Optional[MntCriticidadEvaluacion]) -> bool:
+    """El equipo tiene un respaldo registrado pero su encuesta dice «sin
+    respaldo»: la criticidad está calculada sobre un supuesto que ya no vale."""
+    return bool(equipo.respaldo_equipo_id and evaluacion
+                and (evaluacion.respuestas or {}).get("respaldo") == "a")
+
+
+def catalogo_tecnico(db: Session) -> list[dict]:
+    """Marca/modelo ya ingresados, con sus datos técnicos, para autocompletar.
+
+    Uno por combinación marca+modelo (el más reciente), incluidos los dados de
+    baja: un equipo retirado sigue sirviendo de referencia para su reemplazo.
+    """
+    vistos: dict = {}
+    for e in db.query(MntEquipo).filter(MntEquipo.marca.isnot(None)).order_by(MntEquipo.id).all():
+        clave = ((e.marca or "").strip().lower(), (e.modelo or "").strip().lower())
+        vistos[clave] = {
+            "marca": e.marca, "modelo": e.modelo or "", "codigo": e.codigo,
+            "tipo_id": e.tipo_id,
+            "potencia_kw": str(e.potencia_kw) if e.potencia_kw is not None else "",
+            "voltaje": e.voltaje or "",
+        }
+    return sorted(vistos.values(), key=lambda x: (x["marca"].lower(), x["modelo"].lower()))
 
 
 def cambiar_baja(db: Session, equipo: MntEquipo, dar_de_baja: bool) -> None:
@@ -376,14 +484,32 @@ def _aplicar_ficha(db: Session, equipo: MntEquipo, datos: dict) -> None:
     except ValueError:
         raise ErrorValidacion("La fecha de instalación no es válida.")
 
-    # El vínculo a un estanque o unidad solo existe en Crianza (sirve para el
-    # cruce con calidad de agua de F4). En Planta se descarta.
-    ref = (datos.get("ref_ubicacion") or "").strip()
-    if equipo.sitio == "crianza" and ":" in ref:
-        tipo_ref, id_ref = ref.split(":", 1)
-        equipo.ref_ubicacion_tipo, equipo.ref_ubicacion_id = tipo_ref, id_ref
-    else:
-        equipo.ref_ubicacion_tipo = equipo.ref_ubicacion_id = None
+
+
+def _guardar_destinos(db: Session, equipo: MntEquipo, refs: Optional[list]) -> None:
+    """Reemplaza los destinos del equipo. Solo Crianza tiene destinos (sirven
+    para el cruce con calidad de agua de F4); en Planta se descartan.
+
+    `refs` None significa "el formulario no trae destinos": no se tocan.
+    """
+    if refs is None:
+        return
+    db.query(MntEquipoDestino).filter(MntEquipoDestino.equipo_id == equipo.id).delete()
+    if equipo.sitio != "crianza":
+        return
+    for tipo, ident in rules.normalizar_destinos(refs, _unidad_de_estanque(db)):
+        db.add(MntEquipoDestino(equipo_id=equipo.id, ref_tipo=tipo, ref_id=ident))
+
+
+def destinos_de(db: Session, equipo_id: int) -> list[str]:
+    return [f"{d.ref_tipo}:{d.ref_id}" for d in
+            db.query(MntEquipoDestino).filter(MntEquipoDestino.equipo_id == equipo_id)
+            .order_by(MntEquipoDestino.id).all()]
+
+
+def _unidad_de_estanque(db: Session) -> dict[str, str]:
+    from app.models.ponds import Pond
+    return {str(pid): str(uid) for pid, uid in db.query(Pond.id, Pond.cultivation_unit_id).all() if uid}
 
 
 def _id_o_none(valor) -> Optional[int]:
@@ -405,23 +531,41 @@ def _sitio_o_none(valor) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Ubicaciones vinculables (solo Crianza)
+# Destinos disponibles (solo Crianza)
 # ---------------------------------------------------------------------------
-def ubicaciones_vinculables(db: Session) -> list[tuple[str, str]]:
-    """Estanques y unidades de cultivo a los que se puede vincular un equipo.
+def destinos_disponibles(db: Session) -> list[dict]:
+    """Unidades de cultivo con sus estanques activos, para marcar a qué atiende
+    un equipo. Estanques sin unidad van en un grupo aparte (ref None).
 
-    Referencia blanda `pond:ID` / `unit:ID`: se resuelve por nombre al mostrar,
-    y si el estanque desaparece el equipo sigue en pie (spec §3).
+    Referencia blanda `unit:ID` / `pond:ID`: si un estanque desaparece, el
+    equipo sigue en pie (spec §3).
     """
     from app.models.ponds import Pond
     from app.models.cultivation_units import CultivationUnit
 
-    out = []
-    for u in db.query(CultivationUnit).order_by(CultivationUnit.name).all():
-        out.append((f"unit:{u.id}", f"Unidad · {u.name}"))
     ponds = (db.query(Pond)
              .filter(Pond.state != "inactive", Pond.parent_pond_id.is_(None))
              .order_by(Pond.name).all())
-    for p in ponds:
-        out.append((f"pond:{p.id}", f"Estanque · {p.name}"))
-    return out
+    grupos = []
+    for u in db.query(CultivationUnit).order_by(CultivationUnit.name).all():
+        suyos = [{"ref": f"pond:{p.id}", "nombre": p.name} for p in ponds if p.cultivation_unit_id == u.id]
+        grupos.append({"ref": f"unit:{u.id}", "nombre": u.name, "estanques": suyos})
+    sueltos = [{"ref": f"pond:{p.id}", "nombre": p.name} for p in ponds if not p.cultivation_unit_id]
+    if sueltos:
+        grupos.append({"ref": None, "nombre": "Sin unidad", "estanques": sueltos})
+    return grupos
+
+
+def etiquetas_destinos(db: Session, refs: list[str]) -> list[str]:
+    """Texto legible de los destinos guardados, en el orden guardado."""
+    if not refs:
+        return []
+    nombres = {"sitio:crianza": "Todo Crianza"}
+    for g in destinos_disponibles(db):
+        if g["ref"]:
+            nombres[g["ref"]] = f"Unidad {g['nombre']} (completa)"
+        for p in g["estanques"]:
+            nombres[p["ref"]] = f"Estanque {p['nombre']}"
+    # Un estanque dado de baja ya no está en la lista: se muestra su ref cruda
+    # en vez de esconder el vínculo.
+    return [nombres.get(r, r) for r in refs]

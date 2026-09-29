@@ -19,6 +19,27 @@
 
   {% include '_mnt_tabs.html' %}
 
+  {# Fusionar duplicados («Bombas» y «Bombeo»): mueve los equipos al destino y
+     desactiva el sobrante. Es lo que evita que el catálogo se ensucie al crecer. #}
+  {% macro fusion(que, singular, items, uso) %}
+  <details class="form-card" style="margin-top:10px; padding:12px 16px">
+    <summary style="cursor:pointer; font-size:.84rem; font-weight:650">Fusionar un {{ singular }} duplicado</summary>
+    <form method="post" id="fusion-{{ que }}" class="toolbar" style="margin:12px 0 0"
+          onsubmit="const o=this.querySelector('[name=origen]'), d=this.querySelector('[name=destino_id]');
+                    if(!o.value||!d.value||o.value===d.value){alert('Elige dos distintos.');return false;}
+                    this.action='{{ prefix }}/catalogos/{{ que }}/'+o.value+'/fusionar';
+                    return confirm('Se moverán los equipos de «'+o.selectedOptions[0].text+'» a «'+d.selectedOptions[0].text+'» y el primero quedará desactivado. ¿Seguir?');">
+      <div class="fld"><label>Duplicado</label>
+        <select name="origen"><option value="">—</option>{% for x in items %}<option value="{{ x.id }}">{{ x.nombre }} ({{ uso.get(x.id, 0) }})</option>{% endfor %}</select>
+      </div>
+      <div class="fld"><label>Se fusiona en</label>
+        <select name="destino_id"><option value="">—</option>{% for x in items %}<option value="{{ x.id }}">{{ x.nombre }}</option>{% endfor %}</select>
+      </div>
+      <button class="btn btn-mini" type="submit">Fusionar</button>
+    </form>
+  </details>
+  {% endmacro %}
+
   <div class="two-col" style="grid-template-columns: 1fr 1fr">
     <div>
       <div class="section-title" style="margin-top:0">Sistemas</div>
@@ -33,14 +54,24 @@
       </form>
       <div class="card">
         <table>
-          <thead><tr><th>Sistema</th><th>Sitio</th><th class="num">Equipos</th><th></th></tr></thead>
+          <thead><tr><th>Sistema</th><th>Sitio</th><th>Orden</th><th class="num">Eq.</th><th></th></tr></thead>
           <tbody>
             {% for s in sistemas %}
             <tr class="{{ 'baja' if not s.activo }}">
-              <td>{{ s.nombre }}</td>
-              <td>{% if s.sitio %}<span class="pill sitio-{{ s.sitio }}">{{ sitio_labels[s.sitio] }}</span>{% else %}Ambos{% endif %}</td>
-              <td class="num">{{ uso_sis.get(s.id, 0) }}</td>
               <td>
+                <form id="fs-{{ s.id }}" method="post" action="{{ prefix }}/catalogos/sistemas/{{ s.id }}/editar"></form>
+                <input form="fs-{{ s.id }}" type="text" name="nombre" value="{{ s.nombre }}" maxlength="80" style="width:100%; min-width:120px" />
+              </td>
+              <td>
+                <select form="fs-{{ s.id }}" name="sitio">
+                  <option value="">Ambos</option>
+                  {% for k in sitios %}<option value="{{ k }}" {% if s.sitio == k %}selected{% endif %}>{{ sitio_labels[k] }}</option>{% endfor %}
+                </select>
+              </td>
+              <td><input form="fs-{{ s.id }}" type="number" name="orden" value="{{ s.orden }}" style="width:64px" /></td>
+              <td class="num">{{ uso_sis.get(s.id, 0) }}</td>
+              <td style="white-space:nowrap">
+                <button form="fs-{{ s.id }}" class="btn btn-mini" type="submit">Guardar</button>
                 <form class="inline" method="post" action="{{ prefix }}/catalogos/sistemas/{{ s.id }}/activo">
                   <input type="hidden" name="activo" value="{{ '0' if s.activo else '1' }}" />
                   <button class="btn btn-mini" type="submit">{{ 'Desactivar' if s.activo else 'Activar' }}</button>
@@ -51,6 +82,7 @@
           </tbody>
         </table>
       </div>
+      {{ fusion('sistemas', 'sistema', sistemas, uso_sis) }}
     </div>
 
     <div>
@@ -78,7 +110,11 @@
           </tbody>
         </table>
       </div>
-      <div class="note">Desactivar no borra: el sistema o tipo deja de ofrecerse en el alta, pero los equipos que ya lo usan lo conservan.</div>
+      {{ fusion('tipos', 'tipo', tipos, uso_tipo) }}
+      <div class="note">
+        Desactivar no borra: el sistema o tipo deja de ofrecerse en el alta, pero los equipos que ya lo usan lo
+        conservan. También se pueden crear desde la ficha del equipo («+ Nuevo…» en la lista), sin venir aquí.
+      </div>
     </div>
   </div>
 

@@ -5,6 +5,7 @@ de Planta y el bot usen exactamente la misma regla (spec §8.1).
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 # ---------------------------------------------------------------------------
@@ -111,6 +112,56 @@ def siguiente_codigo(codigos_existentes: list[str]) -> str:
             except ValueError:
                 continue
     return f"EQ-{mayor + 1:03d}"
+
+
+# ---------------------------------------------------------------------------
+# Destinos de un equipo (a qué atiende)
+# ---------------------------------------------------------------------------
+def normalizar_destinos(refs: list[str], unidad_de_estanque: dict[str, str]) -> list[tuple[str, str]]:
+    """Limpia la lista de destinos marcados: `sitio:crianza`, `unit:<id>`, `pond:<id>`.
+
+    - Descarta lo mal formado.
+    - Si está el sitio completo, es lo único que queda (lo demás sobra).
+    - Un estanque cuya unidad ya está marcada completa sobra.
+
+    `unidad_de_estanque` mapea id de estanque → id de su unidad (texto).
+    Devuelve [(tipo, id)] sin duplicados y en orden estable.
+    """
+    limpio = set()
+    for r in refs or []:
+        tipo, _, ident = (r or "").strip().partition(":")
+        if tipo in ("sitio", "unit", "pond") and ident:
+            limpio.add((tipo, ident))
+    sitios = sorted(x for x in limpio if x[0] == "sitio")
+    if sitios:
+        return sitios
+    unidades = {i for t, i in limpio if t == "unit"}
+    estanques = {i for t, i in limpio if t == "pond" and unidad_de_estanque.get(i) not in unidades}
+    orden = {"unit": 0, "pond": 1}
+    return sorted([("unit", u) for u in unidades] + [("pond", p) for p in estanques],
+                  key=lambda x: (orden[x[0]], x[1].zfill(12)))
+
+
+_NUMERO_FINAL = re.compile(r"^(.*?)(\d+)\s*$")
+
+
+def nombre_redundancia(nombre: str, existentes: list[str]) -> str:
+    """Nombre para la redundancia de un equipo: sube el número final al
+    siguiente libre ("Soplador 3" → "Soplador 4"; si "Soplador 4" ya existe,
+    "Soplador 5"). Sin número final agrega " 2". Compara sin mayúsculas.
+    """
+    usados = {e.strip().lower() for e in existentes if e}
+    m = _NUMERO_FINAL.match(nombre.strip())
+    if m:
+        base, n, ancho = m.group(1), int(m.group(2)), len(m.group(2))
+    else:
+        base, n, ancho = nombre.strip() + " ", 1, 1
+    while True:
+        n += 1
+        # Respeta ceros a la izquierda: "Bomba 01" → "Bomba 02".
+        candidato = f"{base}{n:0{ancho}d}"
+        if candidato.lower() not in usados:
+            return candidato
 
 
 # ---------------------------------------------------------------------------

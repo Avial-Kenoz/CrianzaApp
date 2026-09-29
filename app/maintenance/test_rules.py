@@ -62,6 +62,42 @@ class CodigoTest(unittest.TestCase):
         self.assertEqual(rules.siguiente_codigo(["EQ-999"]), "EQ-1000")
 
 
+class DestinosTest(unittest.TestCase):
+    MAPA = {"10": "1", "11": "1", "20": "2"}   # estanque → unidad
+
+    def test_sitio_completo_absorbe_todo(self):
+        self.assertEqual(rules.normalizar_destinos(["sitio:crianza", "unit:1", "pond:20"], self.MAPA),
+                         [("sitio", "crianza")])
+
+    def test_unidad_absorbe_sus_estanques(self):
+        self.assertEqual(rules.normalizar_destinos(["unit:1", "pond:10", "pond:20"], self.MAPA),
+                         [("unit", "1"), ("pond", "20")])
+
+    def test_descarta_mal_formados_y_duplicados(self):
+        self.assertEqual(rules.normalizar_destinos(["pond:10", "pond:10", "basura", "x:1", "pond:"], self.MAPA),
+                         [("pond", "10")])
+
+    def test_vacio(self):
+        self.assertEqual(rules.normalizar_destinos([], self.MAPA), [])
+
+
+class NombreRedundanciaTest(unittest.TestCase):
+    def test_sube_el_numero_final(self):
+        self.assertEqual(rules.nombre_redundancia("Soplador 3", ["Soplador 3"]), "Soplador 4")
+
+    def test_salta_los_ocupados_sin_mayusculas(self):
+        self.assertEqual(rules.nombre_redundancia("Soplador 3", ["Soplador 3", "soplador 4"]), "Soplador 5")
+
+    def test_sin_numero_agrega_2(self):
+        self.assertEqual(rules.nombre_redundancia("Generador", ["Generador"]), "Generador 2")
+
+    def test_respeta_ceros_a_la_izquierda(self):
+        self.assertEqual(rules.nombre_redundancia("Bomba 01", ["Bomba 01"]), "Bomba 02")
+
+    def test_numero_pegado(self):
+        self.assertEqual(rules.nombre_redundancia("Soplador N3", ["Soplador N3"]), "Soplador N4")
+
+
 class HoraTest(unittest.TestCase):
     def test_parse(self):
         self.assertEqual(rules.parse_hora("8:30"), 8.5)

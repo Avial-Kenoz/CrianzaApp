@@ -190,8 +190,19 @@ Invariantes:
 - **La criticidad no se elige, se calcula** de la encuesta (tabla en `rules.py`, replicada en JS
   en `_mnt_encuesta.html` solo como vista previa: si se cambia una, cambiar la otra). Cada
   evaluación se guarda con sus respuestas y `regla_version`; nunca se borra.
-- **Sin FK a tablas de otros módulos** (`users`, `ponds`): el vínculo a estanque es la referencia
-  blanda `ref_ubicacion_tipo:ref_ubicacion_id` (`pond:12`, `unit:3`).
+- **Sin FK a tablas de otros módulos** (`users`, `ponds`). A qué atiende un equipo va en
+  `mnt_equipo_destinos` (varios por equipo: los sopladores centralizados atienden todo), con tres
+  niveles `sitio:crianza` / `unit:<id>` / `pond:<id>`; `rules.normalizar_destinos` descarta lo
+  que queda cubierto por un nivel más amplio.
+- **Redundancia** (`/equipos/nuevo?desde=<id>`) precarga una copia y ofrece respaldo mutuo, pero
+  **nunca pisa** el respaldo que el original ya tenía. La ficha avisa si un equipo tiene respaldo
+  y su encuesta dice «sin respaldo» (`service.respaldo_incoherente`).
+- Sistemas y tipos crecen desde la ficha («+ Nuevo…», `POST /catalogos/{que}/rapido`, JSON) y se
+  limpian con **fusionar** (mueve equipos y desactiva el duplicado; no borra).
+- ⚠️ **Producción corre desde este mismo árbol de trabajo** (sin `--reload`): cualquier reinicio,
+  del watchdog o manual, carga lo que haya en disco, terminado o no. Los datos `mnt_*` de
+  producción ya son reales (desde 2026-09-29): para limpiar pruebas, borrar por prefijo (`ZZ …`),
+  nunca la tabla entera.
 - El QR apunta a `t.me/<bot>?start=EQ-xxx` y **no se imprime** sin `MNT_TELEGRAM_BOT_USERNAME`
   (un QR con destino equivocado queda pegado en terreno).
 - Para probar sin los schedulers de calidad de agua (que en `start_dev.cmd` correrían en paralelo

@@ -11,21 +11,39 @@
 
 <div class="page">
   <div class="crumb"><a href="{{ prefix }}/equipos">Mantenimiento · Equipos</a> / Nuevo</div>
-  <div class="page-title">Nuevo equipo</div>
+  <div class="page-title">{{ 'Redundancia de ' ~ redundancia_de.codigo if redundancia_de else 'Nuevo equipo' }}</div>
   <div class="page-sub">Se le asignará el código <span class="code">{{ siguiente }}</span>, que va impreso en su etiqueta QR.</div>
 
   {% if error_form %}<div class="flash err">{{ error_form }}</div>{% endif %}
 
   <form method="post" action="{{ prefix }}/equipos/nuevo">
+    {% if redundancia_de %}
+    <input type="hidden" name="redundancia_de" value="{{ redundancia_de.id }}" />
+    <div class="note" style="margin:0 0 6px">
+      Copia de <b>{{ redundancia_de.codigo }} · {{ redundancia_de.nombre }}</b>: mismos datos técnicos, destinos,
+      contratista y respuestas de criticidad. Quedan fuera la serie, la foto y la fecha de instalación, que son de
+      cada unidad. Revisa y guarda.
+      <div style="margin-top:8px">
+        {% if original_con_respaldo %}
+        <span class="mono">{{ redundancia_de.codigo }} ya tiene respaldo asignado; no se cambiará.</span>
+        {% else %}
+        <label class="chk"><input type="checkbox" name="respaldo_mutuo" value="1" checked>
+          Dejar también a {{ redundancia_de.codigo }} respaldado por este equipo (respaldo mutuo)</label>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
     <div class="section-title">Ficha</div>
     <div class="form-card">
       <div class="grid-form" style="margin-bottom:14px">
         <div>
           <label for="sitio" class="req">Sitio</label>
-          <select id="sitio" name="sitio" required>
+          <select id="sitio" name="sitio" required {% if redundancia_de %}disabled{% endif %}>
             {% for k, l in sitio_labels.items() %}<option value="{{ k }}" {% if sitio == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
           </select>
-          <div class="hint">No se puede cambiar después.</div>
+          {% if redundancia_de %}<input type="hidden" name="sitio" value="{{ sitio }}" />
+          <div class="hint">El mismo que {{ redundancia_de.codigo }}.</div>
+          {% else %}<div class="hint">No se puede cambiar después.</div>{% endif %}
         </div>
         <div>
           <label for="autor">Registrado por</label>
