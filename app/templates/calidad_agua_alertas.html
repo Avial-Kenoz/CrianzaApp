@@ -104,7 +104,8 @@
           <th class="num">Ronda</th>
           <th class="num">Sin reconocer</th>
           <th class="num">Detectadas</th>
-          <th class="num">Avisos</th>
+          <th class="num">Suenan</th>
+          <th class="num">Mensajes</th>
           <th style="width:32%"></th>
         </tr>
       </thead>
@@ -116,7 +117,8 @@
           <td class="num">{{ f.ronda_vencida or '·' }}</td>
           <td class="num">{{ f.sin_reconocer or '·' }}</td>
           <td class="num muted">{{ f.total }}</td>
-          <td class="num"><strong>{{ f.avisos }}</strong>{% if f.digest %}<span class="muted"> (1 resumen)</span>{% endif %}</td>
+          <td class="num">{{ f.suenan or '·' }}</td>
+          <td class="num"><strong>{{ f.avisos }}</strong>{% if f.digest %}<span class="muted"> (+{{ f.digest }} consolidado{{ 's' if f.digest > 1 else '' }})</span>{% endif %}</td>
           <td>
             <div class="bar"><span class="{{ 'rojo' if f.avisos > 10 else '' }}"
                  style="width: {{ [f.avisos * 5, 100]|min }}%"></span></div>
@@ -128,10 +130,11 @@
   </div>
 
   <div class="note {{ 'warn' if volumen.por_dia > 6 else '' }}">
-    <strong>Avisos</strong> es lo que a alguien le habría hecho vibrar el teléfono con las reglas
-    actuales; <strong>detectadas</strong> es lo que el motor vio. Entre una cosa y la otra hay cuatro
-    compuertas: tipo apagado, nivel mínimo, <strong>atraso mínimo</strong> y <strong>resumen
-    diario</strong> —que cuenta como un mensaje al día, no como uno por alerta—.
+    <strong>Detectadas</strong> es lo que el motor vio; <strong>suenan</strong> son las que
+    interrumpen a alguien en el momento (nivel <em>alarma</em> o sobre <em>interrumpe desde</em>); y
+    <strong>mensajes</strong> es el total que habría salido, sumando el consolidado del cambio de
+    turno —que es <em>un</em> mensaje por turno, no uno por alerta—. Lo que baja el ruido no es
+    avisar menos: es que lo de criticidad media viaje junto.
     {% if volumen.por_dia > 6 %}
     Con <strong>{{ volumen.por_dia_txt }} avisos al día</strong> el canal se vuelve ruido y la gente lo
     silencia. Antes de encenderlo conviene subir el nivel mínimo, apagar el tipo que domina, o

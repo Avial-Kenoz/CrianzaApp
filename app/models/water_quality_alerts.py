@@ -83,12 +83,16 @@ class WaterQualityAlertRule(Base):
     es que avise de menos sino que avise de más: una notificación que molesta se
     silencia el primer día y después no sirve para nada.
 
-    Tres controles, de grueso a fino:
+    Cuatro controles, de grueso a fino:
 
       - `enabled` — apaga el tipo completo.
-      - `min_level` — `alarma` deja pasar sólo lo grave; `alerta` deja pasar
-        todo. Se combina con el `min_level` del destinatario tomando el MÁS
-        exigente de los dos.
+      - `min_level` — piso para avisar: bajo esto no sale nada, nunca. Se
+        combina con el `min_level` del destinatario tomando el MÁS exigente.
+      - `instant_level` — desde aquí **suena al instante**. Lo que queda entre
+        `min_level` e `instant_level` no interrumpe a nadie: se junta y sale en
+        el mensaje del cambio de turno. Ese corte no es una hora inventada —
+        sale de `o2_day_window` (día 08:30-16:00, resto `off`), el mismo turno
+        con que el módulo mide todo lo demás.
       - `cooldown_min` / `renotify_min` — el primero es el piso entre dos avisos
         de la MISMA alerta; el segundo, cada cuánto recordar que sigue abierta
         (nulo = no recordar).
@@ -102,17 +106,17 @@ class WaterQualityAlertRule(Base):
     `escalate_after_min` sólo tiene sentido en `sin_reconocer`: los minutos que
     se le dan al operador para hacerse cargo antes de subir al supervisor.
 
-    **Detectar no es avisar**, y esa separación la hacen dos columnas más:
+    **Detectar no es avisar**, y esa separación la completa `notify_after_min`:
+    la alerta no avisa hasta llevar ese rato abierta. Como se cierra sola apenas
+    llega el dato que faltaba, "abierta 180 min" significa exactamente "nadie
+    midió en las 3 h siguientes al vencimiento". Distingue el hueco real del
+    atraso de rutina sin aflojar el plazo, que para el panel sigue siendo el
+    correcto.
 
-      - `notify_after_min` — la alerta no avisa hasta llevar ese rato abierta.
-        Como se cierra sola apenas llega el dato que faltaba, "abierta 180 min"
-        significa exactamente "nadie midió en las 3 h siguientes al
-        vencimiento". Distingue el hueco real del atraso de rutina sin tener
-        que aflojar el plazo, que seguiría siendo el correcto para el panel.
-      - `digest_at` — hora decimal del resumen diario. Puesta, los avisos de
-        rutina de ese tipo no salen al instante: se juntan y salen una vez al
-        día. Si además hay `notify_after_min`, la alerta que lo supera rompe el
-        silencio y sale igual en el momento.
+    En `ronda_vencida` ese mismo umbral es además lo que **sube el nivel**: la
+    alerta nace `alerta` (al consolidado del turno) y se convierte en `alarma`
+    al superarlo, o sea suena. Por eso el criterio de "esto interrumpe" puede
+    ser el nivel y nada más, sin excepciones por tipo.
     """
 
     __tablename__ = "water_quality_alert_rules"
@@ -121,15 +125,17 @@ class WaterQualityAlertRule(Base):
     kind = Column(String(30), nullable=False, unique=True)
     enabled = Column(Boolean, nullable=False, default=True)
     min_level = Column(String(20), nullable=False, default="alarma")
+    # Desde este nivel suena al instante; bajo él va al consolidado del turno
+    # (migración 20260929_02, que reemplazó la hora fija `digest_at`).
+    instant_level = Column(String(20), nullable=False, default="alarma")
 
     cooldown_min = Column(Integer, nullable=False, default=60)
     renotify_min = Column(Integer)
     quiet_from = Column(Numeric(4, 2))
     quiet_to = Column(Numeric(4, 2))
     escalate_after_min = Column(Integer)
-    # Compuertas entre detectar y avisar (migración 20260929_01).
+    # Compuerta entre detectar y avisar (migración 20260929_01).
     notify_after_min = Column(Integer)
-    digest_at = Column(Numeric(4, 2))
 
     label = Column(String(120), nullable=False)
     description = Column(String(300))

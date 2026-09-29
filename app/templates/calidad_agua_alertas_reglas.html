@@ -44,6 +44,14 @@
               </select>
             </td>
             <td>
+              <div class="t-kind">Interrumpe desde</div>
+              <select name="instant_level_{{ r.kind }}">
+                <option value="alerta" {{ 'selected' if r.instant_level == 'alerta' else '' }}>alerta (todo suena)</option>
+                <option value="alarma" {{ 'selected' if r.instant_level == 'alarma' else '' }}>alarma</option>
+              </select>
+              <div class="t-detail">Bajo este nivel no suena: va al consolidado del turno.</div>
+            </td>
+            <td>
               <div class="t-kind">Piso entre avisos</div>
               <input type="number" name="cooldown_{{ r.kind }}" min="1" value="{{ r.cooldown_min }}" /> min
             </td>
@@ -63,18 +71,16 @@
               <div class="t-detail">Como la alerta se cierra sola al llegar el dato,
                 “abierta 180 min” es “nadie midió en las 3 h siguientes al vencimiento”.</div>
             </td>
-            <td colspan="2">
-              <div class="t-kind">Resumen diario a las</div>
-              <input type="number" step="any" name="digest_at_{{ r.kind }}"
-                     value="{{ '%g'|format(r.digest_at) if r.digest_at is not none else '' }}"
-                     placeholder="sin resumen" />
-              <div class="t-detail">Hora decimal. Con esto puesto, lo de rutina no suena:
-                se junta y sale una vez al día.</div>
-            </td>
-            <td colspan="2">
-              <div class="t-kind">Combinadas</div>
-              <div class="t-detail">Si están las dos, lo de rutina va al resumen y sólo
-                rompe el silencio la alerta que supera el atraso mínimo.</div>
+            <td colspan="3">
+              <div class="t-kind">Consolidado del turno</div>
+              <div class="t-detail">Lo que no llega a <strong>interrumpe desde</strong> se junta y
+                sale en un mensaje al cambio de turno: <strong>08:30</strong> (resume la noche) y
+                <strong>16:00</strong> (resume el día), según la ventana de
+                <a href="/views/ui/calidad-agua/umbrales">Umbrales</a>. El domingo es un solo turno.
+                {% if r.kind == 'ronda_vencida' %}
+                En este tipo el atraso mínimo además <strong>sube el nivel</strong>: la ronda nace
+                <em>alerta</em> y se vuelve <em>alarma</em> al superarlo, y ahí sí suena.
+                {% endif %}</div>
             </td>
           </tr>
           <tr>

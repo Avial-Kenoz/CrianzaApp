@@ -38,7 +38,9 @@ from app.models.water_quality_alerts import (
     WaterQualityAlertRecipient,
     WaterQualityAlertRule,
 )
+from app.services import water_quality as wq
 from app.services import wq_alerts as al
+from app.services.wq_queries import load_thresholds
 
 router = APIRouter(prefix="/views/ui/calidad-agua/alertas", tags=["calidad-agua-alertas"])
 template_dir = Path(__file__).parent.parent / "templates"
@@ -103,6 +105,21 @@ def _fila(a, ponds, units, envios: dict) -> dict:
     }
 
 
+def _turno_de(cuando: datetime, thresholds: Optional[dict] = None) -> str:
+    """En qué turno cayó un momento: "dia" u "off".
+
+    Misma ventana con que el módulo mide todo lo demás (`o2_day_window`, por
+    defecto 08:30-16:00) y misma excepción: el domingo es `off` completo. Si el
+    corte del consolidado usara otro horario que el de las rondas, el mensaje
+    de la mañana llegaría partido respecto del turno que resume.
+    """
+    win = (thresholds or {}).get("o2_day_window") or wq.O2_DAY_WINDOW
+    if cuando.weekday() == 6:
+        return "off"
+    h = cuando.hour + cuando.minute / 60.0
+    return "dia" if (win["alert"] <= h < win["alarm"]) else "off"
+
+
 def _volumen(db, rules: dict, now: datetime) -> dict:
     """Cuántas alertas por día y por tipo, y cuántos avisos habrían salido.
 
@@ -112,18 +129,19 @@ def _volumen(db, rules: dict, now: datetime) -> dict:
     mínimo, atraso mínimo y resumen diario— y aplicarlas sobre el histórico real
     es la única forma de saber el volumen ANTES de encender nada.
 
-    El resumen diario cuenta como **un** mensaje en el día en que hubo algo que
-    resumir, no como uno por alerta: de eso se trata.
+    El consolidado del turno cuenta como **un** mensaje por turno con algo que
+    contar, no como uno por alerta: de eso se trata.
     """
     desde = (now - timedelta(days=DIAS_VOLUMEN - 1)).replace(
         hour=0, minute=0, second=0, microsecond=0)
+    thresholds = load_thresholds(db)
     filas: dict = {}
-    digest_dias: dict = {}
+    turnos: dict = {}
     for a in (db.query(WaterQualityAlert)
                 .filter(WaterQualityAlert.opened_at >= desde).all()):
         dia = a.opened_at.strftime("%d-%m")
         f = filas.setdefault(dia, {"dia": dia, "total": 0, "avisos": 0,
-                                   "digest": 0,
+                                   "suenan": 0, "digest": 0,
                                    al.KIND_LECTURA: 0, al.KIND_RONDA: 0,
                                    al.KIND_SIN_ACK: 0})
         f[a.kind] = f.get(a.kind, 0) + 1
@@ -135,25 +153,19 @@ def _volumen(db, rules: dict, now: datetime) -> dict:
         if r is not None and al.NIVEL.get(a.level, 0) < al.NIVEL.get(r.min_level, 2):
             continue
 
-        # Cuánto llegó a estar abierta: es lo que decide si habría roto el
-        # silencio del resumen. Las que siguen abiertas cuentan hasta ahora.
-        minutos = ((a.closed_at or now) - a.opened_at).total_seconds() / 60.0
-        umbral = (r.notify_after_min if r is not None else None)
-        alcanza = umbral is None or minutos >= umbral
-
-        if r is not None and r.digest_at is not None:
-            # Tipo en resumen: sólo sale al instante la que supera el atraso.
-            if umbral is not None and alcanza:
-                f["avisos"] += 1
-            else:
-                digest_dias.setdefault(dia, set()).add(a.kind)
-        elif alcanza:
+        instante = al.NIVEL.get(r.instant_level, 2) if r is not None else 2
+        if al.NIVEL.get(a.level, 0) >= instante:
+            f["suenan"] += 1
             f["avisos"] += 1
+        else:
+            # Al consolidado del turno en que ocurrió: el mensaje sale cuando
+            # cambia la gente, no una vez por alerta.
+            turnos.setdefault(dia, set()).add(_turno_de(a.opened_at, thresholds))
 
-    for dia, kinds in digest_dias.items():
+    for dia, ts in turnos.items():
         if dia in filas:
-            filas[dia]["digest"] = len(kinds)
-            filas[dia]["avisos"] += len(kinds)
+            filas[dia]["digest"] = len(ts)
+            filas[dia]["avisos"] += len(ts)
     orden = sorted(filas.values(), key=lambda f: f["dia"])
     avisos = sum(f["avisos"] for f in orden)
     por_dia = round(avisos / max(len(orden), 1), 1)
@@ -325,7 +337,7 @@ async def reglas_save(request: Request):
             r.quiet_to = _float_o_none(form.get("quiet_to_" + k))
             r.escalate_after_min = _int_o_none(form.get("escalate_" + k))
             r.notify_after_min = _int_o_none(form.get("notify_after_" + k))
-            r.digest_at = _float_o_none(form.get("digest_at_" + k))
+            r.instant_level = (form.get("instant_level_" + k) or "alarma")
             r.updated_at = now
         db.commit()
         return RedirectResponse(

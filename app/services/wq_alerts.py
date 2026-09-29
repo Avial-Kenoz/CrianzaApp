@@ -127,7 +127,8 @@ def _scan_lectura_alarma(now, thresholds, latest, ponds) -> list:
     return out
 
 
-def _scan_ronda_vencida(now, thresholds, latest, ponds_by_unit, units) -> list:
+def _scan_ronda_vencida(now, thresholds, latest, ponds_by_unit, units,
+                        rule=None) -> list:
     """Nadie midió en la unidad dentro del plazo del turno.
 
     **Por unidad, no por estanque.** Una noche sin medir en una unidad de doce
@@ -138,9 +139,17 @@ def _scan_ronda_vencida(now, thresholds, latest, ponds_by_unit, units) -> list:
     El plazo no es parejo — sale de `o2_stale_thresholds`, que lo toma del turno
     en que se tomó la última lectura (4 h de día, 2 h de noche y domingo).
 
+    **Nace `alerta`, no `alarma`**: que falte un dato no es un pez en riesgo, es
+    una falta de dato, y en la práctica la ronda se atrasa todos los días en el
+    hueco entre el último dato de la noche y el primero del día. Sube a `alarma`
+    —y entonces sí suena— cuando el atraso pasa de `notify_after_min` sobre el
+    plazo: ahí deja de ser un atraso y es un hueco. Con eso el criterio de qué
+    interrumpe puede ser el nivel y nada más, sin excepciones por tipo.
+
     Una unidad sin ninguna lectura en su historia se omite: no está en el
     programa de rondas, y si no, arrastraría una alerta abierta para siempre.
     """
+    escala_min = getattr(rule, "notify_after_min", None)
     out = []
     for u in units:
         u_ponds = ponds_by_unit.get(u.id, [])
@@ -164,15 +173,23 @@ def _scan_ronda_vencida(now, thresholds, latest, ponds_by_unit, units) -> list:
         if sin_dato:
             detalle += " {} de {} estanques nunca han tenido lectura.".format(
                 sin_dato, len(u_ponds))
+        # Minutos de atraso POR SOBRE el plazo: es lo que separa "viene
+        # atrasada" de "no se tomó".
+        atraso_min = (horas - plazo) * 60.0
+        nivel = ("alarma" if escala_min is not None and atraso_min >= escala_min
+                 else "alerta")
+        if nivel == "alarma":
+            detalle += " Lleva {} h sobre el plazo.".format(_n(atraso_min / 60.0, 1))
         out.append(Candidata(
             kind=KIND_RONDA,
             key="{}:unit={}".format(KIND_RONDA, u.id),
-            level="alarma",
+            level=nivel,
             title="Ronda de O₂ sin tomar · {}".format(u.name),
             detail=detalle,
             unit_id=u.id,
             reading_id=fresh.id,
             payload={"horas": horas, "plazo_h": plazo,
+                     "atraso_min": round(atraso_min),
                      "estanques": len(u_ponds), "sin_dato": sin_dato,
                      "ultima_at": fresh.reading_datetime.isoformat()},
         ))
@@ -389,7 +406,8 @@ def run_detection(db: Session, now: Optional[datetime] = None) -> dict:
 
     aplicar(KIND_LECTURA, _scan_lectura_alarma(now, thresholds, latest, ponds))
     aplicar(KIND_RONDA, _scan_ronda_vencida(now, thresholds, latest,
-                                            ponds_by_unit, units))
+                                            ponds_by_unit, units,
+                                            rules.get(KIND_RONDA)))
 
     # El reconocimiento y la escalada miran las alertas recién aplicadas, así
     # que van al final y en este orden: primero quién se hizo cargo, después a
