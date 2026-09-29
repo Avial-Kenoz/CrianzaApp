@@ -20,6 +20,34 @@
   {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
 
   <form method="post" action="/views/ui/calidad-agua/alertas/reglas">
+    <div class="section-title">Horario del consolidado</div>
+    <div class="card">
+      <table>
+        <tbody>
+          <tr>
+            <td style="width:38%">
+              <div class="t-title">Los mensajes de rutina salen a las</div>
+              <div class="t-detail">Todo lo que no llega a interrumpir se junta y viaja en estos
+                dos mensajes. Horas decimales: 10,5 = 10:30.</div>
+            </td>
+            <td>
+              <input type="number" step="any" min="0" max="23.99" name="corte_am"
+                     value="{{ '%g'|format(corte_am) }}" />
+              <span class="muted">y</span>
+              <input type="number" step="any" min="0" max="23.99" name="corte_pm"
+                     value="{{ '%g'|format(corte_pm) }}" />
+            </td>
+            <td colspan="3">
+              <div class="t-detail">Es horario propio y <strong>no toca los plazos de ronda</strong>:
+                esos siguen saliendo del turno de
+                <a href="/views/ui/calidad-agua/umbrales">Umbrales</a>, que es otra cosa. Cambiar a
+                qué hora se lee un resumen no puede cambiar cuándo se da por vencida una ronda.</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     {% for r in reglas %}
     <div class="section-title">{{ kind_labels.get(r.kind, r.kind) }}</div>
     <div class="card">
@@ -74,9 +102,9 @@
             <td colspan="3">
               <div class="t-kind">Consolidado del turno</div>
               <div class="t-detail">Lo que no llega a <strong>interrumpe desde</strong> se junta y
-                sale en un mensaje al cambio de turno: <strong>08:30</strong> (resume la noche) y
-                <strong>16:00</strong> (resume el día), según la ventana de
-                <a href="/views/ui/calidad-agua/umbrales">Umbrales</a>. El domingo es un solo turno.
+                sale en uno de los dos mensajes de rutina, a las
+                <strong>{{ '%g'|format(corte_am) }}</strong> y a las
+                <strong>{{ '%g'|format(corte_pm) }}</strong> (arriba se cambia).
                 {% if r.kind == 'ronda_vencida' %}
                 En este tipo el atraso mínimo además <strong>sube el nivel</strong>: la ronda nace
                 <em>alerta</em> y se vuelve <em>alarma</em> al superarlo, y ahí sí suena.

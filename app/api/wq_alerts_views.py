@@ -32,6 +32,7 @@ from app.db.session import SessionLocal
 from app.models.cultivation_units import CultivationUnit
 from app.models.ponds import Pond
 from app.models.users import User
+from app.models.water_quality_thresholds import WaterQualityThreshold
 from app.models.water_quality_alerts import (
     WaterQualityAlert,
     WaterQualityAlertNotification,
@@ -107,21 +108,6 @@ def _fila(a, ponds, units, envios: dict) -> dict:
     }
 
 
-def _turno_de(cuando: datetime, thresholds: Optional[dict] = None) -> str:
-    """En qué turno cayó un momento: "dia" u "off".
-
-    Misma ventana con que el módulo mide todo lo demás (`o2_day_window`, por
-    defecto 08:30-16:00) y misma excepción: el domingo es `off` completo. Si el
-    corte del consolidado usara otro horario que el de las rondas, el mensaje
-    de la mañana llegaría partido respecto del turno que resume.
-    """
-    win = (thresholds or {}).get("o2_day_window") or wq.O2_DAY_WINDOW
-    if cuando.weekday() == 6:
-        return "off"
-    h = cuando.hour + cuando.minute / 60.0
-    return "dia" if (win["alert"] <= h < win["alarm"]) else "off"
-
-
 def _volumen(db, rules: dict, now: datetime) -> dict:
     """Cuántas alertas por día y por tipo, y cuántos avisos habrían salido.
 
@@ -162,7 +148,7 @@ def _volumen(db, rules: dict, now: datetime) -> dict:
         else:
             # Al consolidado del turno en que ocurrió: el mensaje sale cuando
             # cambia la gente, no una vez por alerta.
-            turnos.setdefault(dia, set()).add(_turno_de(a.opened_at, thresholds))
+            turnos.setdefault(dia, set()).add(al.turno_de(a.opened_at, thresholds))
 
     for dia, ts in turnos.items():
         if dia in filas:
@@ -331,8 +317,10 @@ def reglas_form(request: Request, msg: Optional[str] = None):
     try:
         rules = (db.query(WaterQualityAlertRule)
                    .order_by(WaterQualityAlertRule.id).all())
+        corte_am, corte_pm = al._cortes(load_thresholds(db))
         html = jinja_env.get_template("calidad_agua_alertas_reglas.html").render(
             request=request, msg=msg, tabs=_tabs("reglas"), reglas=rules,
+            corte_am=corte_am, corte_pm=corte_pm,
             kind_labels=KIND_LABELS)
         return HTMLResponse(html)
     finally:
@@ -377,6 +365,25 @@ async def reglas_save(request: Request):
             r.notify_after_min = _int_o_none(form.get("notify_after_" + k))
             r.instant_level = (form.get("instant_level_" + k) or "alarma")
             r.updated_at = now
+
+        # Los cortes del consolidado viven en `water_quality_thresholds` (son
+        # configuración, como los umbrales) pero se editan acá, que es donde
+        # está el resto de la configuración de avisos. No aparecen en la
+        # pantalla de Umbrales: esa sólo lista los parámetros de medición.
+        am = _float_o_none(form.get("corte_am"))
+        pm = _float_o_none(form.get("corte_pm"))
+        if am is not None and pm is not None and 0 <= am < 24 and 0 <= pm < 24:
+            fila = (db.query(WaterQualityThreshold)
+                      .filter(WaterQualityThreshold.parameter == "digest_cortes")
+                      .first())
+            if fila is None:
+                fila = WaterQualityThreshold(parameter="digest_cortes",
+                                             comparator="gt", unit="h",
+                                             active=True)
+                db.add(fila)
+            fila.alert_value = min(am, pm)
+            fila.alarm_value = max(am, pm)
+            fila.updated_at = now
         db.commit()
         return RedirectResponse(
             url="/views/ui/calidad-agua/alertas/reglas?msg=" +

@@ -86,7 +86,7 @@ def main():
         print("  %-16s %-30s %s" % (cid, nombre, tipo))
     print("\nPega el CHAT_ID en Alertas -> Destinatarios:")
     print("  %s/views/ui/calidad-agua/alertas/destinatarios"
-          % (os.getenv("CRIANZA_BASE_URL") or "http://192.168.1.202:8002"))
+          % (os.getenv("CRIANZA_BASE_URL") or "http://192.168.1.201:8002"))
     return 0
 
 

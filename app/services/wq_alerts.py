@@ -83,43 +83,50 @@ def load_rules(db: Session) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Turnos: el corte del consolidado
+# Los cortes del consolidado
 # ---------------------------------------------------------------------------
-# No se inventa un horario para los avisos. El turno ya está definido en el
-# módulo (`o2_day_window`, por defecto 08:30-16:00, con el domingo `off`
-# completo) y es el mismo con que se miden las rondas. Si el mensaje de la
-# mañana se cortara a otra hora que el turno que resume, llegaría partido.
-def _win(thresholds: Optional[dict] = None) -> tuple:
-    w = (thresholds or {}).get("o2_day_window") or wq.O2_DAY_WINDOW
-    return float(w["alert"]), float(w["alarm"])
+# A qué hora salen los mensajes de rutina: `digest_cortes` (10:00 y 19:00 por
+# defecto), configurable en Alertas → Reglas.
+#
+# Tiene configuración propia y NO usa `o2_day_window` a propósito, aunque esa
+# ventana también parta el día en dos. Son cosas distintas: `o2_day_window` es
+# el turno con que se miden las rondas de O₂ —de él salen los plazos de
+# vencimiento— y si el corte de los mensajes colgara de ahí, mover la hora a la
+# que alguien lee un resumen movería también cuándo se considera vencida una
+# ronda. Acá no hay excepción de domingo: el resumen sale a las mismas horas
+# todos los días.
+CORTES_DEFAULT = {"alert": 10.0, "alarm": 19.0}
+
+
+def _cortes(thresholds: Optional[dict] = None) -> tuple:
+    w = (thresholds or {}).get("digest_cortes") or CORTES_DEFAULT
+    lo = w.get("alert")
+    hi = w.get("alarm")
+    lo = CORTES_DEFAULT["alert"] if lo is None else float(lo)
+    hi = CORTES_DEFAULT["alarm"] if hi is None else float(hi)
+    return lo, hi
 
 
 def turno_de(cuando: datetime, thresholds: Optional[dict] = None) -> str:
-    """"dia" u "off" según el turno en que cayó ese momento."""
-    if cuando.weekday() == 6:          # domingo: un solo turno, como las rondas
-        return "off"
-    lo, hi = _win(thresholds)
+    """"dia" u "off" según el tramo en que cayó ese momento."""
+    lo, hi = _cortes(thresholds)
     h = cuando.hour + cuando.minute / 60.0
     return "dia" if lo <= h < hi else "off"
 
 
 def _cortes_del_dia(d, thresholds) -> list:
-    """Los instantes en que cambia el turno ese día. El domingo no tiene."""
-    if d.weekday() == 6:
-        return []
-    lo, hi = _win(thresholds)
-    out = []
-    for h in (lo, hi):
-        out.append(datetime.combine(d, dtime(int(h), int(round((h % 1) * 60)))))
-    return out
+    """Los instantes en que sale el consolidado ese día."""
+    lo, hi = _cortes(thresholds)
+    return [datetime.combine(d, dtime(int(h), int(round((h % 1) * 60))))
+            for h in (lo, hi)]
 
 
 def turno_inicio(cuando: datetime, thresholds: Optional[dict] = None) -> datetime:
-    """Cuándo empezó el turno vigente: el último corte anterior a `cuando`.
+    """Cuándo empezó el tramo vigente: el último corte anterior a `cuando`.
 
-    Retrocede día a día porque el domingo no tiene cortes: un lunes a las 07:00
-    el turno vigente arrancó el sábado a las 16:00, y el consolidado de esa
-    mañana tiene que cubrir todo el fin de semana.
+    Retrocede día a día porque antes del primer corte de hoy manda el segundo
+    de ayer: a las 07:00 el tramo vigente arrancó ayer a las 19:00, y el
+    consolidado de las 10:00 tiene que cubrir toda esa noche.
     """
     d = cuando.date()
     for _ in range(9):

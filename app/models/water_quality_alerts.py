@@ -93,9 +93,10 @@ class WaterQualityAlertRule(Base):
         combina con el `min_level` del destinatario tomando el MÁS exigente.
       - `instant_level` — desde aquí **suena al instante**. Lo que queda entre
         `min_level` e `instant_level` no interrumpe a nadie: se junta y sale en
-        el mensaje del cambio de turno. Ese corte no es una hora inventada —
-        sale de `o2_day_window` (día 08:30-16:00, resto `off`), el mismo turno
-        con que el módulo mide todo lo demás.
+        uno de los dos mensajes de rutina del día, a las horas que fija
+        `digest_cortes` (10:00 y 19:00 por defecto). Ese horario es propio y no
+        cuelga del turno de las rondas: mover cuándo se lee un resumen no puede
+        mover cuándo se da por vencida una ronda.
       - `cooldown_min` / `renotify_min` — el primero es el piso entre dos avisos
         de la MISMA alerta; el segundo, cada cuánto recordar que sigue abierta
         (nulo = no recordar).

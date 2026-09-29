@@ -5,7 +5,8 @@ Dos caminos, y la diferencia entre ellos es el **nivel**, no el tipo:
   - **Instantáneo** — lo que llega a `instant_level` (por defecto `alarma`)
     interrumpe en el momento.
   - **Consolidado** — lo que queda entre `min_level` e `instant_level` no le
-    suena a nadie: espera al cambio de turno y sale en un solo mensaje.
+    suena a nadie: espera al corte del consolidado (`digest_cortes`: 10:00 y
+    19:00) y sale junto con lo demás, en un solo mensaje.
 
 Dos cosas que hacen la diferencia entre un canal que se lee y uno que se
 silencia, y que no son configuración sino forma de mandar:
@@ -49,9 +50,13 @@ logger = logging.getLogger("wq_notify")
 ICONO = {"alarma": "🔴", "alerta": "🟡"}
 TURNO_LABEL = {"dia": "turno de día", "off": "turno de noche"}
 
-# Para el enlace del mensaje. La app se sirve por IP en la LAN; si algún día
-# cambia, esto se ajusta por entorno sin tocar código.
-BASE_URL = (os.getenv("CRIANZA_BASE_URL") or "http://192.168.1.202:8002").rstrip("/")
+# Para el enlace del mensaje. El servidor tiene dos IP fijas — 192.168.1.202 en
+# Ethernet y 192.168.1.201 en Wi-Fi — y la que responde es la de **Wi-Fi**: la
+# de Ethernet no contesta en el puerto 8002. Vale la pena dejarlo escrito
+# porque el certificado de Caddy dice ".202" y hace pensar lo contrario. Un
+# enlace a la IP equivocada no falla a la vista: manda un mensaje correcto con
+# un link que no abre, y eso se descubre de noche.
+BASE_URL = (os.getenv("CRIANZA_BASE_URL") or "http://192.168.1.201:8002").rstrip("/")
 URL_ALERTAS = BASE_URL + "/views/ui/calidad-agua/alertas"
 
 
