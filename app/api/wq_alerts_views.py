@@ -24,7 +24,7 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 from urllib.parse import quote_plus
 
@@ -37,6 +37,7 @@ from app.models.water_quality_alerts import (
     WaterQualityAlertNotification,
     WaterQualityAlertRecipient,
     WaterQualityAlertRule,
+    WaterQualityOncallWeek,
 )
 from app.services import notify_telegram as tg
 from app.services import water_quality as wq
@@ -188,7 +189,29 @@ def _tabs(activa: str) -> list:
          "activa": activa == "reglas"},
         {"href": "/views/ui/calidad-agua/alertas/destinatarios",
          "label": "Destinatarios", "activa": activa == "destinatarios"},
+        {"href": "/views/ui/calidad-agua/alertas/semaneros",
+         "label": "Semaneros", "activa": activa == "semaneros"},
     ]
+
+
+def _lunes(d: date) -> date:
+    return d - timedelta(days=d.weekday())
+
+
+def _semanas_del_mes(anio: int, mes: int) -> list:
+    """Las semanas (lunes) que tocan ese mes.
+
+    Se incluye la semana que lo empieza aunque arranque en el mes anterior: el
+    turno es de lunes a domingo y no se parte por el cambio de mes. Si no,
+    habría días de comienzo de mes sin semanero posible.
+    """
+    primero = date(anio, mes, 1)
+    ultimo = date(anio + (mes == 12), (mes % 12) + 1, 1) - timedelta(days=1)
+    out, cur = [], _lunes(primero)
+    while cur <= ultimo:
+        out.append(cur)
+        cur = cur + timedelta(days=7)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +425,7 @@ async def destinatarios_save(request: Request):
             d.name = (form.get("name" + suf) or d.name).strip()[:120]
             d.telegram_chat_id = (form.get("chat" + suf) or d.telegram_chat_id).strip()[:40]
             d.active = bool(form.get("active" + suf))
+            d.in_rotation = bool(form.get("rotacion" + suf))
             d.min_level = form.get("min_level" + suf) or "alarma"
             d.kinds = (form.get("kinds" + suf) or "").strip()[:120] or None
             d.unit_ids = (form.get("units" + suf) or "").strip()[:120] or None
@@ -430,11 +454,118 @@ async def destinatarios_save(request: Request):
                 db.add(WaterQualityAlertRecipient(
                     name=nombre[:120], telegram_chat_id=chat[:40], active=True,
                     min_level=form.get("nuevo_min_level") or "alarma",
+                    in_rotation=bool(form.get("nuevo_rotacion")),
                     note=(form.get("nuevo_note") or "").strip()[:200] or None,
                     created_at=now, updated_at=now))
         db.commit()
         return RedirectResponse(
             url="/views/ui/calidad-agua/alertas/destinatarios?msg=" + quote_plus(texto),
+            status_code=303)
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Semaneros
+# ---------------------------------------------------------------------------
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+         "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+@router.get("/semaneros", response_class=HTMLResponse)
+def semaneros_form(request: Request, mes: Optional[str] = None,
+                   msg: Optional[str] = None):
+    """Precarga del mes: una fila por semana, con su semanero."""
+    db = SessionLocal()
+    try:
+        hoy = date.today()
+        try:
+            anio, numero = (int(x) for x in (mes or "").split("-"))
+            date(anio, numero, 1)
+        except (ValueError, TypeError):
+            anio, numero = hoy.year, hoy.month
+
+        semanas = _semanas_del_mes(anio, numero)
+        asignadas = {
+            r.week_start: r for r in
+            db.query(WaterQualityOncallWeek)
+              .filter(WaterQualityOncallWeek.week_start.in_(semanas)).all()
+        }
+        # Sólo quienes entran en la rotación pueden ser semaneros; el resto
+        # tiene otro rol y recibe por su cuenta.
+        candidatos = (db.query(WaterQualityAlertRecipient)
+                        .filter(WaterQualityAlertRecipient.active.is_(True),
+                                WaterQualityAlertRecipient.in_rotation.is_(True))
+                        .order_by(WaterQualityAlertRecipient.name).all())
+        fuera = (db.query(WaterQualityAlertRecipient)
+                   .filter(WaterQualityAlertRecipient.active.is_(True),
+                           WaterQualityAlertRecipient.in_rotation.is_(False))
+                   .order_by(WaterQualityAlertRecipient.name).all())
+
+        lunes_hoy = _lunes(hoy)
+        filas = []
+        for w in semanas:
+            fila = asignadas.get(w)
+            filas.append({
+                "week_start": w,
+                "rango": "{} al {}".format(w.strftime("%d-%m"),
+                                           (w + timedelta(days=6)).strftime("%d-%m")),
+                "recipient_id": fila.recipient_id if fila else None,
+                "note": (fila.note if fila else "") or "",
+                "es_actual": w == lunes_hoy,
+                "pasada": w < lunes_hoy,
+            })
+
+        prev_m = date(anio, numero, 1) - timedelta(days=1)
+        next_m = date(anio + (numero == 12), (numero % 12) + 1, 1)
+        html = jinja_env.get_template("calidad_agua_alertas_semaneros.html").render(
+            request=request, msg=msg, tabs=_tabs("semaneros"),
+            filas=filas, candidatos=candidatos, fuera=fuera,
+            titulo="{} {}".format(MESES[numero - 1], anio),
+            mes_actual="{:04d}-{:02d}".format(anio, numero),
+            mes_prev="{:04d}-{:02d}".format(prev_m.year, prev_m.month),
+            mes_next="{:04d}-{:02d}".format(next_m.year, next_m.month),
+            sin_candidatos=not candidatos)
+        return HTMLResponse(html)
+    finally:
+        db.close()
+
+
+@router.post("/semaneros")
+async def semaneros_save(request: Request):
+    db = SessionLocal()
+    try:
+        form = await request.form()
+        now = datetime.now()
+        mes = form.get("mes") or ""
+        for clave, valor in form.multi_items():
+            if not clave.startswith("sem_"):
+                continue
+            try:
+                w = date.fromisoformat(clave[4:])
+            except ValueError:
+                continue
+            rid = _int_o_none(valor)
+            nota = (form.get("nota_" + clave[4:]) or "").strip()[:200] or None
+            fila = (db.query(WaterQualityOncallWeek)
+                      .filter(WaterQualityOncallWeek.week_start == w).first())
+            if fila is None:
+                # Una semana sin asignar tampoco necesita fila: el reparto ya
+                # trata "sin fila" y "fila sin persona" igual, y así no se
+                # llena la tabla de semanas vacías.
+                if rid is None and not nota:
+                    continue
+                db.add(WaterQualityOncallWeek(
+                    week_start=w, recipient_id=rid, note=nota,
+                    created_at=now, updated_at=now))
+            else:
+                fila.recipient_id = rid
+                fila.note = nota
+                fila.updated_at = now
+        db.commit()
+        return RedirectResponse(
+            url="/views/ui/calidad-agua/alertas/semaneros?mes=" + quote_plus(mes) +
+                "&msg=" + quote_plus("Turnos guardados."),
             status_code=303)
     finally:
         db.close()

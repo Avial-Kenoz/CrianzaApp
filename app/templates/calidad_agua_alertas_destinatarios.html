@@ -5,6 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Destinatarios de alertas – Crianza</title>
   {% include '_alertas_style.html' %}
+  <style>
+    .tutorial { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+                margin-top: 16px; overflow: hidden; }
+    .tutorial > summary { cursor: pointer; padding: 13px 16px; font-size: .88rem;
+                          font-weight: 650; list-style: none; user-select: none; }
+    .tutorial > summary::-webkit-details-marker { display: none; }
+    .tutorial > summary::before { content: "\25B8  "; color: #6b7280; }
+    .tutorial[open] > summary::before { content: "\25BE  "; }
+    .tutorial[open] > summary { border-bottom: 1px solid #f1f3f5; }
+    .tut-cuerpo { padding: 6px 20px 18px; font-size: .84rem; color: #374151; line-height: 1.62; }
+    .tut-cuerpo ol, .tut-cuerpo ul { margin: 8px 0 12px 20px; }
+    .tut-cuerpo li { margin-bottom: 7px; }
+    .tut-cuerpo code { background: #f1f3f5; border-radius: 5px; padding: 1px 6px;
+                       font-size: .8rem; word-break: break-all; }
+    .tut-sub { font-weight: 700; margin-top: 14px; }
+    .tut-ojo { color: #b45309; font-weight: 700; }
+    .tut-ojo2 { background: #fffbeb; border: 1px solid #fde68a; color: #78350f;
+                border-radius: 9px; padding: 10px 13px; margin-top: 12px; }
+  </style>
 </head>
 <body>
 {% include '_sidebar.html' %}
@@ -26,7 +45,7 @@
           <tr>
             <th>Persona</th><th>Chat de Telegram</th><th>Recibe desde</th>
             <th>Tipos</th><th>Unidades</th><th>Horario</th>
-            <th class="num">Enviados</th><th>Activo</th>
+            <th>Rotación</th><th class="num">Enviados</th><th>Activo</th>
           </tr>
         </thead>
         <tbody>
@@ -58,6 +77,9 @@
               <input type="number" step="any" name="hours_to_{{ d.id }}"
                      value="{{ '%g'|format(d.hours_to) if d.hours_to is not none else '' }}" placeholder="24" />
             </td>
+            <td>
+              <label class="switch"><input type="checkbox" name="rotacion_{{ d.id }}" {{ 'checked' if d.in_rotation else '' }} /> sí</label>
+            </td>
             <td class="num">{{ envios.get(d.id, 0) }}</td>
             <td>
               <label class="switch"><input type="checkbox" name="active_{{ d.id }}" {{ 'checked' if d.active else '' }} /> sí</label>
@@ -81,22 +103,67 @@
                 <option value="alerta">alerta</option>
               </select>
             </td>
+            <td style="width:14%">
+              <label class="switch"><input type="checkbox" name="nuevo_rotacion" checked /> entra en la rotación</label>
+            </td>
             <td><input type="text" name="nuevo_note" placeholder="turno, rol, observación" maxlength="200" /></td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <div class="note">
-      <strong>Cómo se saca un chat_id:</strong> la persona tiene que escribirle primero al bot
-      <strong>@AcuicolaAlertasBot</strong> (Telegram no entrega el identificador de nadie que no haya
-      iniciado la conversación). Después se lee con <code>scripts/telegram_chat_id.py</code>.<br>
-      <strong>Tipos</strong> y <strong>unidades</strong> son listas separadas por coma; vacío significa
-      todas. <strong>Horario</strong> en horas decimales (8,5 = 08:30); vacío significa siempre.<br>
-      Ojo con el horario: si nadie cubre una franja, en esa franja no se avisa nada. El turno de noche
-      es la razón de ser del módulo, así que conviene que siempre haya alguien sin restricción horaria.
-      Desactivar a alguien no borra su historial de envíos.
-    </div>
+    <details class="tutorial">
+      <summary>Cómo agregar a alguien, paso a paso</summary>
+      <div class="tut-cuerpo">
+        <p>Telegram <strong>no entrega el identificador de nadie que no haya escrito primero</strong>.
+           Por eso no se puede “agregar” a una persona desde acá sin que ella haga su parte: no es una
+           limitación de la app.</p>
+
+        <ol>
+          <li><strong>La persona abre el bot.</strong> Que busque
+              <strong>@AcuicolaAlertasBot</strong> en Telegram y apriete <em>Iniciar</em> (o le
+              escriba cualquier cosa). Con eso basta; no tiene que hacer nada más nunca.</li>
+          <li><strong>Se averigua su chat_id.</strong> En el servidor, desde la carpeta de CrianzaApp:
+              <code>.venv\Scripts\python.exe scripts\telegram_chat_id.py</code><br>
+              Lista a todos los que le escribieron al bot, con su nombre y su número.
+              <span class="tut-ojo">Ojo:</span> Telegram sólo guarda lo de las últimas
+              <strong>24 horas</strong>. Si la persona escribió hace días y no aparece, que escriba
+              de nuevo.</li>
+          <li><strong>Se prueba antes de confiar.</strong>
+              <code>scripts\telegram_chat_id.py --probar 8815279164</code> le manda un mensaje de
+              prueba. Si responde <em>403</em>, esa persona bloqueó al bot y no va a recibir nada:
+              mejor descubrirlo ahora que la noche que pase algo.</li>
+          <li><strong>Se agrega acá abajo</strong>, en “Agregar destinatario”: nombre y el chat_id que
+              devolvió el script.</li>
+          <li><strong>Se decide su rol.</strong> Si entra en el turno de semaneros, marcar
+              <em>rotación</em> y asignarle semanas en
+              <a href="/views/ui/calidad-agua/alertas/semaneros">Semaneros</a>. Si no —jefatura,
+              responsabilidades diferenciadas—, dejarlo sin rotación: recibe sólo las alarmas, todas
+              las semanas.</li>
+        </ol>
+
+        <p class="tut-sub">Qué significa cada columna</p>
+        <ul>
+          <li><strong>Recibe desde</strong> — nivel mínimo. <em>alarma</em> deja pasar sólo lo grave;
+              <em>alerta</em> deja pasar todo. Se combina con el mínimo de la regla tomando el más
+              exigente de los dos.</li>
+          <li><strong>Tipos</strong> y <strong>unidades</strong> — listas separadas por coma. Vacío
+              significa todas. Los id de las unidades están en la tabla del final.</li>
+          <li><strong>Horario</strong> — en horas decimales: 8,5 es 08:30. Vacío significa siempre, y
+              puede cruzar la medianoche (22 a 7 es válido). <strong>Al semanero de turno no se le
+              aplica</strong>, porque estar de turno es estar disponible a cualquier hora.</li>
+          <li><strong>Rotación</strong> — si entra en el turno de semaneros.</li>
+          <li><strong>Activo</strong> — desmarcar deja de mandarle sin borrarlo. No se borra nunca:
+              la bitácora de envíos lo referencia y el historial tiene que seguir diciendo a quién se
+              avisó.</li>
+        </ul>
+
+        <p class="tut-ojo2">El error que hay que evitar: <strong>dejar una franja horaria sin
+           nadie</strong>. Si todos tienen ventana y ninguno cubre la madrugada, a esa hora no se
+           avisa nada — y esa es justamente la hora por la que existe el módulo. Conviene que
+           siempre haya alguien sin restricción horaria, o un semanero asignado.</p>
+      </div>
+    </details>
 
     <div class="actions">
       <button type="submit" class="btn btn-primary">Guardar destinatarios</button>

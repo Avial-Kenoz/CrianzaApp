@@ -38,6 +38,7 @@ from app.models.water_quality_alerts import (
     WaterQualityAlert,
     WaterQualityAlertNotification,
     WaterQualityAlertRecipient,
+    WaterQualityOncallWeek,
 )
 from app.services import notify_telegram as tg
 from app.services import wq_alerts as al
@@ -67,10 +68,44 @@ def _dentro_de_ventana(h: float, desde, hasta) -> bool:
     return (lo <= h < hi) if lo <= hi else (h >= lo or h < hi)
 
 
+def semanero_de(db: Session, cuando: datetime) -> Optional[int]:
+    """Quién está de turno esa semana, o None si no hay nadie asignado.
+
+    Devuelve None también cuando el asignado ya no está activo o salió de la
+    rotación. Es deliberado: sin ese respaldo, desactivar a una persona dejaría
+    al centro mudo hasta que alguien se acordara de reasignar la semana, y la
+    única falla que este módulo no puede permitirse es que nadie esté mirando.
+    """
+    lunes = (cuando.date() - timedelta(days=cuando.weekday()))
+    fila = (db.query(WaterQualityOncallWeek)
+              .filter(WaterQualityOncallWeek.week_start == lunes).first())
+    if fila is None or fila.recipient_id is None:
+        return None
+    d = db.get(WaterQualityAlertRecipient, fila.recipient_id)
+    if d is None or not d.active or not d.in_rotation:
+        return None
+    return fila.recipient_id
+
+
 def _recibe(d: WaterQualityAlertRecipient, a: WaterQualityAlert,
-            now: datetime) -> bool:
-    """Filtros del destinatario. Nulo siempre significa 'sin restricción'."""
+            now: datetime, semanero_id: Optional[int] = None,
+            consolidado: bool = False) -> bool:
+    """Filtros del destinatario. Nulo siempre significa 'sin restricción'.
+
+    El turno manda sobre todo lo demás:
+
+      - semanero de la semana       → todo, y a cualquier hora
+      - en rotación, no es semanero → nada: esa semana no le toca
+      - semana sin asignar          → todos los de la rotación
+      - fuera de rotación           → sólo alarmas, nunca los consolidados
+    """
     if not d.active:
+        return False
+    es_semanero = semanero_id is not None and d.id == semanero_id
+    if d.in_rotation:
+        if semanero_id is not None and not es_semanero:
+            return False
+    elif consolidado:
         return False
     if al.NIVEL.get(a.level, 0) < al.NIVEL.get(d.min_level, 2):
         return False
@@ -83,7 +118,10 @@ def _recibe(d: WaterQualityAlertRecipient, a: WaterQualityAlert,
     dias = _lista(d.weekdays)
     if dias and str(now.weekday()) not in dias:
         return False
-    if d.hours_from is not None and d.hours_to is not None:
+    # Al semanero no se le aplica la ventana horaria: estar de turno es
+    # precisamente estar disponible a cualquier hora, y si su ventana lo
+    # dejara fuera de la noche no habría nadie cubriéndola.
+    if (not es_semanero and d.hours_from is not None and d.hours_to is not None):
         if not _dentro_de_ventana(now.hour + now.minute / 60.0,
                                   d.hours_from, d.hours_to):
             return False
@@ -245,9 +283,10 @@ def dispatch_instant(db: Session, now: Optional[datetime] = None) -> dict:
     if not candidatas:
         return res
 
+    semanero = semanero_de(db, now)
     enviado_alguna = False
     for d in destinatarios:
-        suyas = [a for a in candidatas if _recibe(d, a, now)]
+        suyas = [a for a in candidatas if _recibe(d, a, now, semanero)]
         if not suyas:
             continue
         texto = _texto_instantaneo(suyas, motivos)
@@ -330,9 +369,11 @@ def dispatch_digest(db: Session, now: Optional[datetime] = None) -> dict:
     texto_base = _texto_consolidado(pendientes, ponds, units, turno_cerrado,
                                     arranque, inicio)
 
+    semanero = semanero_de(db, now)
     enviado_alguna = False
     for d in destinatarios:
-        suyas = [a for a in pendientes if _recibe(d, a, now)]
+        suyas = [a for a in pendientes if _recibe(d, a, now, semanero,
+                                                  consolidado=True)]
         if not suyas:
             continue
         texto = (texto_base if len(suyas) == len(pendientes)

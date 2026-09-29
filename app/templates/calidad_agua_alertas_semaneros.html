@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Semaneros – Crianza</title>
+  {% include '_alertas_style.html' %}
+  <style>
+    .mes-nav { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .mes-nav .titulo { font-size: 1.05rem; font-weight: 750; min-width: 180px; text-transform: capitalize; }
+    tr.actual td { background: #eff6ff; }
+    tr.pasada td { opacity: .55; }
+    .badge-hoy { font-size: .66rem; font-weight: 750; color: #1d4ed8;
+                 background: #dbeafe; padding: 1px 7px; border-radius: 999px; margin-left: 7px; }
+    select.semanero { min-width: 210px; }
+    .reglas td { padding: 7px 14px; }
+    .reglas .q { font-weight: 650; white-space: nowrap; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/calidad-agua">Calidad de agua</a> ·
+    <a href="/views/ui/calidad-agua/alertas">Alertas</a> · Semaneros</div>
+  <div class="page-title">Semaneros</div>
+  <div class="page-sub">Quién queda de turno cada semana. Se precarga el mes completo.</div>
+
+  {% include '_alertas_tabs.html' %}
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+  {% if sin_candidatos %}
+  <div class="note warn">
+    <strong>Nadie entra en la rotación todavía.</strong> Un semanero tiene que estar activo y con
+    “entra en la rotación” marcado en
+    <a href="/views/ui/calidad-agua/alertas/destinatarios">Destinatarios</a>.
+    Mientras no haya nadie, los avisos salen a todos los destinatarios activos, que es el
+    comportamiento sin configurar.
+  </div>
+  {% endif %}
+
+  <form method="post" action="/views/ui/calidad-agua/alertas/semaneros">
+    <input type="hidden" name="mes" value="{{ mes_actual }}" />
+    <div class="mes-nav">
+      <a class="btn btn-ghost btn-sm" href="?mes={{ mes_prev }}">← anterior</a>
+      <div class="titulo">{{ titulo }}</div>
+      <a class="btn btn-ghost btn-sm" href="?mes={{ mes_next }}">siguiente →</a>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Semana</th><th>De turno</th><th>Nota</th></tr>
+        </thead>
+        <tbody>
+          {% for f in filas %}
+          <tr class="{{ 'actual' if f.es_actual else ('pasada' if f.pasada else '') }}">
+            <td class="nowrap">
+              lun {{ f.rango }}
+              {% if f.es_actual %}<span class="badge-hoy">esta semana</span>{% endif %}
+            </td>
+            <td>
+              <select class="semanero" name="sem_{{ f.week_start }}">
+                <option value="">— sin asignar (reciben todos) —</option>
+                {% for c in candidatos %}
+                <option value="{{ c.id }}" {{ 'selected' if f.recipient_id == c.id else '' }}>{{ c.name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <input type="text" name="nota_{{ f.week_start }}" value="{{ f.note }}"
+                     placeholder="cambio de turno, vacaciones, etc." maxlength="200" />
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Guardar turnos</button>
+      <a href="/views/ui/calidad-agua/alertas" class="btn btn-ghost">Volver</a>
+    </div>
+  </form>
+
+  <div class="section-title">Quién recibe qué</div>
+  <div class="card">
+    <table class="reglas">
+      <tbody>
+        <tr><td class="q">Semanero de la semana</td>
+            <td>Todo: alarmas y consolidados, <strong>a cualquier hora</strong>. Si tiene una ventana
+                horaria puesta, no se le aplica mientras está de turno — estar de turno es
+                precisamente estar disponible de noche.</td></tr>
+        <tr><td class="q">En rotación, no le toca</td>
+            <td>Nada esa semana. Es lo que hace que estar de turno signifique algo: si el aviso le
+                llega a los tres, cada uno puede suponer que responde otro.</td></tr>
+        <tr><td class="q">Semana sin asignar</td>
+            <td>Reciben <strong>todos</strong> los de la rotación. Omitir la configuración nunca deja
+                al centro sin nadie mirando.</td></tr>
+        <tr><td class="q">Fuera de la rotación</td>
+            <td>Sólo las <strong>alarmas</strong>, todas las semanas. Es el caso de jefatura o de
+                responsabilidades diferenciadas: se entera de lo grave sin recibir los dos
+                consolidados diarios.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>Vacaciones:</strong> no hace falta marcar nada — esas semanas simplemente no se le
+    asignan. El interruptor “entra en la rotación” es para quien <em>nunca</em> es semanero, no para
+    quien se ausenta dos semanas.<br>
+    <strong>Si el semanero se desactiva</strong> o sale de la rotación sin que nadie reasigne la
+    semana, el reparto vuelve solo a “reciben todos”: la única falla que este módulo no puede
+    permitirse es que nadie esté mirando.<br>
+    La semana va de <strong>lunes a domingo</strong>, y la que abre el mes aparece aunque empiece en
+    el mes anterior: el turno no se parte por el cambio de mes.
+  </div>
+</div>
+</div></div>
+</body>
+</html>

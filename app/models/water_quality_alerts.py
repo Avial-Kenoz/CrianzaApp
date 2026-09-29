@@ -1,5 +1,5 @@
-from sqlalchemy import (Column, BigInteger, Integer, String, Boolean, Numeric,
-                        TIMESTAMP, ForeignKey, JSON)
+from sqlalchemy import (Column, BigInteger, Integer, String, Boolean, Date,
+                        Numeric, TIMESTAMP, ForeignKey, JSON)
 from app.db.session import Base
 
 
@@ -164,7 +164,12 @@ class WaterQualityAlertRecipient(Base):
     Ojo con la ventana horaria: si nadie cubre una franja, en esa franja no se
     avisa nada. El turno de noche es el que importa —es la razón de ser del
     módulo—, así que conviene que siempre haya al menos un destinatario sin
-    restricción horaria.
+    restricción horaria. Al semanero de turno la ventana **no** se le aplica:
+    estar de turno es precisamente estar disponible a cualquier hora.
+
+    `in_rotation` dice si entra en el turno de semaneros (ver
+    `WaterQualityOncallWeek`). Quien queda fuera —jefatura, responsabilidades
+    diferenciadas— recibe sólo las alarmas, nunca los consolidados de turno.
     """
 
     __tablename__ = "water_quality_alert_recipients"
@@ -176,6 +181,8 @@ class WaterQualityAlertRecipient(Base):
     active = Column(Boolean, nullable=False, default=True)
 
     min_level = Column(String(20), nullable=False, default="alarma")
+    # Entra en el turno de semaneros (migración 20260929_04).
+    in_rotation = Column(Boolean, nullable=False, default=True)
     kinds = Column(String(120))
     unit_ids = Column(String(120))
     hours_from = Column(Numeric(4, 2))
@@ -223,3 +230,33 @@ class WaterQualityAlertNotification(Base):
     telegram_message_id = Column(BigInteger)
 
     created_at = Column(TIMESTAMP)
+
+
+class WaterQualityOncallWeek(Base):
+    """Quién es el semanero esa semana.
+
+    El centro se cubre con tres encargados que se turnan: uno está disponible y
+    atento 24/7 y los otros dos esa semana no. Sin esto la lista de
+    destinatarios es plana y los tres reciben lo mismo siempre — que es
+    exactamente como se pierde un aviso, porque si le llega a todos cada uno
+    puede suponer que responde otro.
+
+    Una fila por semana, identificada por su **lunes**, con un índice único que
+    lo garantiza en la BD y no sólo en la UI. `recipient_id` admite NULL para
+    poder dejar una semana explícitamente sin asignar.
+
+    **Omitir la configuración no deja al centro mudo**: una semana sin asignar
+    —o asignada a alguien que después se desactivó— cae de vuelta en "todos los
+    de la rotación reciben". El modo de fallar de un turno es que nadie esté
+    mirando; esa es la única falla que no puede pasar en silencio.
+    """
+
+    __tablename__ = "water_quality_oncall_weeks"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    week_start = Column(Date, nullable=False, unique=True, index=True)
+    recipient_id = Column(BigInteger,
+                          ForeignKey("water_quality_alert_recipients.id"))
+    note = Column(String(200))
+    created_at = Column(TIMESTAMP)
+    updated_at = Column(TIMESTAMP)

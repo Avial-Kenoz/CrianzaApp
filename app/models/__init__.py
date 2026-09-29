@@ -55,6 +55,7 @@ from .water_quality_alerts import (
     WaterQualityAlertRule,
     WaterQualityAlertRecipient,
     WaterQualityAlertNotification,
+    WaterQualityOncallWeek,
 )
 from .sexado_offline_session import SexadoOfflineSession
 from .sexing_offline_operation import SexingOfflineOperation
