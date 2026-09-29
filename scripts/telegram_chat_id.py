@@ -22,6 +22,7 @@ sin leer despues de 24 h. Si alguien escribio hace dias y no aparece, que
 escriba de nuevo.
 """
 import argparse
+import io
 import json
 import os
 import sys
@@ -32,6 +33,27 @@ sys.path.insert(0, ".")
 from app.services import notify_telegram as tg          # noqa: E402
 
 API = "https://api.telegram.org/bot{}/{}"
+
+# El token vive en el server.env de PlantaAPP y lo inyecta start_server.cmd al
+# proceso de uvicorn -- o sea que existe DENTRO del servidor y no en una
+# terminal cualquiera. Sin este respaldo, el comando que documenta el tutorial
+# falla con "falta TELEGRAM_BOT_TOKEN" aunque el canal este perfectamente
+# configurado, que es la peor forma de fallar: parece un problema del bot.
+SERVER_ENV = os.getenv("PLANTA_SERVER_ENV") or \
+    r"C:\Users\admin-server\Desktop\PlantaAPP\server.env"
+
+
+def _token_del_server_env() -> str:
+    try:
+        # utf-8-sig: el archivo viene con BOM.
+        with io.open(SERVER_ENV, encoding="utf-8-sig") as f:
+            for linea in f:
+                linea = linea.strip()
+                if linea.startswith("TELEGRAM_BOT_TOKEN="):
+                    return linea.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
 
 
 def _get(metodo, tk):
@@ -47,8 +69,14 @@ def main():
 
     tk = tg.token()
     if not tk:
-        print("ERROR: falta TELEGRAM_BOT_TOKEN en el entorno.")
-        print("       Se define en PlantaAPP/server.env y lo carga start_server.cmd.")
+        tk = _token_del_server_env()
+        if tk:
+            # Para que `tg.enviar` (--probar) lo encuentre igual que el servidor.
+            os.environ["TELEGRAM_BOT_TOKEN"] = tk
+    if not tk:
+        print("ERROR: no se encontro TELEGRAM_BOT_TOKEN.")
+        print("       Se busco en el entorno y en %s" % SERVER_ENV)
+        print("       Si el archivo esta en otra ruta: set PLANTA_SERVER_ENV=<ruta>")
         return 1
 
     yo = _get("getMe", tk)
