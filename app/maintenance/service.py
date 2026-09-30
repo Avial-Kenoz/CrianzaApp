@@ -581,15 +581,38 @@ def recalcular_grupo(db: Session, grupo_id: int) -> None:
 
 
 def recalcular_todas(db: Session) -> int:
-    """Pone al día la criticidad nominal de todos los equipos con la regla
-    vigente. Se llama al arrancar la app: así un cambio de regla (v1 → v2) o de
-    grupos se refleja sin scripts. Idempotente. Devuelve cuántas cambiaron."""
+    """Pone al día la criticidad nominal de todos los equipos y la prioridad
+    sugerida de los avisos **aún sin atender**, con la regla vigente. Se llama
+    al arrancar la app: así un cambio de regla (v1 → v2) o de grupos se refleja
+    sin scripts. Idempotente. Devuelve cuántos valores cambiaron.
+
+    Los avisos ya aceptados no se tocan: su prioridad pasó a la OT y ya es
+    una decisión (que solo se cambia con motivo)."""
     n = 0
     for e in equipos(db, incluir_baja=False):
         antes = e.criticidad
         recalcular_criticidad(db, e)
         n += antes != e.criticidad
+    db.flush()
+    for a in db.query(MntAviso).filter(MntAviso.estado == "nuevo").all():
+        nueva = prioridad_de_aviso(db, a)
+        if nueva and nueva != a.prioridad_sugerida:
+            a.prioridad_sugerida = nueva
+            n += 1
     return n
+
+
+def prioridad_de_aviso(db: Session, aviso: MntAviso) -> Optional[str]:
+    """Prioridad sugerida con la regla vigente: consecuencia del servicio sin
+    respaldo + si había respaldo disponible (sin contar al equipo que falla).
+    `respaldo_entro` se respeta tal como se reportó."""
+    equipo = db.get(MntEquipo, aviso.equipo_id)
+    if equipo is None:
+        return None
+    r = respuestas_de(db, equipo, sin_respaldo=True)
+    crit = rules.calcular_criticidad(r)[0] if r else equipo.criticidad
+    entro = aviso.respaldo_entro if hay_respaldo(db, equipo, cuando=aviso.detectado_at) else None
+    return rules.prioridad_sugerida(crit, aviso.condicion, entro)
 
 
 def servicios_en_riesgo(db: Session, cuando: Optional[datetime] = None) -> list[dict]:
