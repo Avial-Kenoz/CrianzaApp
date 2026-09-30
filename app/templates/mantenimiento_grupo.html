@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ grupo.nombre if grupo else 'Nuevo grupo' }} – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="{{ prefix }}/grupos">Mantenimiento · Grupos de redundancia</a> / {{ grupo.nombre if grupo else 'Nuevo' }}</div>
+  <div class="page-title">{{ grupo.nombre if grupo else 'Nuevo grupo de redundancia' }}</div>
+  <div class="page-sub">
+    <span class="pill sitio-{{ sitio }}">{{ sitio_labels[sitio] }}</span>
+    {% if est %}
+      {% if est.estado == 'holgado' %}<span class="pill ok">{{ est.margen }} de sobra</span>
+      {% elif est.estado == 'sin_respaldo' %}<span class="pill bad">Sin respaldo</span>
+      {% else %}<span class="pill bad">Faltan {{ -est.margen }}</span>{% endif %}
+      <span class="mono">operan {{ est.operando | length }} de {{ est.miembros | length }} · ahora rige {{ 'noche' if est.noche else 'día' }} ({{ est.necesarios }} necesarios)</span>
+    {% endif %}
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  <form method="post" action="{{ prefix }}/grupos/{{ grupo.id if grupo else 'nuevo' }}">
+    {% if not grupo %}<input type="hidden" name="sitio" value="{{ sitio }}">{% endif %}
+    <div class="two-col">
+      <div>
+        <div class="section-title" style="margin-top:0">El servicio</div>
+        <div class="form-card">
+          <div class="grid-form">
+            <div class="wide">
+              <label for="nombre" class="req">Nombre (el servicio que prestan)</label>
+              <input type="text" id="nombre" name="nombre" maxlength="120" required value="{{ grupo.nombre if grupo else '' }}"
+                     placeholder="Ej.: Aireación centralizada, Bombeo sala incubación">
+            </div>
+            <div>
+              <label for="necesarios" class="req">Necesarios operando (día)</label>
+              <input type="number" id="necesarios" name="necesarios" min="1" step="1" required value="{{ grupo.necesarios if grupo else 1 }}">
+            </div>
+            <div>
+              <label for="necesarios_noche">Necesarios de noche</label>
+              <input type="number" id="necesarios_noche" name="necesarios_noche" min="1" step="1" value="{{ grupo.necesarios_noche if grupo and grupo.necesarios_noche else '' }}" placeholder="igual que de día">
+              <div class="hint">Noche: {{ noche[0] }} a {{ noche[1] }} (se cambia en Catálogos y parámetros). De noche el oxígeno baja: puede hacer falta más.</div>
+            </div>
+            <div class="wide">
+              <label class="req">¿Cómo entra el respaldo?</label>
+              <div class="opts">
+                {% for k, l in conmutaciones.items() %}
+                <label><input type="radio" name="conmutacion" value="{{ k }}" {% if (grupo and grupo.conmutacion == k) or (not grupo and k == 'manual') %}checked{% endif %} required> {{ l }}</label>
+                {% endfor %}
+              </div>
+              <div class="hint">Si todos operan a la vez y basta con algunos (sopladores), es automática: si uno cae, los demás siguen sin que nadie haga nada.</div>
+            </div>
+            <div class="wide"><label for="notas">Notas</label><textarea id="notas" name="notas">{{ grupo.notas or '' if grupo else '' }}</textarea></div>
+          </div>
+        </div>
+
+        <div class="section-title">Consecuencia de perder el servicio</div>
+        <div class="form-card">
+          <div class="note" style="margin:0 0 14px">Se responde una vez para todo el grupo: vale para todos sus equipos.</div>
+          {% with modo = 'grupo', resp = ({'impacto': grupo.impacto, 'seguridad_ambiente': grupo.seguridad_ambiente} if grupo else {}) %}{% include '_mnt_encuesta.html' %}{% endwith %}
+        </div>
+      </div>
+
+      <div>
+        <div class="section-title" style="margin-top:0">Equipos del grupo</div>
+        <div class="form-card">
+          {% if candidatos %}
+          <div style="display:grid; gap:6px">
+            {% for e in candidatos %}
+            <label class="chk" style="margin:0">
+              <input type="checkbox" name="miembro" value="{{ e.id }}" {% if e.id in sel %}checked{% endif %}>
+              <span class="code">{{ e.codigo }}</span> {{ e.nombre }}
+              {% if e.estado not in ['operativo', 'degradado'] %}<span class="pill est-{{ e.estado }}">{{ estados_equipo.get(e.estado) }}</span>{% endif %}
+              {% if criticidades is defined and criticidades.get(e.id) %}
+                {% set c = criticidades[e.id] %}
+                <span class="pill crit-{{ c[0] }}" title="nominal">{{ c[0] }}</span>{% if c[1] and c[1] != c[0] %}<span class="pill crit-{{ c[1] }}" title="ahora">→ {{ c[1] }}</span>{% endif %}
+              {% endif %}
+            </label>
+            {% endfor %}
+          </div>
+          <div class="hint" style="margin-top:8px">Solo aparecen equipos de {{ sitio_labels[sitio] }} que no están en otro grupo.</div>
+          {% else %}
+          <div class="empty">No hay equipos disponibles de {{ sitio_labels[sitio] }}.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:18px">
+      <button class="btn btn-primary" type="submit">{{ 'Guardar grupo' if grupo else 'Crear grupo' }}</button>
+      <a class="btn btn-ghost" href="{{ prefix }}/grupos">Volver</a>
+    </div>
+  </form>
+</div>
+</body>
+</html>

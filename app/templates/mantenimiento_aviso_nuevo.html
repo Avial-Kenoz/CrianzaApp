@@ -28,7 +28,7 @@
           {% for s, l in sitio_labels.items() %}
           <optgroup label="{{ l }}">
             {% for e in equipos if e.sitio == s %}
-            <option value="{{ e.id }}" data-respaldo="{{ 1 if respaldos.get(e.id) else 0 }}" {% if equipo_sel == e.id %}selected{% endif %}>{{ e.codigo }} · {{ e.nombre }}</option>
+            <option value="{{ e.id }}" data-respaldo="{{ respaldos.get(e.id) or '' }}" {% if equipo_sel == e.id %}selected{% endif %}>{{ e.codigo }} · {{ e.nombre }}</option>
             {% endfor %}
           </optgroup>
           {% endfor %}
@@ -43,7 +43,7 @@
         </div>
       </div>
       <div class="wide" id="bloque-respaldo" hidden>
-        <label>¿Entró el respaldo?</label>
+        <label id="preg-respaldo">¿Entró el respaldo?</label>
         <div class="opts">
           {% for k, l in respaldo_entro.items() %}
           <label><input type="radio" name="respaldo_entro" value="{{ k }}" {% if k == 'no_se' %}checked{% endif %}> {{ l }}</label>
@@ -81,11 +81,14 @@
   const form = document.getElementById('form-aviso');
   const equipo = document.getElementById('equipo_id');
   const bloque = document.getElementById('bloque-respaldo');
-  // «¿Entró el respaldo?» solo si el equipo está detenido y tiene respaldo.
+  // «¿Entró…?» solo si el equipo está detenido y hay respaldo disponible ahora
+  // (en un grupo: otras unidades operando que alcancen).
   function sync() {
     const opt = equipo.selectedOptions[0];
     const cond = form.querySelector('input[name=condicion]:checked');
-    bloque.hidden = !(opt && opt.dataset.respaldo === '1' && cond && cond.value === 'detenido');
+    const resp = opt ? opt.dataset.respaldo : '';
+    bloque.hidden = !(resp && cond && cond.value === 'detenido');
+    if (resp) document.getElementById('preg-respaldo').textContent = '¿Entró ' + resp + '?';
   }
   equipo.addEventListener('change', sync);
   form.addEventListener('change', sync);

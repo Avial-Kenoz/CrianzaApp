@@ -39,15 +39,16 @@
            placeholder="Dónde está, para encontrarlo" />
   </div>
   <div>
-    <label for="respaldo_equipo_id">Respaldo (qué lo cubre si falla)</label>
-    <select id="respaldo_equipo_id" name="respaldo_equipo_id">
-      <option value="">Sin respaldo</option>
-      {% for r in respaldos %}{% if not sitio or r.sitio == sitio %}
-      <option value="{{ r.id }}" data-sitio="{{ r.sitio }}"
-              {% if src and (src['respaldo_equipo_id']|string) == (r.id|string) %}selected{% endif %}>{{ r.codigo }} · {{ r.nombre }}</option>
+    <label for="grupo_id">Grupo de redundancia</label>
+    <select id="grupo_id" name="grupo_id" {% if redundancia_de is defined and redundancia_de %}disabled{% endif %}>
+      <option value="">Ninguno (no tiene gemelos)</option>
+      {% for g in grupos %}{% if not sitio or g.sitio == sitio %}
+      <option value="{{ g.id }}" data-sitio="{{ g.sitio }}"
+              {% if src and (src['grupo_id']|string) == (g.id|string) %}selected{% endif %}>{{ g.nombre }}</option>
       {% endif %}{% endfor %}
     </select>
-    <div class="hint">El bot preguntará si entró este respaldo cuando el equipo se detenga.</div>
+    <div class="hint">Equipos que se respaldan entre sí. La consecuencia y el respaldo los define el grupo
+      (<a href="{{ prefix }}/grupos" style="color:#2563eb">administrar grupos</a>).</div>
   </div>
   <div>
     <label for="contratista_habitual_id">Contratista habitual</label>

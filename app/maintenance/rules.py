@@ -13,7 +13,10 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 # Si cambia la tabla o los ajustes, subir la versión: cada evaluación guarda
 # con qué versión se calculó, y las respuestas quedan para recalcular.
-REGLA_CRITICIDAD_VERSION = "v1"
+# v2: con grupos de redundancia, la consecuencia (Q1, Q4) es del grupo y el
+# respaldo (Q2) se calcula del margen del grupo; Q2 manual queda solo para
+# respaldos que no son equipos (p. ej. oxígeno de emergencia).
+REGLA_CRITICIDAD_VERSION = "v2"
 
 # Q1 es la única pregunta cuyo TEXTO cambia según el sitio; la escala (a/b/c)
 # y la regla son las mismas.
@@ -28,9 +31,18 @@ OPCIONES_IMPACTO = {
     "planta": [("a", "Menos de 2 h"), ("b", "Menos de 24 h"),
                ("c", "No compromete producto")],
 }
-PREGUNTA_RESPALDO = "¿Tiene respaldo?"
-OPCIONES_RESPALDO = [("a", "Ninguno"), ("b", "Manual (alguien lo tiene que conectar)"),
-                     ("c", "Automático o redundante")]
+# Solo para equipos SIN grupo: un respaldo que no es un equipo registrado (el
+# de otra tecnología, que no es simétrico). Si el respaldo es otro equipo, se
+# arma un grupo de redundancia y esta pregunta la responde el grupo.
+PREGUNTA_RESPALDO = ("¿Tiene un respaldo que NO está registrado como equipo? "
+                     "(p. ej. oxígeno de emergencia)")
+OPCIONES_RESPALDO = [("a", "Ninguno"), ("b", "Sí, manual (alguien lo tiene que activar)"),
+                     ("c", "Sí, automático")]
+# Automática = no hace falta que nadie haga nada: incluye a los equipos que ya
+# operan todos en paralelo (sopladores centralizados), donde si uno cae los
+# demás siguen sin intervención.
+CONMUTACIONES = {"automatica": "Automática (o todos operando en paralelo)",
+                 "manual": "Manual (alguien tiene que cambiarlo)"}
 PREGUNTA_REPOSICION = "¿Cuánto demora reponerlo (repuesto o técnico)?"
 OPCIONES_REPOSICION = [("a", "Más de 1 semana"), ("b", "De 1 a 7 días"),
                        ("c", "Menos de 1 día")]
@@ -58,19 +70,27 @@ class RespuestasInvalidas(ValueError):
     """La encuesta llegó incompleta o con valores fuera de la escala."""
 
 
-def validar_respuestas(respuestas: dict) -> dict:
-    """Normaliza y valida las cuatro respuestas. Levanta si falta alguna.
+_ESCALAS = {
+    "impacto": {"a", "b", "c"},
+    "respaldo": {"a", "b", "c"},
+    "reposicion": {"a", "b", "c"},
+    "seguridad_ambiente": {"si", "no"},
+}
+# Un equipo de un grupo de redundancia responde solo la reposición: la
+# consecuencia es del grupo y el respaldo sale de su margen.
+PREGUNTAS_EN_GRUPO = ("reposicion",)
+
+
+def validar_respuestas(respuestas: dict, claves: tuple = tuple(_ESCALAS)) -> dict:
+    """Normaliza y valida las respuestas pedidas (por defecto, las cuatro).
+    Levanta si falta alguna.
 
     El formulario no se puede guardar sin la encuesta completa (spec §4), así
     que acá no hay defaults: una respuesta ausente es un error, no una "c".
     """
     limpio = {}
-    for clave, validas in (
-        ("impacto", {"a", "b", "c"}),
-        ("respaldo", {"a", "b", "c"}),
-        ("reposicion", {"a", "b", "c"}),
-        ("seguridad_ambiente", {"si", "no"}),
-    ):
+    for clave in claves:
+        validas = _ESCALAS[clave]
         valor = (respuestas.get(clave) or "").strip().lower()
         if valor not in validas:
             raise RespuestasInvalidas(f"Falta responder la pregunta «{clave}» de criticidad.")
@@ -93,6 +113,35 @@ def calcular_criticidad(respuestas: dict) -> tuple[str, Optional[float]]:
     if r["seguridad_ambiente"] == "si":
         resultado = "A"
     return resultado, _TOLERANCIA[r["impacto"]]
+
+
+# ---------------------------------------------------------------------------
+# Grupos de redundancia: margen y respaldo derivado
+# ---------------------------------------------------------------------------
+def es_noche(hora: float, desde: Optional[float], hasta: Optional[float]) -> bool:
+    """Ventana nocturna que puede cruzar la medianoche (20:00 a 08:00)."""
+    if desde is None or hasta is None:
+        return False
+    return (desde <= hora < hasta) if desde <= hasta else (hora >= desde or hora < hasta)
+
+
+def necesarios_ahora(necesarios: int, necesarios_noche: Optional[int], noche: bool) -> int:
+    """De noche rige `necesarios_noche` si está definido (los sopladores
+    necesitan más de noche: el oxígeno baja sin fotosíntesis)."""
+    return (necesarios_noche or necesarios) if noche else necesarios
+
+
+def respaldo_por_margen(margen: int, conmutacion: str) -> str:
+    """Q2 derivada del grupo: con al menos un equipo de sobra hay respaldo
+    (manual o automático según el grupo); sin sobra, «ninguno»."""
+    if margen >= 1:
+        return "c" if conmutacion == "automatica" else "b"
+    return "a"
+
+
+def estado_margen(margen: int) -> str:
+    """`holgado` (≥1 de sobra) · `sin_respaldo` (justo) · `insuficiente` (faltan)."""
+    return "holgado" if margen >= 1 else ("sin_respaldo" if margen == 0 else "insuficiente")
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +184,12 @@ PRIORIDADES = {"P1": "P1 · alarma", "P2": "P2 · en el día", "P3": "P3 · plan
 
 
 def prioridad_sugerida(criticidad: Optional[str], condicion: str, respaldo_entro: Optional[str]) -> str:
-    """P1/P2/P3 según la criticidad del equipo y lo reportado.
+    """P1/P2/P3 según la criticidad y lo reportado.
+
+    `criticidad` es la del **servicio sin respaldo** (la consecuencia de
+    perderlo); el respaldo del momento entra por la columna. Así, si el que
+    quedó solo falla, el aviso nace P1 aunque su criticidad nominal sea B.
+    Quien llama pasa `respaldo_entro=None` cuando no hay respaldo disponible.
 
     "No sé" si entró el respaldo se trata como "no": ante la duda, el aviso
     se atiende como si el equipo estuviera solo. Un equipo sin criticidad (no

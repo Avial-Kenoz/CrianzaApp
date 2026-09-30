@@ -1,14 +1,23 @@
-{# Encuesta de criticidad (spec §4). Variables:
-     sitio       'crianza' | 'planta' | None (None = el sitio lo elige un select #sitio del formulario)
-     resp        dict con respuestas previas (puede faltar)
-   La Q1 cambia de texto según el sitio; la escala y la regla son las mismas.
-   El resultado se previsualiza en el navegador con la misma tabla de rules.py,
-   pero el que vale es el que calcula el servidor al guardar. #}
+{# Encuesta de criticidad (spec §4, regla v2). Variables:
+     sitio    'crianza' | 'planta' | None (None = lo elige un select #sitio del formulario)
+     resp     dict con respuestas previas (puede faltar)
+     modo     'equipo' (defecto) · 'grupo' (pantalla del grupo: solo consecuencia, Q1 y Q4)
+     en_grupo True si el equipo ya está en un grupo (ficha). En el alta lo decide el
+              select #grupo_id del formulario, o `redundancia_de`.
+   Un equipo de un grupo responde solo Q3 (reposición): la consecuencia (Q1, Q4)
+   es del grupo y el respaldo (Q2) sale de su margen. Las preguntas que no aplican
+   se ocultan y se DESHABILITAN, para que no las exija el navegador ni se envíen.
+   La vista previa usa la misma tabla que rules.py; el que vale es el servidor. #}
 {% set resp = resp or {} %}
-<div class="encuesta" id="encuesta">
-  <div class="preg">
+{% set modo = modo or 'equipo' %}
+<div class="encuesta" id="encuesta" data-modo="{{ modo }}" data-en-grupo="{{ '1' if en_grupo else '' }}">
+  <div class="note" id="nota-grupo" hidden style="margin:0">
+    Este equipo es parte de un <b>grupo de redundancia</b>: la consecuencia de perder el servicio y el respaldo
+    los define el grupo. Aquí solo se responde cuánto demora reponer <b>esta</b> unidad.
+  </div>
+  <div class="preg" data-q="impacto">
     {% for s in ['crianza', 'planta'] %}
-    <div class="q q-impacto" data-sitio="{{ s }}" {% if sitio and sitio != s %}hidden{% endif %}><b>Q1</b>{{ preg_impacto[s] }}</div>
+    <div class="q q-impacto" data-sitio="{{ s }}" {% if sitio and sitio != s %}hidden{% endif %}><b>Q1</b>{{ preg_impacto[s] | replace('este equipo', 'este servicio' if modo == 'grupo' else 'este equipo') }}</div>
     {% endfor %}
     {# Un solo grupo de botones (la escala a/b/c es común); solo cambia el texto. #}
     <div class="opts">
@@ -19,15 +28,17 @@
       {% endfor %}
     </div>
   </div>
-  <div class="preg">
+  {% if modo != 'grupo' %}
+  <div class="preg" data-q="respaldo">
     <div class="q"><b>Q2</b>{{ preg_respaldo }}</div>
     <div class="opts">
       {% for val, label in opc_respaldo %}
       <label><input type="radio" name="q_respaldo" value="{{ val }}" {% if resp.get('respaldo') == val %}checked{% endif %} required> {{ label }}</label>
       {% endfor %}
     </div>
+    <div class="hint">Si el respaldo es otro equipo registrado, no respondas aquí: ponlos en el mismo grupo de redundancia.</div>
   </div>
-  <div class="preg">
+  <div class="preg" data-q="reposicion">
     <div class="q"><b>Q3</b>{{ preg_reposicion }}</div>
     <div class="opts">
       {% for val, label in opc_reposicion %}
@@ -35,7 +46,8 @@
       {% endfor %}
     </div>
   </div>
-  <div class="preg">
+  {% endif %}
+  <div class="preg" data-q="seguridad">
     <div class="q"><b>Q4</b>{{ preg_seguridad }}</div>
     <div class="opts">
       {% for val, label in opc_seguridad %}
@@ -43,10 +55,12 @@
       {% endfor %}
     </div>
   </div>
-  <div class="resultado">
+  {% if modo != 'grupo' %}
+  <div class="resultado" id="resultado">
     <span class="big" id="crit-big">?</span>
     <span id="crit-txt" style="color:#6b7280">Responde las cuatro preguntas para ver la criticidad.</span>
   </div>
+  {% endif %}
 </div>
 <script>
 (function () {
@@ -57,8 +71,28 @@
   const TXT = {A:'Crítico: su falla sin respaldo es alarma P1.', B:'Importante.', C:'Menor.'};
   const root = document.getElementById('encuesta');
   const form = root.closest('form');
+  const modo = root.dataset.modo;
   const val = n => { const x = form.querySelector('input[name="' + n + '"]:checked'); return x ? x.value : null; };
+  const selGrupo = form.querySelector('#grupo_id');
+  const enGrupo = () => !!root.dataset.enGrupo || !!form.querySelector('input[name=redundancia_de]') || !!(selGrupo && selGrupo.value);
+
+  function mostrar(q, si) {
+    const b = root.querySelector('[data-q="' + q + '"]');
+    if (!b) return;
+    b.hidden = !si;
+    b.querySelectorAll('input').forEach(i => { i.disabled = !si; });
+  }
+  function syncGrupo() {
+    if (modo === 'grupo') return;
+    const g = enGrupo();
+    ['impacto', 'respaldo', 'seguridad'].forEach(q => mostrar(q, !g));
+    document.getElementById('nota-grupo').hidden = !g;
+    const r = document.getElementById('resultado');
+    if (r) r.hidden = g;
+    calc();
+  }
   function calc() {
+    if (modo === 'grupo' || enGrupo()) return;
     const i = val('q_impacto'), r = val('q_respaldo'), p = val('q_reposicion'), s = val('q_seguridad_ambiente');
     const big = document.getElementById('crit-big'), txt = document.getElementById('crit-txt');
     if (!i || !r || !p || !s) { big.textContent = '?'; big.className = 'big'; return; }
@@ -75,7 +109,8 @@
     root.querySelectorAll('[data-sitio]').forEach(el => { el.hidden = el.dataset.sitio !== sel.value; });
   }
   if (sel) { sel.addEventListener('change', syncSitio); syncSitio(); }
+  if (selGrupo) selGrupo.addEventListener('change', syncGrupo);
   form.addEventListener('change', calc);
-  calc();
+  syncGrupo();
 })();
 </script>

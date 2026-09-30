@@ -21,14 +21,14 @@
     <input type="hidden" name="redundancia_de" value="{{ redundancia_de.id }}" />
     <div class="note" style="margin:0 0 6px">
       Copia de <b>{{ redundancia_de.codigo }} · {{ redundancia_de.nombre }}</b>: mismos datos técnicos, destinos,
-      contratista y respuestas de criticidad. Quedan fuera la serie, la foto y la fecha de instalación, que son de
-      cada unidad. Revisa y guarda.
+      contratista y tiempo de reposición. Quedan fuera la serie, la foto y la fecha de instalación, que son de
+      cada unidad.
       <div style="margin-top:8px">
-        {% if original_con_respaldo %}
-        <span class="mono">{{ redundancia_de.codigo }} ya tiene respaldo asignado; no se cambiará.</span>
+        {% if grupo_original %}
+        Entra al grupo <b>{{ grupo_original.nombre }}</b>, junto a {{ redundancia_de.codigo }}.
         {% else %}
-        <label class="chk"><input type="checkbox" name="respaldo_mutuo" value="1" checked>
-          Dejar también a {{ redundancia_de.codigo }} respaldado por este equipo (respaldo mutuo)</label>
+        Se crea un <b>grupo de redundancia</b> nuevo con {{ redundancia_de.codigo }} y este equipo, que hereda la
+        consecuencia de {{ redundancia_de.codigo }} y pide 1 operando. Ajústalo después en la pantalla del grupo.
         {% endif %}
       </div>
     </div>
@@ -57,8 +57,8 @@
     <div class="section-title">Criticidad</div>
     <div class="form-card">
       <div class="note" style="margin:0 0 14px">
-        Obligatoria: sin estas cuatro respuestas el equipo no se puede dar de alta. El sistema calcula
-        A, B o C; la criticidad no se elige a mano.
+        Obligatoria: sin estas respuestas el equipo no se puede dar de alta. El sistema calcula A, B o C;
+        la criticidad no se elige a mano.
       </div>
       {% with sitio = none, resp = previo_resp %}{% include '_mnt_encuesta.html' %}{% endwith %}
     </div>
@@ -77,10 +77,10 @@
     function sync() {
       const s = sel.value;
       document.querySelectorAll('[data-sitio-campo]').forEach(el => { el.hidden = el.dataset.sitioCampo !== s; });
-      document.querySelectorAll('#respaldo_equipo_id option[data-sitio], #sistema_id option[data-sitio]').forEach(o => {
+      document.querySelectorAll('#grupo_id option[data-sitio], #sistema_id option[data-sitio]').forEach(o => {
         const fuera = o.dataset.sitio !== s;
         o.hidden = fuera; o.disabled = fuera;
-        if (fuera && o.selected) o.parentElement.value = '';
+        if (fuera && o.selected) { o.parentElement.value = ''; o.parentElement.dispatchEvent(new Event('change')); }
       });
     }
     sel.addEventListener('change', sync);

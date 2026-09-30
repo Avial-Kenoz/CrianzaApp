@@ -16,7 +16,10 @@
   </div>
   <div class="page-sub">
     <span class="pill sitio-{{ equipo.sitio }}">{{ sitio_labels[equipo.sitio] }}</span>
-    {% if equipo.criticidad %}<span class="pill crit-{{ equipo.criticidad }}">{{ criticidad_labels[equipo.criticidad] }}</span>{% endif %}
+    {% if equipo.criticidad %}<span class="pill crit-{{ equipo.criticidad }}" title="Criticidad nominal (con su grupo completo)">{{ criticidad_labels[equipo.criticidad] }}</span>{% endif %}
+    {% if criticidad_efectiva and criticidad_efectiva != equipo.criticidad %}
+    <span class="pill crit-{{ criticidad_efectiva }}" title="Criticidad efectiva: según cuántos de su grupo operan ahora">ahora {{ criticidad_efectiva }}{{ ' · sin respaldo' if criticidad_efectiva < equipo.criticidad }}</span>
+    {% endif %}
     <span class="pill est-{{ equipo.estado }}">{{ estados_equipo.get(equipo.estado, equipo.estado) }}</span>
     {% if equipo.alta_por or equipo.created_at %}
     <span class="mono" style="margin-left:6px">Alta {{ equipo.created_at.strftime('%d-%m-%Y') if equipo.created_at else '' }}{% if equipo.alta_por %} · {{ equipo.alta_por }}{% endif %}{% if equipo.alta_origen == 'planta' %} (desde PlantaApp){% endif %}</span>
@@ -25,10 +28,11 @@
 
   {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
   {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
-  {% if respaldo_incoherente %}
-  <div class="note warn" style="margin:0 0 16px">
-    ⚠️ Este equipo tiene respaldo (<b>{{ respaldo.codigo }}</b>) pero su encuesta de criticidad dice «sin respaldo»,
-    así que su criticidad {{ equipo.criticidad }} puede estar sobrestimada. Responde de nuevo la Q2 más abajo y reevalúa.
+  {% if estado_grupo and estado_grupo.margen <= 0 %}
+  <div class="note bad" style="margin:0 0 16px">
+    ⚠️ <b>{{ grupo.nombre }}</b> {{ 'está sin respaldo' if estado_grupo.margen == 0 else 'no tiene los equipos necesarios' }}:
+    operan {{ estado_grupo.operando | length }} de {{ estado_grupo.necesarios }} necesarios{{ ' (noche)' if estado_grupo.noche }}.
+    {% if estado_grupo.detenidos %}Detenidos: {% for d in estado_grupo.detenidos %}<a class="row-link" href="{{ prefix }}/equipos/{{ d.id }}">{{ d.codigo }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
   </div>
   {% endif %}
 
@@ -46,7 +50,7 @@
           Cambia una respuesta y guarda para reevaluar. Queda en el historial con fecha y autor; la
           evaluación anterior no se borra.
         </div>
-        {% with sitio = equipo.sitio, resp = (evaluacion.respuestas if evaluacion else {}) %}{% include '_mnt_encuesta.html' %}{% endwith %}
+        {% with sitio = equipo.sitio, resp = (evaluacion.respuestas if evaluacion else {}), en_grupo = equipo.grupo_id %}{% include '_mnt_encuesta.html' %}{% endwith %}
         <div class="grid-form" style="margin-top:14px; align-items:end">
           <div>
             <label for="autor">Evaluado por</label>
@@ -88,7 +92,8 @@
               <td class="mono">{{ h.evaluado_at.strftime('%d-%m-%Y %H:%M') }}</td>
               <td><span class="pill crit-{{ h.resultado }}">{{ h.resultado }}</span></td>
               <td class="mono">{{ ('%.0f h'|format(h.tolerancia_horas)) if h.tolerancia_horas is not none else '—' }}</td>
-              <td class="mono">Q1 {{ h.respuestas.impacto }} · Q2 {{ h.respuestas.respaldo }} · Q3 {{ h.respuestas.reposicion }} · Q4 {{ h.respuestas.seguridad_ambiente }}</td>
+              <td class="mono">{% for k, q in [('impacto', 'Q1'), ('respaldo', 'Q2'), ('reposicion', 'Q3'), ('seguridad_ambiente', 'Q4')] if h.respuestas.get(k) %}{{ q }} {{ h.respuestas[k] }}{% if not loop.last %} · {% endif %}{% endfor %}
+                {% if 'impacto' not in h.respuestas %}<span title="Q1, Q2 y Q4 los define el grupo">(resto: grupo)</span>{% endif %}</td>
               <td class="mono">{{ h.evaluado_por or '—' }}</td>
             </tr>
             {% endfor %}
@@ -113,10 +118,14 @@
       <div class="section-title">Resumen</div>
       <div class="form-card">
         <dl class="kv">
-          <dt>Respaldo</dt>
-          <dd>{% if respaldo %}<a class="row-link" href="{{ prefix }}/equipos/{{ respaldo.id }}">{{ respaldo.codigo }} · {{ respaldo.nombre }}</a>{% else %}Sin respaldo{% endif %}</dd>
-          <dt>Respalda a</dt>
-          <dd>{% for r in respaldado_por_este %}<a class="row-link" href="{{ prefix }}/equipos/{{ r.id }}">{{ r.codigo }}</a>{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</dd>
+          <dt>Redundancia</dt>
+          <dd>
+            {% if grupo %}
+            <a class="row-link" href="{{ prefix }}/grupos/{{ grupo.id }}">{{ grupo.nombre }}</a>
+            <div class="mono">operan {{ estado_grupo.operando | length }} de {{ estado_grupo.miembros | length }} · necesarios {{ estado_grupo.necesarios }}{{ ' (noche)' if estado_grupo.noche }}</div>
+            {% elif respaldo_externo %}Respaldo externo (no es un equipo registrado)
+            {% else %}Sin respaldo{% endif %}
+          </dd>
           {% if equipo.sitio == 'crianza' %}
           <dt>Atiende a</dt><dd>{{ destinos_labels | join(', ') or '—' }}</dd>
           {% endif %}

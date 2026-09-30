@@ -7,6 +7,7 @@ indique; el que llama decide la transacción.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Optional
@@ -18,7 +19,7 @@ from app.maintenance import rules
 from app.maintenance.models import (
     SITIOS, MntSistema, MntTipoEquipo, MntContratista, MntPersona, MntEquipo,
     MntEquipoDestino, MntCriticidadEvaluacion, MntParametro, MntAviso, MntOt, MntOtEvento,
-    MntTelegramContacto,
+    MntTelegramContacto, MntGrupoRedundancia,
 )
 
 
@@ -365,18 +366,25 @@ def historial_criticidad(db: Session, equipo_id: int) -> list:
             .all())
 
 
+def _claves_encuesta(grupo_id) -> tuple:
+    return rules.PREGUNTAS_EN_GRUPO if grupo_id else tuple(rules._ESCALAS)
+
+
 def crear_equipo(db: Session, datos: dict, respuestas: dict, *, origen: str, autor: Optional[str]) -> MntEquipo:
     """Alta de un equipo con su encuesta de criticidad (obligatoria, spec §4).
 
-    Valida la encuesta ANTES de tocar la BD: sin encuesta completa no hay alta.
+    Si entra a un grupo de redundancia, la encuesta es solo la reposición (la
+    consecuencia es del grupo y el respaldo sale de su margen). Se valida
+    ANTES de tocar la BD: sin encuesta no hay alta.
     """
     sitio = datos.get("sitio")
     if sitio not in SITIOS:
         raise ErrorValidacion("Elige el sitio del equipo (Crianza o Planta).")
+    grupo_id = _id_o_none(datos.get("grupo_id"))
     try:
-        criticidad, tolerancia = rules.calcular_criticidad(respuestas)
+        limpio = rules.validar_respuestas(respuestas, _claves_encuesta(grupo_id))
     except rules.RespuestasInvalidas:
-        raise ErrorValidacion("Responde las cuatro preguntas de criticidad: sin ellas el equipo no se puede dar de alta.")
+        raise ErrorValidacion("Responde las preguntas de criticidad: sin ellas el equipo no se puede dar de alta.")
 
     now = datetime.now()
     codigos = [c for (c,) in db.query(MntEquipo.codigo).all()]
@@ -392,17 +400,46 @@ def crear_equipo(db: Session, datos: dict, respuestas: dict, *, origen: str, aut
     db.add(equipo)
     db.flush()
     _guardar_destinos(db, equipo, datos.get("destinos") or [])
-    _registrar_evaluacion(db, equipo, respuestas, criticidad, tolerancia, autor, now)
+    _registrar_evaluacion(db, equipo, limpio, autor, now)
+    if equipo.grupo_id:
+        recalcular_grupo(db, equipo.grupo_id)      # el margen de los demás cambió
     return equipo
 
 
-def actualizar_equipo(db: Session, equipo: MntEquipo, datos: dict) -> MntEquipo:
+def actualizar_equipo(db: Session, equipo: MntEquipo, datos: dict) -> Optional[str]:
     """Edita la ficha. El sitio no cambia: un equipo no se muda de Crianza a
-    Planta, y cambiarlo rompería la Q1 con que se evaluó su criticidad."""
+    Planta, y cambiarlo rompería la Q1 con que se evaluó su criticidad.
+
+    Devuelve un aviso para mostrar si el cambio de grupo requiere revisar algo.
+    """
+    grupo_antes = equipo.grupo_id
     _aplicar_ficha(db, equipo, datos)
     _guardar_destinos(db, equipo, datos.get("destinos"))
     equipo.updated_at = datetime.now()
-    return equipo
+    aviso = None
+    if grupo_antes != equipo.grupo_id:
+        aviso = _al_cambiar_de_grupo(db, equipo, grupo_antes)
+        for g in {grupo_antes, equipo.grupo_id} - {None}:
+            recalcular_grupo(db, g)
+    recalcular_criticidad(db, equipo)
+    return aviso
+
+
+def _al_cambiar_de_grupo(db: Session, equipo: MntEquipo, grupo_antes: Optional[int]) -> Optional[str]:
+    """Al salir de un grupo, el equipo necesita su propia consecuencia y su
+    pregunta de respaldo: se hereda la del grupo que deja (con «sin respaldo»)
+    en una evaluación nueva, para que nunca quede sin criticidad."""
+    if equipo.grupo_id or not grupo_antes:
+        return None
+    g = db.get(MntGrupoRedundancia, grupo_antes)
+    ev = ultima_evaluacion(db, equipo.id)
+    base = dict(ev.respuestas) if ev else {}
+    resp = {"impacto": base.get("impacto") or g.impacto, "respaldo": "a",
+            "reposicion": base.get("reposicion") or "c",
+            "seguridad_ambiente": base.get("seguridad_ambiente") or g.seguridad_ambiente}
+    _registrar_evaluacion(db, equipo, resp, f"Sistema (salió de «{g.nombre}»)", datetime.now())
+    return (f"{equipo.codigo} salió de «{g.nombre}»: heredó su consecuencia y quedó «sin respaldo». "
+            f"Revisa su encuesta de criticidad.")
 
 
 def reevaluar_criticidad(db: Session, equipo: MntEquipo, respuestas: dict, autor: Optional[str]) -> bool:
@@ -411,25 +448,221 @@ def reevaluar_criticidad(db: Session, equipo: MntEquipo, respuestas: dict, autor
     Devuelve True si hubo evaluación nueva. Nunca borra la anterior.
     """
     try:
-        limpio = rules.validar_respuestas(respuestas)
-        criticidad, tolerancia = rules.calcular_criticidad(limpio)
+        limpio = rules.validar_respuestas(respuestas, _claves_encuesta(equipo.grupo_id))
     except rules.RespuestasInvalidas:
-        raise ErrorValidacion("Responde las cuatro preguntas de criticidad.")
+        raise ErrorValidacion("Responde las preguntas de criticidad.")
     previa = ultima_evaluacion(db, equipo.id)
     if previa and previa.respuestas == limpio and previa.regla_version == rules.REGLA_CRITICIDAD_VERSION:
         return False
-    _registrar_evaluacion(db, equipo, limpio, criticidad, tolerancia, autor, datetime.now())
+    _registrar_evaluacion(db, equipo, limpio, autor, datetime.now())
     return True
+
+
+# ---------------------------------------------------------------------------
+# Grupos de redundancia y criticidad nominal / efectiva
+# ---------------------------------------------------------------------------
+def _hora_param(db: Session, clave: str) -> Optional[float]:
+    try:
+        return rules.parse_hora(parametros(db).get(clave))
+    except ValueError:
+        return None
+
+
+def es_noche(db: Session, cuando: Optional[datetime] = None) -> bool:
+    cuando = cuando or datetime.now()
+    return rules.es_noche(cuando.hour + cuando.minute / 60.0,
+                          _hora_param(db, "noche_desde"), _hora_param(db, "noche_hasta"))
+
+
+def grupos(db: Session, sitio: Optional[str] = None, solo_activos: bool = True) -> list:
+    q = db.query(MntGrupoRedundancia)
+    if solo_activos:
+        q = q.filter(MntGrupoRedundancia.activo.is_(True))
+    if sitio:
+        q = q.filter(MntGrupoRedundancia.sitio == sitio)
+    return q.order_by(MntGrupoRedundancia.nombre).all()
+
+
+def miembros(db: Session, grupo_id: int) -> list:
+    return (db.query(MntEquipo).filter(MntEquipo.grupo_id == grupo_id, MntEquipo.estado != "baja")
+            .order_by(MntEquipo.codigo).all())
+
+
+_OPERANDO = ("operativo", "degradado")      # degradado funciona, aunque con problemas
+
+
+def estado_grupo(db: Session, grupo: MntGrupoRedundancia, cuando: Optional[datetime] = None) -> dict:
+    """Cómo está el servicio ahora: cuántos operan, cuántos hacen falta y el margen."""
+    noche = es_noche(db, cuando)
+    ms = miembros(db, grupo.id)
+    operando = [e for e in ms if e.estado in _OPERANDO]
+    necesarios = rules.necesarios_ahora(grupo.necesarios, grupo.necesarios_noche, noche)
+    margen = len(operando) - necesarios
+    return {"grupo": grupo, "miembros": ms, "operando": operando,
+            "detenidos": [e for e in ms if e.estado not in _OPERANDO],
+            "necesarios": necesarios, "noche": noche, "margen": margen,
+            "estado": rules.estado_margen(margen)}
+
+
+def _necesarios_max(g: MntGrupoRedundancia) -> int:
+    return max(g.necesarios, g.necesarios_noche or g.necesarios)
+
+
+def hay_respaldo(db: Session, equipo: MntEquipo, *, nominal: bool = False,
+                 cuando: Optional[datetime] = None) -> bool:
+    """¿Si este equipo falla (o mientras está detenido), otros sostienen el servicio?
+
+    Con grupo: los OTROS miembros que operan alcanzan a los necesarios. Nominal
+    = con todo el grupo operando y el caso más exigente (noche). Sin grupo: el
+    respaldo externo que declaró la encuesta (Q2), que no cambia con el tiempo.
+    """
+    if equipo.grupo_id:
+        g = db.get(MntGrupoRedundancia, equipo.grupo_id)
+        otros = [e for e in miembros(db, g.id) if e.id != equipo.id]
+        if nominal:
+            return len(otros) >= _necesarios_max(g)
+        necesarios = rules.necesarios_ahora(g.necesarios, g.necesarios_noche, es_noche(db, cuando))
+        return sum(1 for e in otros if e.estado in _OPERANDO) >= necesarios
+    ev = ultima_evaluacion(db, equipo.id)
+    return bool(ev and (ev.respuestas or {}).get("respaldo") in ("b", "c"))
+
+
+def texto_respaldo(db: Session, equipo: MntEquipo, cuando: Optional[datetime] = None) -> Optional[str]:
+    """Qué respaldo preguntar («¿entró…?») cuando este equipo se detiene, o
+    None si en este momento no hay ninguno disponible."""
+    if not hay_respaldo(db, equipo, nominal=False, cuando=cuando):
+        return None
+    if equipo.grupo_id:
+        otros = [e for e in miembros(db, equipo.grupo_id) if e.id != equipo.id and e.estado in _OPERANDO]
+        nombres = ", ".join(e.codigo for e in otros[:4]) + ("…" if len(otros) > 4 else "")
+        return f"otra unidad del grupo ({nombres})"
+    return "el respaldo externo"
+
+
+def respuestas_de(db: Session, equipo: MntEquipo, *, nominal: bool = True,
+                  cuando: Optional[datetime] = None, sin_respaldo: bool = False) -> Optional[dict]:
+    """Las cuatro respuestas con que se calcula la criticidad del equipo.
+
+    Con grupo: consecuencia (Q1, Q4) del grupo, reposición (Q3) del equipo y
+    respaldo (Q2) derivado del margen. `sin_respaldo` fuerza Q2 = «ninguno»:
+    es la consecuencia de perder el servicio, que usa la prioridad.
+    """
+    ev = ultima_evaluacion(db, equipo.id)
+    base = dict(ev.respuestas) if ev else {}
+    if equipo.grupo_id:
+        g = db.get(MntGrupoRedundancia, equipo.grupo_id)
+        base.update(impacto=g.impacto, seguridad_ambiente=g.seguridad_ambiente)
+        base.setdefault("reposicion", "c")
+        hay = hay_respaldo(db, equipo, nominal=nominal, cuando=cuando)
+        base["respaldo"] = rules.respaldo_por_margen(1 if hay else 0, g.conmutacion)
+    if sin_respaldo:
+        base["respaldo"] = "a"
+    try:
+        return rules.validar_respuestas(base)
+    except rules.RespuestasInvalidas:
+        return None
+
+
+def criticidad_de(db: Session, equipo: MntEquipo, *, nominal: bool = True,
+                  cuando: Optional[datetime] = None) -> Optional[str]:
+    r = respuestas_de(db, equipo, nominal=nominal, cuando=cuando)
+    return rules.calcular_criticidad(r)[0] if r else None
+
+
+def recalcular_criticidad(db: Session, equipo: MntEquipo) -> None:
+    """Guarda la criticidad nominal (con el grupo completo)."""
+    equipo.criticidad = criticidad_de(db, equipo, nominal=True)
+
+
+def recalcular_grupo(db: Session, grupo_id: int) -> None:
+    db.flush()
+    for e in miembros(db, grupo_id):
+        recalcular_criticidad(db, e)
+
+
+def recalcular_todas(db: Session) -> int:
+    """Pone al día la criticidad nominal de todos los equipos con la regla
+    vigente. Se llama al arrancar la app: así un cambio de regla (v1 → v2) o de
+    grupos se refleja sin scripts. Idempotente. Devuelve cuántas cambiaron."""
+    n = 0
+    for e in equipos(db, incluir_baja=False):
+        antes = e.criticidad
+        recalcular_criticidad(db, e)
+        n += antes != e.criticidad
+    return n
+
+
+def servicios_en_riesgo(db: Session, cuando: Optional[datetime] = None) -> list[dict]:
+    """Grupos sin respaldo (margen 0) o sin los necesarios (margen < 0) ahora."""
+    return [s for s in (estado_grupo(db, g, cuando) for g in grupos(db)) if s["margen"] <= 0]
+
+
+def guardar_grupo(db: Session, datos: dict, grupo: Optional[MntGrupoRedundancia] = None,
+                  miembros_ids: Optional[list] = None) -> MntGrupoRedundancia:
+    nombre = (datos.get("nombre") or "").strip()
+    if not nombre:
+        raise ErrorValidacion("El grupo necesita un nombre (el servicio que prestan).")
+    otro = db.query(MntGrupoRedundancia).filter(MntGrupoRedundancia.nombre.ilike(nombre)).first()
+    if otro and (grupo is None or otro.id != grupo.id):
+        raise ErrorValidacion(f"Ya existe el grupo «{otro.nombre}».")
+    sitio = grupo.sitio if grupo else datos.get("sitio")
+    if sitio not in SITIOS:
+        raise ErrorValidacion("Elige el sitio del grupo.")
+    try:
+        nec = int(str(datos.get("necesarios") or "").strip())
+        nec_noche = int(str(datos.get("necesarios_noche")).strip()) if str(datos.get("necesarios_noche") or "").strip() else None
+    except ValueError:
+        raise ErrorValidacion("«Necesarios» debe ser un número entero.")
+    if nec < 1 or (nec_noche is not None and nec_noche < 1):
+        raise ErrorValidacion("Tiene que hacer falta al menos 1 equipo operando.")
+    conm = datos.get("conmutacion")
+    if conm not in rules.CONMUTACIONES:
+        raise ErrorValidacion("Indica si el cambio de equipo es manual o automático.")
+    try:
+        cons = rules.validar_respuestas(datos, ("impacto", "seguridad_ambiente"))
+    except rules.RespuestasInvalidas:
+        raise ErrorValidacion("Responde las dos preguntas de consecuencia del servicio.")
+
+    now = datetime.now()
+    if grupo is None:
+        grupo = MntGrupoRedundancia(sitio=sitio, activo=True, created_at=now)
+        db.add(grupo)
+    grupo.nombre, grupo.necesarios, grupo.necesarios_noche = nombre, nec, nec_noche
+    grupo.conmutacion, grupo.impacto, grupo.seguridad_ambiente = conm, cons["impacto"], cons["seguridad_ambiente"]
+    grupo.notas = (datos.get("notas") or "").strip() or None
+    grupo.updated_at = now
+    db.flush()
+
+    if miembros_ids is not None:
+        nuevos = {int(i) for i in miembros_ids if str(i).isdigit()}
+        salen = [e for e in miembros(db, grupo.id) if e.id not in nuevos]
+        for e in salen:
+            e.grupo_id = None
+            _al_cambiar_de_grupo(db, e, grupo.id)
+            recalcular_criticidad(db, e)
+        for eid in nuevos:
+            e = db.get(MntEquipo, eid)
+            if e is None or e.sitio != grupo.sitio:
+                raise ErrorValidacion("Todos los equipos del grupo deben ser del mismo sitio.")
+            if e.grupo_id and e.grupo_id != grupo.id:
+                otro = db.get(MntGrupoRedundancia, e.grupo_id)
+                raise ErrorValidacion(f"{e.codigo} ya pertenece a «{otro.nombre}». Sácalo de ese grupo primero.")
+            e.grupo_id = grupo.id
+    tot = len(miembros(db, grupo.id))
+    if tot and _necesarios_max(grupo) > tot:
+        raise ErrorValidacion(f"El grupo tiene {tot} equipo(s) y pides {_necesarios_max(grupo)} operando: "
+                              f"nunca alcanzaría.")
+    recalcular_grupo(db, grupo.id)
+    return grupo
 
 
 def datos_redundancia(db: Session, original: MntEquipo) -> tuple[dict, dict]:
     """Datos para precargar el alta de una redundancia (copia de un equipo).
 
     Copia lo que comparten dos equipos gemelos y deja fuera lo que es propio de
-    cada unidad física (serie, foto, fecha de instalación). La copia queda con
-    el original como respaldo; el vínculo inverso lo decide el alta (§ respaldo
-    mutuo en `vincular_respaldo_mutuo`). Devuelve (datos de ficha, respuestas
-    de criticidad del original).
+    cada unidad física (serie, foto, fecha de instalación). La copia entra al
+    grupo del original; si el original no tiene grupo, se crea al dar de alta
+    (`asegurar_grupo_para_redundancia`). Devuelve (datos de ficha, respuestas).
     """
     nombres = [n for (n,) in db.query(MntEquipo.nombre).all()]
     datos = {
@@ -445,31 +678,34 @@ def datos_redundancia(db: Session, original: MntEquipo) -> tuple[dict, dict]:
         "voltaje": original.voltaje,
         "contratista_habitual_id": original.contratista_habitual_id,
         "notas": original.notas,
-        "respaldo_equipo_id": original.id,
+        "grupo_id": original.grupo_id,
     }
     ev = ultima_evaluacion(db, original.id)
     return datos, dict(ev.respuestas) if ev else {}
 
 
-def vincular_respaldo_mutuo(db: Session, original: MntEquipo, nuevo: MntEquipo) -> bool:
-    """Deja al original respaldado por su redundancia, si no tenía respaldo.
-
-    Si ya tenía uno (p. ej. al crear la tercera unidad de un trío), no se pisa:
-    cambiar el respaldo de un equipo existente sin que nadie lo decida sería
-    un cambio silencioso. Devuelve True si vinculó.
-    """
-    if original.sitio != nuevo.sitio or original.respaldo_equipo_id:
-        return False
-    original.respaldo_equipo_id = nuevo.id
-    original.updated_at = datetime.now()
-    return True
-
-
-def respaldo_incoherente(equipo: MntEquipo, evaluacion: Optional[MntCriticidadEvaluacion]) -> bool:
-    """El equipo tiene un respaldo registrado pero su encuesta dice «sin
-    respaldo»: la criticidad está calculada sobre un supuesto que ya no vale."""
-    return bool(equipo.respaldo_equipo_id and evaluacion
-                and (evaluacion.respuestas or {}).get("respaldo") == "a")
+def asegurar_grupo_para_redundancia(db: Session, original: MntEquipo) -> MntGrupoRedundancia:
+    """El grupo al que entra la redundancia: el del original, o uno nuevo con
+    el original adentro, heredando su consecuencia y su tipo de respaldo.
+    Nace pidiendo 1 operando (el par clásico); se ajusta en la pantalla del grupo."""
+    if original.grupo_id:
+        return db.get(MntGrupoRedundancia, original.grupo_id)
+    ev = ultima_evaluacion(db, original.id)
+    r = dict(ev.respuestas) if ev else {}
+    base = re.sub(r"\s*\d+\s*$", "", original.nombre).strip() or original.nombre
+    nombre, n = f"Grupo {base}", 2
+    while db.query(MntGrupoRedundancia).filter(MntGrupoRedundancia.nombre.ilike(nombre)).first():
+        nombre, n = f"Grupo {base} ({n})", n + 1
+    g = MntGrupoRedundancia(nombre=nombre[:120], sitio=original.sitio, necesarios=1,
+                            conmutacion="automatica" if r.get("respaldo") == "c" else "manual",
+                            impacto=r.get("impacto") or "a",
+                            seguridad_ambiente=r.get("seguridad_ambiente") or "no",
+                            notas="Creado al agregar una redundancia.", activo=True,
+                            created_at=datetime.now(), updated_at=datetime.now())
+    db.add(g)
+    db.flush()
+    original.grupo_id = g.id
+    return g
 
 
 def catalogo_tecnico(db: Session) -> list[dict]:
@@ -510,16 +746,19 @@ def guardar_foto(equipo: MntEquipo, contenido: bytes, mime: str) -> None:
     equipo.updated_at = datetime.now()
 
 
-def _registrar_evaluacion(db, equipo, respuestas, criticidad, tolerancia, autor, cuando) -> None:
+def _registrar_evaluacion(db, equipo, respuestas: dict, autor, cuando) -> None:
+    """Guarda lo que se respondió (con grupo: solo la reposición) y el
+    resultado nominal que da junto a la consecuencia y el margen del grupo."""
     db.add(MntCriticidadEvaluacion(
-        equipo_id=equipo.id,
-        respuestas=rules.validar_respuestas(respuestas),
-        resultado=criticidad,
-        tolerancia_horas=tolerancia,
+        equipo_id=equipo.id, respuestas=respuestas, resultado="?",
         regla_version=rules.REGLA_CRITICIDAD_VERSION,
-        evaluado_por=(autor or "").strip() or None,
-        evaluado_at=cuando,
+        evaluado_por=(autor or "").strip() or None, evaluado_at=cuando,
     ))
+    db.flush()
+    ev = ultima_evaluacion(db, equipo.id)
+    completas = respuestas_de(db, equipo, nominal=True)
+    criticidad, tolerancia = rules.calcular_criticidad(completas)
+    ev.resultado, ev.tolerancia_horas = criticidad, tolerancia
     equipo.criticidad = criticidad
 
 
@@ -534,16 +773,14 @@ def _aplicar_ficha(db: Session, equipo: MntEquipo, datos: dict) -> None:
     equipo.sistema_id = _id_valido(db, MntSistema, datos.get("sistema_id"), "sistema")
     equipo.contratista_habitual_id = _id_valido(db, MntContratista, datos.get("contratista_habitual_id"), "contratista")
 
-    respaldo_id = _id_o_none(datos.get("respaldo_equipo_id"))
-    if respaldo_id is not None:
-        respaldo = db.get(MntEquipo, respaldo_id)
-        if respaldo is None:
-            raise ErrorValidacion("El equipo de respaldo no existe.")
-        if equipo.id is not None and respaldo.id == equipo.id:
-            raise ErrorValidacion("Un equipo no puede ser su propio respaldo.")
-        if respaldo.sitio != equipo.sitio:
-            raise ErrorValidacion("El respaldo debe ser un equipo del mismo sitio.")
-    equipo.respaldo_equipo_id = respaldo_id
+    grupo_id = _id_o_none(datos.get("grupo_id"))
+    if grupo_id is not None:
+        g = db.get(MntGrupoRedundancia, grupo_id)
+        if g is None or not g.activo:
+            raise ErrorValidacion("El grupo de redundancia no existe.")
+        if g.sitio != equipo.sitio:
+            raise ErrorValidacion("El grupo debe ser del mismo sitio que el equipo.")
+    equipo.grupo_id = grupo_id
 
     potencia = (datos.get("potencia_kw") or "").strip()
     if potencia:
@@ -668,18 +905,24 @@ def crear_aviso(db: Session, *, equipo_id: int, condicion: str, origen: str,
         raise ErrorValidacion("Indica cómo está el equipo (detenido, con problemas o algo raro).")
     now = datetime.now()
     detectado_at = _validar_hora(detectado_at or now, "de detección")
-    # «¿Entró el respaldo?» solo tiene sentido si está detenido y tiene respaldo.
-    if condicion != "detenido" or not equipo.respaldo_equipo_id:
+    # «¿Entró el respaldo?» solo tiene sentido si está detenido y HAY respaldo
+    # disponible en este momento (en un grupo: otros operando que alcancen).
+    disponible = hay_respaldo(db, equipo, nominal=False, cuando=detectado_at)
+    if condicion != "detenido" or not disponible:
         respaldo_entro = None
     elif respaldo_entro not in rules.RESPALDO_ENTRO:
         respaldo_entro = "no_se"
+    # La prioridad usa la consecuencia de perder el servicio (sin respaldo) y
+    # el respaldo real del momento: si el que quedó solo falla, nace P1.
+    r = respuestas_de(db, equipo, sin_respaldo=True)
+    crit_servicio = rules.calcular_criticidad(r)[0] if r else equipo.criticidad
     aviso = MntAviso(
         equipo_id=equipo.id, origen=origen, detectado_at=detectado_at, condicion=condicion,
         respaldo_entro=respaldo_entro, descripcion=(descripcion or "").strip() or None,
         reportado_por_id=reportado_por_id,
         reportante_texto=(reportante_texto or "").strip() or None,
         foto=foto or None, audio=audio or None, telegram_chat_id=telegram_chat_id,
-        prioridad_sugerida=rules.prioridad_sugerida(equipo.criticidad, condicion, respaldo_entro),
+        prioridad_sugerida=rules.prioridad_sugerida(crit_servicio, condicion, respaldo_entro),
         estado="nuevo", created_at=now,
     )
     db.add(aviso)

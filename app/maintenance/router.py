@@ -24,7 +24,7 @@ from app.db.session import SessionLocal
 from app.maintenance import notify, rules, service, telegram_bot
 from app.maintenance.models import (
     SITIOS, SITIO_LABELS, MntAviso, MntContratista, MntEquipo, MntOt, MntPersona,
-    MntSistema, MntTipoEquipo, MntParametro, MntTelegramContacto,
+    MntSistema, MntTipoEquipo, MntParametro, MntTelegramContacto, MntGrupoRedundancia,
 )
 from sqlalchemy import func
 from app.maintenance.service import ErrorValidacion
@@ -75,15 +75,16 @@ def _encuesta_ctx() -> dict:
 
 def _ficha_ctx(db, sitio: Optional[str] = None, excluir_id: Optional[int] = None) -> dict:
     """Listas para los selects de la ficha de equipo."""
-    candidatos = [e for e in service.equipos(db) if e.id != excluir_id]
     # Se pasan también los inactivos: la plantilla los muestra solo si el equipo
     # ya los tiene. Si no, editar la ficha de un equipo cuyo sistema se
     # desactivó le borraría el sistema en silencio.
+    grupos = service.grupos(db)
     return {
         "sistemas": service.sistemas(db, solo_activos=False),
         "tipos": service.tipos(db, solo_activos=False),
         "contratistas": service.contratistas(db, solo_activos=False),
-        "respaldos": candidatos,
+        "grupos": grupos,
+        "conmutaciones": rules.CONMUTACIONES,
         "destinos_disp": service.destinos_disponibles(db),
         "catalogo_tecnico": service.catalogo_tecnico(db),
         "nombres_personas": [p.nombre for p in service.personas(db)],
@@ -160,6 +161,8 @@ def tablero(request: Request, sitio: str = ""):
             avisos=[{"a": a, "equipo": equipos.get(a.equipo_id), "ot_abierta": abierta_por_equipo.get(a.equipo_id),
                      "espera": (ahora - a.detectado_at).total_seconds() / 3600.0} for a in avisos],
             filas=filas, filas_cerradas=filas_cerr, ahora=ahora,
+            riesgo=[r for r in service.servicios_en_riesgo(db, ahora)
+                    if not sitio or r["grupo"].sitio == sitio],
             kpi={"avisos": len(avisos), "abiertas": len(abiertas),
                  "p1": sum(1 for o in abiertas if o.prioridad == "P1"),
                  "vencidas": sum(1 for f in filas if f["vencida"])},
@@ -180,7 +183,8 @@ def aviso_nuevo_form(request: Request, equipo_id: Optional[int] = None):
         return _render(
             "mantenimiento_aviso_nuevo.html", request, active="tablero",
             equipos=service.equipos(db), equipo_sel=equipo_id,
-            respaldos={e.id: e.respaldo_equipo_id for e in service.equipos(db)},
+            # Qué respaldo preguntar si se detiene (None = no hay disponible ahora).
+            respaldos={e.id: service.texto_respaldo(db, e) for e in service.equipos(db)},
             ahora=datetime.now(), nombres_personas=[p.nombre for p in service.personas(db)],
             **_ot_ctx(),
         )
@@ -503,15 +507,19 @@ def equipos_lista(request: Request, sitio: str = "", sistema_id: str = "", baja:
         sistemas = {s.id: s.nombre for s in service.sistemas(db, solo_activos=False)}
         tipos = {t.id: t.nombre for t in service.tipos(db, solo_activos=False)}
         todos = service.equipos(db)
+        # Criticidad efectiva (según cuántos de su grupo operan ahora).
+        efectiva = {e.id: service.criticidad_de(db, e, nominal=False) for e in lista if e.estado != "baja"}
         conteo = {
             "total": len(todos),
             "crianza": sum(1 for e in todos if e.sitio == "crianza"),
             "planta": sum(1 for e in todos if e.sitio == "planta"),
-            "A": sum(1 for e in todos if e.criticidad == "A"),
+            "A": sum(1 for e in todos if (efectiva.get(e.id) or e.criticidad) == "A"),
         }
         return _render(
             "mantenimiento_equipos.html", request, active="equipos",
-            equipos=lista, sistemas_map=sistemas, tipos_map=tipos,
+            equipos=lista, sistemas_map=sistemas, tipos_map=tipos, efectiva=efectiva,
+            grupos_map={g.id: g for g in service.grupos(db, solo_activos=False)},
+            riesgo=service.servicios_en_riesgo(db),
             sistemas=service.sistemas(db, solo_activos=False), conteo=conteo,
             f_sitio=sitio, f_sistema=sis_id, f_baja=bool(baja),
         )
@@ -532,7 +540,7 @@ def equipo_nuevo_form(request: Request, sitio: str = "crianza", desde: Optional[
             sitio = original.sitio
             extra = {"previo": datos, "previo_resp": resp, "destinos_sel": datos["destinos"],
                      "redundancia_de": original,
-                     "original_con_respaldo": bool(original.respaldo_equipo_id)}
+                     "grupo_original": db.get(MntGrupoRedundancia, original.grupo_id) if original.grupo_id else None}
         return _render(
             "mantenimiento_equipo_nuevo.html", request, active="equipos",
             sitio=sitio if sitio in SITIOS else "crianza",
@@ -551,30 +559,31 @@ async def equipo_nuevo(request: Request):
     respuestas = _respuestas(form)
     db = SessionLocal()
     try:
+        # Redundancia: la copia entra al grupo del original (se crea si no tiene).
+        original = db.get(MntEquipo, int(datos["redundancia_de"])) if str(datos.get("redundancia_de", "")).isdigit() else None
+        grupo = service.asegurar_grupo_para_redundancia(db, original) if original is not None else None
+        if grupo is not None:
+            datos["grupo_id"] = str(grupo.id)
         equipo = service.crear_equipo(db, datos, respuestas, origen="crianza",
                                       autor=datos.get("autor"))
         msg = f"Equipo {equipo.codigo} creado · criticidad {equipo.criticidad}."
-        original = db.get(MntEquipo, int(datos["redundancia_de"])) if datos.get("redundancia_de", "").isdigit() else None
-        if original is not None and datos.get("respaldo_mutuo"):
-            if service.vincular_respaldo_mutuo(db, original, equipo):
-                msg += (f" {original.codigo} quedó respaldado por {equipo.codigo}: revisa su criticidad,"
-                        f" porque su encuesta puede seguir diciendo «sin respaldo».")
-            else:
-                msg += f" {original.codigo} ya tenía respaldo y no se cambió."
+        if grupo is not None:
+            msg += (f" Entró al grupo «{grupo.nombre}» con {original.codigo}. Revisa en el grupo cuántos "
+                    f"se necesitan operando.")
         db.commit()
         return _volver(f"{PREFIX}/equipos/{equipo.id}", msg=msg)
     except ErrorValidacion as e:
         db.rollback()
         # Se vuelve a mostrar el formulario con lo que ya se había escrito:
         # perder una ficha completa por una respuesta faltante desanima a usarla.
-        original = db.get(MntEquipo, int(datos["redundancia_de"])) if datos.get("redundancia_de", "").isdigit() else None
+        original = db.get(MntEquipo, int(datos["redundancia_de"])) if str(datos.get("redundancia_de", "")).isdigit() else None
         return _render(
             "mantenimiento_equipo_nuevo.html", request, active="equipos",
             sitio=datos.get("sitio") if datos.get("sitio") in SITIOS else "crianza",
             siguiente=rules.siguiente_codigo([c for (c,) in db.query(MntEquipo.codigo).all()]),
             previo=datos, previo_resp=respuestas, destinos_sel=datos["destinos"], error_form=str(e),
             redundancia_de=original,
-            original_con_respaldo=bool(original and original.respaldo_equipo_id),
+            grupo_original=db.get(MntGrupoRedundancia, original.grupo_id) if original and original.grupo_id else None,
             **_ficha_ctx(db),
         )
     finally:
@@ -590,17 +599,18 @@ def equipo_ficha(request: Request, equipo_id: int):
             return _volver(f"{PREFIX}/equipos", err="Ese equipo no existe.")
         ev = service.ultima_evaluacion(db, equipo.id)
         destinos = service.destinos_de(db, equipo.id)
+        grupo = db.get(MntGrupoRedundancia, equipo.grupo_id) if equipo.grupo_id else None
         return _render(
             "mantenimiento_equipo.html", request, active="equipos",
             equipo=equipo, evaluacion=ev,
             historial=service.historial_criticidad(db, equipo.id),
             destinos_sel=destinos, destinos_labels=service.etiquetas_destinos(db, destinos),
-            respaldo_incoherente=service.respaldo_incoherente(equipo, ev),
             ots_equipo=db.query(MntOt).filter(MntOt.equipo_id == equipo.id)
                         .order_by(MntOt.inicio_at.desc()).limit(30).all(),
             **_ot_ctx(),
-            respaldo=db.get(MntEquipo, equipo.respaldo_equipo_id) if equipo.respaldo_equipo_id else None,
-            respaldado_por_este=[e for e in service.equipos(db) if e.respaldo_equipo_id == equipo.id],
+            grupo=grupo, estado_grupo=service.estado_grupo(db, grupo) if grupo else None,
+            criticidad_efectiva=service.criticidad_de(db, equipo, nominal=False),
+            respaldo_externo=(not grupo and ev and (ev.respuestas or {}).get("respaldo") in ("b", "c")),
             **_ficha_ctx(db, excluir_id=equipo.id),
         )
     finally:
@@ -617,9 +627,9 @@ async def equipo_editar(request: Request, equipo_id: int):
             return _volver(f"{PREFIX}/equipos", err="Ese equipo no existe.")
         datos = dict(form)
         datos["destinos"] = form.getlist("destino")
-        service.actualizar_equipo(db, equipo, datos)
+        aviso = service.actualizar_equipo(db, equipo, datos)
         db.commit()
-        return _volver(f"{PREFIX}/equipos/{equipo_id}", msg="Ficha guardada.")
+        return _volver(f"{PREFIX}/equipos/{equipo_id}", msg="Ficha guardada." + (f" {aviso}" if aviso else ""))
     except ErrorValidacion as e:
         db.rollback()
         return _volver(f"{PREFIX}/equipos/{equipo_id}", err=str(e))
@@ -691,6 +701,79 @@ def equipo_foto_ver(equipo_id: int):
             return Response(status_code=404)
         return Response(content=equipo.foto, media_type=equipo.foto_mime or "image/jpeg",
                         headers={"Cache-Control": "no-cache"})
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Grupos de redundancia
+# ---------------------------------------------------------------------------
+def _grupo_ctx(db, grupo=None, sitio="crianza") -> dict:
+    sitio = grupo.sitio if grupo else sitio
+    # Candidatos: equipos del sitio sin grupo, más los que ya están en este.
+    candidatos = [e for e in service.equipos(db, sitio)
+                  if not e.grupo_id or (grupo and e.grupo_id == grupo.id)]
+    return {"sitio": sitio, "candidatos": candidatos, "conmutaciones": rules.CONMUTACIONES,
+            "noche": (service.parametros(db).get("noche_desde"), service.parametros(db).get("noche_hasta")),
+            **_encuesta_ctx()}
+
+
+@router.get("/grupos", response_class=HTMLResponse)
+def grupos_lista(request: Request):
+    db = SessionLocal()
+    try:
+        estados = [service.estado_grupo(db, g) for g in service.grupos(db)]
+        return _render("mantenimiento_grupos.html", request, active="grupos", estados=estados,
+                       es_noche=service.es_noche(db))
+    finally:
+        db.close()
+
+
+@router.get("/grupos/nuevo", response_class=HTMLResponse)
+def grupo_nuevo_form(request: Request, sitio: str = "crianza"):
+    db = SessionLocal()
+    try:
+        return _render("mantenimiento_grupo.html", request, active="grupos", grupo=None,
+                       sel=[], **_grupo_ctx(db, sitio=sitio if sitio in SITIOS else "crianza"))
+    finally:
+        db.close()
+
+
+@router.get("/grupos/{grupo_id}", response_class=HTMLResponse)
+def grupo_ficha(request: Request, grupo_id: int):
+    db = SessionLocal()
+    try:
+        g = db.get(MntGrupoRedundancia, grupo_id)
+        if g is None:
+            return _volver(f"{PREFIX}/grupos", err="Ese grupo no existe.")
+        est = service.estado_grupo(db, g)
+        return _render("mantenimiento_grupo.html", request, active="grupos", grupo=g, est=est,
+                       sel=[e.id for e in est["miembros"]],
+                       criticidades={e.id: (e.criticidad, service.criticidad_de(db, e, nominal=False))
+                                     for e in est["miembros"]},
+                       **_grupo_ctx(db, g))
+    finally:
+        db.close()
+
+
+# Los decoradores se registran de abajo hacia arriba: "/grupos/nuevo" debe
+# quedar registrado antes que "/grupos/{grupo_id}", o este lo capturaría.
+@router.post("/grupos/{grupo_id}")
+@router.post("/grupos/nuevo")
+async def grupo_guardar(request: Request, grupo_id: Optional[int] = None):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        g = db.get(MntGrupoRedundancia, grupo_id) if grupo_id else None
+        datos = dict(form)
+        datos.update({"impacto": form.get("q_impacto"), "seguridad_ambiente": form.get("q_seguridad_ambiente")})
+        g = service.guardar_grupo(db, datos, g, miembros_ids=form.getlist("miembro"))
+        db.commit()
+        return _volver(f"{PREFIX}/grupos/{g.id}", msg=f"Grupo «{g.nombre}» guardado.")
+    except ErrorValidacion as e:
+        db.rollback()
+        destino = f"{PREFIX}/grupos/{grupo_id}" if grupo_id else f"{PREFIX}/grupos/nuevo?sitio={form.get('sitio') or 'crianza'}"
+        return _volver(destino, err=str(e))
     finally:
         db.close()
 

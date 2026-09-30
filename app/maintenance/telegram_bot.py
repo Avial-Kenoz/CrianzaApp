@@ -234,10 +234,10 @@ class Bot:
             if clave == "c" and valor in rules.CONDICIONES:
                 conv.condicion = valor
                 equipo = db.get(MntEquipo, conv.equipo_id)
-                if valor == "detenido" and equipo.respaldo_equipo_id:
-                    resp = db.get(MntEquipo, equipo.respaldo_equipo_id)
+                resp = service.texto_respaldo(db, equipo) if valor == "detenido" else None
+                if resp:
                     conv.paso = "respaldo"
-                    return self.api.enviar(chat_id, f"¿Entró el respaldo ({resp.codigo} · {resp.nombre})?",
+                    return self.api.enviar(chat_id, f"¿Entró {resp}?",
                                            [[("Sí", "r:si"), ("No", "r:no"), ("No sé", "r:no_se")]])
                 return self._preguntar_detalle(conv)
             if clave == "r" and valor in rules.RESPALDO_ENTRO:

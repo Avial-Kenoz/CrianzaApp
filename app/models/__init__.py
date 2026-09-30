@@ -73,6 +73,7 @@ from app.maintenance.models import (
     MntTipoEquipo,
     MntContratista,
     MntPersona,
+    MntGrupoRedundancia,
     MntEquipo,
     MntEquipoDestino,
     MntCriticidadEvaluacion,

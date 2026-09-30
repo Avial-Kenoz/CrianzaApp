@@ -90,10 +90,10 @@ def limpiar():
         f"delete from mnt_ot_eventos where ot_id in (select id from mnt_ots where equipo_id in {eq})",
         f"delete from mnt_avisos where equipo_id in {eq}",
         f"delete from mnt_ots where equipo_id in {eq}",
-        f"update mnt_equipos set respaldo_equipo_id = null where respaldo_equipo_id in {eq}",
         f"delete from mnt_criticidad_evaluaciones where equipo_id in {eq}",
         f"delete from mnt_equipo_destinos where equipo_id in {eq}",
         "delete from mnt_equipos where nombre like 'ZZ %'",
+        "delete from mnt_grupos_redundancia where nombre like 'ZZ %'",
         "delete from mnt_notificaciones where persona_id in (select id from mnt_personas where nombre like 'ZZ %')",
         "delete from mnt_personas where nombre like 'ZZ %'",
         f"delete from mnt_telegram_contactos where telegram_user_id in ('{UID}', '{UID2}')",
@@ -113,14 +113,17 @@ class BotTest(unittest.TestCase):
         db = SessionLocal()
         cls.respaldo = service.crear_equipo(db, {"sitio": "crianza", "nombre": "ZZ Soplador R"}, R_A,
                                             origen="crianza", autor="test")
-        db.flush()
-        cls.eq = service.crear_equipo(db, {"sitio": "crianza", "nombre": "ZZ Soplador T",
-                                           "respaldo_equipo_id": str(cls.respaldo.id)}, R_A,
+        cls.eq = service.crear_equipo(db, {"sitio": "crianza", "nombre": "ZZ Soplador T"}, R_A,
                                       origen="crianza", autor="test")
+        # Los dos sopladores se respaldan entre sí: un grupo que necesita 1 operando.
+        service.guardar_grupo(db, {"nombre": "ZZ Grupo T", "sitio": "crianza", "necesarios": "1",
+                                   "conmutacion": "manual", "impacto": "a", "seguridad_ambiente": "no"},
+                              miembros_ids=[cls.respaldo.id, cls.eq.id])
         cls.eq_planta = service.crear_equipo(db, {"sitio": "planta", "nombre": "ZZ Selladora T"}, R_A,
                                              origen="crianza", autor="test")
         db.commit()
         cls.eq_id, cls.eq_codigo = cls.eq.id, cls.eq.codigo
+        cls.resp_codigo = cls.respaldo.codigo
         cls.planta_id = cls.eq_planta.id
         db.close()
 
@@ -154,8 +157,8 @@ class BotTest(unittest.TestCase):
         self.bot.procesar(msg(f"/start {self.eq_codigo.lower()}"))           # el código no distingue mayúsculas
         self.assertIn("ZZ Soplador T", self.api.ultimo()["texto"])
         self.bot.procesar(boton("c:detenido", self.api))
-        self.assertIn("Entró el respaldo", self.api.ultimo()["texto"])
-        self.assertIn("ZZ Soplador R", self.api.ultimo()["texto"])
+        self.assertIn("Entró otra unidad del grupo", self.api.ultimo()["texto"])
+        self.assertIn(self.resp_codigo, self.api.ultimo()["texto"])
         self.bot.procesar(boton("r:no", self.api))
         self.assertIn("Terminar", str(self.api.ultimo()["botones"]))
         self.bot.procesar(msg("ZZ no parte, huele a quemado"))
@@ -270,6 +273,77 @@ class BotTest(unittest.TestCase):
         # ya vinculado: el bot lo saluda por su nombre de persona
         self.bot.procesar(msg("/start"))
         self.assertIn("Hola ZZ Operario", self.api.ultimo()["texto"])
+
+
+class GrupoServicioTest(unittest.TestCase):
+    """El ejemplo del encargado: con redundancia el equipo es menos crítico; si
+    su gemelo falla, el que queda solo pasa a crítico y su aviso nace P1."""
+
+    @classmethod
+    def setUpClass(cls):
+        limpiar()
+        db = SessionLocal()
+        R3 = {"reposicion": "c"}                       # en grupo solo se responde la reposición
+        a = service.crear_equipo(db, {"sitio": "crianza", "nombre": "ZZ Bomba G1"}, R_A, origen="crianza", autor="t")
+        b = service.crear_equipo(db, {"sitio": "crianza", "nombre": "ZZ Bomba G2"}, R_A, origen="crianza", autor="t")
+        g = service.guardar_grupo(db, {"nombre": "ZZ Grupo G", "sitio": "crianza", "necesarios": "1",
+                                       "conmutacion": "automatica", "impacto": "a", "seguridad_ambiente": "no"},
+                                  miembros_ids=[a.id, b.id])
+        c = service.crear_equipo(db, {"sitio": "crianza", "nombre": "ZZ Bomba G3", "grupo_id": str(g.id)}, R3,
+                                 origen="crianza", autor="t")
+        db.commit()
+        cls.a, cls.b, cls.c, cls.g = a.id, b.id, c.id, g.id
+        db.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        limpiar()
+
+    def test_ciclo_completo(self):
+        from app.maintenance.models import MntEquipo, MntGrupoRedundancia
+        db = SessionLocal()
+        try:
+            a, b, c = db.get(MntEquipo, self.a), db.get(MntEquipo, self.b), db.get(MntEquipo, self.c)
+            # 3 equipos, 1 necesario, automática → con respaldo: B (impacto <2h + automático)
+            self.assertEqual({a.criticidad, b.criticidad, c.criticidad}, {"B"})
+            self.assertEqual(c.grupo_id, self.g)
+            # necesitar 4 de 3 es imposible
+            with self.assertRaises(service.ErrorValidacion):
+                service.guardar_grupo(db, {"nombre": "ZZ Grupo G", "necesarios": "4", "conmutacion": "manual",
+                                           "impacto": "a", "seguridad_ambiente": "no"},
+                                      db.get(MntGrupoRedundancia, self.g))
+            db.rollback()
+
+            # falla A (con otros operando) → P2 si el respaldo entró
+            av = service.crear_aviso(db, equipo_id=a.id, condicion="detenido", origen="web", respaldo_entro="si")
+            db.commit()
+            self.assertEqual(av.prioridad_sugerida, "P2")
+            self.assertEqual(service.criticidad_de(db, b, nominal=False), "B")   # quedan B y C: aún hay respaldo
+            # falla B → queda solo C: sin respaldo, C pasa a A ahora
+            av = service.crear_aviso(db, equipo_id=b.id, condicion="detenido", origen="web", respaldo_entro="si")
+            db.commit()
+            self.assertEqual(av.prioridad_sugerida, "P2")                      # C seguía operando
+            self.assertEqual(service.criticidad_de(db, c, nominal=False), "A")
+            self.assertEqual(c.criticidad, "B")                                # la nominal no cambia
+            riesgo = [r for r in service.servicios_en_riesgo(db) if r["grupo"].id == self.g]
+            self.assertEqual(riesgo[0]["estado"], "sin_respaldo")
+            self.assertIsNone(service.texto_respaldo(db, c))                   # el bot no pregunta respaldo
+            # falla C, el que quedó solo → P1 aunque su nominal sea B
+            av = service.crear_aviso(db, equipo_id=c.id, condicion="detenido", origen="web", respaldo_entro="si")
+            db.commit()
+            self.assertIsNone(av.respaldo_entro)                              # no había respaldo que entrara
+            self.assertEqual(av.prioridad_sugerida, "P1")
+            riesgo = [r for r in service.servicios_en_riesgo(db) if r["grupo"].id == self.g]
+            self.assertEqual(riesgo[0]["estado"], "insuficiente")             # 0 operando de 1 necesario
+
+            # C sale del grupo: hereda la consecuencia y queda «sin respaldo» (A)
+            msg = service.actualizar_equipo(db, c, {"nombre": "ZZ Bomba G3", "grupo_id": ""})
+            db.commit()
+            self.assertIn("salió de", msg)
+            self.assertEqual(c.criticidad, "A")
+            self.assertEqual(service.ultima_evaluacion(db, c.id).respuestas["respaldo"], "a")
+        finally:
+            db.close()
 
 
 class NotifyTest(unittest.TestCase):

@@ -51,6 +51,26 @@ def _start_maintenance_bot() -> None:
     maintenance_bot.iniciar()
 
 
+@app.on_event("startup")
+def _recalcular_criticidades() -> None:
+    # La criticidad nominal guardada se pone al día con la regla vigente (p. ej.
+    # tras pasar a grupos de redundancia). Idempotente; nunca impide arrancar.
+    import logging
+    from app.db.session import SessionLocal
+    from app.maintenance import service as maintenance_service
+    db = SessionLocal()
+    try:
+        n = maintenance_service.recalcular_todas(db)
+        db.commit()
+        if n:
+            logging.getLogger("mnt").info("mantenimiento: %s criticidades puestas al día", n)
+    except Exception:
+        db.rollback()
+        logging.getLogger("mnt").exception("mantenimiento: no se pudieron recalcular las criticidades")
+    finally:
+        db.close()
+
+
 @app.on_event("shutdown")
 def _stop_maintenance_bot() -> None:
     maintenance_bot.detener()

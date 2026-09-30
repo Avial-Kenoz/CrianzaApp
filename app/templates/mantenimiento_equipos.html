@@ -25,8 +25,9 @@
     <div class="kpi hi"><div class="n">{{ conteo.total }}</div><div class="l">Equipos activos</div></div>
     <div class="kpi"><div class="n">{{ conteo.crianza }}</div><div class="l">En Crianza</div></div>
     <div class="kpi"><div class="n">{{ conteo.planta }}</div><div class="l">En Planta</div></div>
-    <div class="kpi {{ 'bad' if conteo.A }}"><div class="n">{{ conteo.A }}</div><div class="l">Criticidad A</div></div>
+    <div class="kpi {{ 'bad' if conteo.A }}"><div class="n">{{ conteo.A }}</div><div class="l">Criticidad A ahora</div></div>
   </div>
+  {% include '_mnt_riesgo.html' %}
 
   <div class="section-title">Listado</div>
   <form class="toolbar" method="get">
@@ -53,7 +54,7 @@
     {% if equipos %}
     <table>
       <thead>
-        <tr><th>Código</th><th>Equipo</th><th>Sitio</th><th>Sistema</th><th>Tipo</th><th>Criticidad</th><th>Estado</th></tr>
+        <tr><th>Código</th><th>Equipo</th><th>Sitio</th><th>Sistema</th><th>Grupo</th><th title="Nominal (con el grupo completo) → ahora">Criticidad</th><th>Estado</th></tr>
       </thead>
       <tbody>
         {% for e in equipos %}
@@ -65,8 +66,12 @@
           </td>
           <td><span class="pill sitio-{{ e.sitio }}">{{ sitio_labels[e.sitio] }}</span></td>
           <td>{{ sistemas_map.get(e.sistema_id, '—') }}</td>
-          <td>{{ tipos_map.get(e.tipo_id, '—') }}</td>
-          <td>{% if e.criticidad %}<span class="pill crit-{{ e.criticidad }}">{{ criticidad_labels[e.criticidad] }}</span>{% else %}—{% endif %}</td>
+          <td>{% if e.grupo_id and grupos_map.get(e.grupo_id) %}<a class="row-link mono" href="{{ prefix }}/grupos/{{ e.grupo_id }}">{{ grupos_map[e.grupo_id].nombre }}</a>{% else %}—{% endif %}</td>
+          <td>
+            {% if e.criticidad %}<span class="pill crit-{{ e.criticidad }}">{{ criticidad_labels[e.criticidad] }}</span>{% else %}—{% endif %}
+            {% set ef = efectiva.get(e.id) %}
+            {% if ef and ef != e.criticidad %}<span class="pill crit-{{ ef }}" title="Criticidad efectiva: según cuántos de su grupo operan ahora">→ {{ ef }} ahora</span>{% endif %}
+          </td>
           <td><span class="pill est-{{ e.estado }}">{{ estados_equipo.get(e.estado, e.estado) }}</span></td>
         </tr>
         {% endfor %}

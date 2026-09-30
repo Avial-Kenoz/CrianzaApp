@@ -12,6 +12,39 @@ def _r(impacto, respaldo, reposicion="c", seguridad="no"):
             "reposicion": reposicion, "seguridad_ambiente": seguridad}
 
 
+class GrupoTest(unittest.TestCase):
+    def test_noche_cruza_medianoche(self):
+        self.assertTrue(rules.es_noche(22.0, 20.0, 8.0))
+        self.assertTrue(rules.es_noche(3.5, 20.0, 8.0))
+        self.assertFalse(rules.es_noche(12.0, 20.0, 8.0))
+        self.assertFalse(rules.es_noche(8.0, 20.0, 8.0))       # 08:00 ya es día
+        self.assertTrue(rules.es_noche(1.0, 0.0, 6.0))         # ventana sin cruce
+        self.assertFalse(rules.es_noche(1.0, None, 6.0))
+
+    def test_necesarios_segun_hora(self):
+        self.assertEqual(rules.necesarios_ahora(3, 4, noche=True), 4)
+        self.assertEqual(rules.necesarios_ahora(3, 4, noche=False), 3)
+        self.assertEqual(rules.necesarios_ahora(1, None, noche=True), 1)
+
+    def test_respaldo_por_margen(self):
+        self.assertEqual(rules.respaldo_por_margen(2, "manual"), "b")
+        self.assertEqual(rules.respaldo_por_margen(1, "automatica"), "c")
+        self.assertEqual(rules.respaldo_por_margen(0, "automatica"), "a")
+        self.assertEqual(rules.respaldo_por_margen(-1, "manual"), "a")
+        self.assertEqual([rules.estado_margen(m) for m in (2, 0, -1)],
+                         ["holgado", "sin_respaldo", "insuficiente"])
+
+    def test_ejemplo_del_usuario(self):
+        """Soplador crítico: con redundancia automática baja a B; sin margen, A."""
+        base = {"impacto": "a", "reposicion": "c", "seguridad_ambiente": "no"}
+        con = rules.calcular_criticidad({**base, "respaldo": rules.respaldo_por_margen(1, "automatica")})[0]
+        sin = rules.calcular_criticidad({**base, "respaldo": rules.respaldo_por_margen(0, "automatica")})[0]
+        self.assertEqual((con, sin), ("B", "A"))
+        # con conmutación manual, un impacto < 2 h sigue siendo A (tabla §4)
+        man = rules.calcular_criticidad({**base, "respaldo": rules.respaldo_por_margen(1, "manual")})[0]
+        self.assertEqual(man, "A")
+
+
 class CriticidadTest(unittest.TestCase):
     def test_matriz_base(self):
         esperado = {

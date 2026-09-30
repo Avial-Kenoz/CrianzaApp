@@ -1,0 +1,15 @@
+{# Servicios redundantes sin respaldo ahora. Espera `riesgo` = lista de
+   service.estado_grupo con margen ≤ 0. #}
+{% if riesgo %}
+<div class="note bad" style="margin:12px 0 0">
+  {% for r in riesgo %}
+  <div style="{{ 'margin-top:6px' if not loop.first }}">
+    ⚠️ <a class="row-link" href="{{ prefix }}/grupos/{{ r.grupo.id }}"><b>{{ r.grupo.nombre }}</b></a>
+    {{ 'está sin respaldo' if r.margen == 0 else 'no tiene los equipos necesarios' }}:
+    operan {{ r.operando | length }} de {{ r.necesarios }} necesarios{{ ' (noche)' if r.noche }}.
+    {% if r.detenidos %}Detenidos: {% for d in r.detenidos %}<a class="row-link" href="{{ prefix }}/equipos/{{ d.id }}">{{ d.codigo }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
+    {% if r.margen == 0 %}Si falla otro, el servicio se cae: sus avisos nacen P1.{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

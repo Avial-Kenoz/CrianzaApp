@@ -99,14 +99,49 @@ class MntPersona(Base):
     updated_at = Column(TIMESTAMP)
 
 
+class MntGrupoRedundancia(Base):
+    """El servicio que prestan varios equipos que se respaldan entre sí.
+
+    Reemplaza el respaldo «de a pares»: la redundancia suele ser simétrica (el
+    rol de principal rota) o N+1 (seis sopladores, con uno o más de sobra).
+
+    - `necesarios` / `necesarios_noche`: cuántos deben estar operando. De noche
+      rige el segundo si está definido (horario en `mnt_parametros`).
+    - `conmutacion`: automática incluye equipos que ya operan en paralelo.
+    - `impacto` y `seguridad_ambiente`: la consecuencia de perder el servicio,
+      respondida una vez para el grupo (Q1 y Q4 de la encuesta).
+    """
+
+    __tablename__ = "mnt_grupos_redundancia"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    nombre = Column(String(120), nullable=False, unique=True)
+    sitio = Column(String(10), nullable=False)
+    necesarios = Column(Integer, nullable=False, default=1)
+    necesarios_noche = Column(Integer)
+    conmutacion = Column(String(12), nullable=False, default="manual")
+    impacto = Column(String(1), nullable=False)
+    seguridad_ambiente = Column(String(2), nullable=False)
+    notas = Column(Text)
+    activo = Column(Boolean, nullable=False, default=True)
+    created_at = Column(TIMESTAMP)
+    updated_at = Column(TIMESTAMP)
+
+
 class MntEquipo(Base):
     """El activo desde el punto de vista del mantenimiento (no contable).
 
     `codigo` (EQ-001…) es un correlativo único para ambos sitios: va impreso en
     el QR, así que no puede repetirse entre Crianza y Planta.
 
-    `criticidad` es una copia del resultado vigente de la encuesta; la fuente es
-    `mnt_criticidad_evaluaciones`, que guarda las respuestas y el historial.
+    `criticidad` es la criticidad **nominal** (con su grupo de redundancia
+    completo), recalculada por `service.recalcular_criticidad`. La **efectiva**
+    (según cuántos del grupo están operando ahora) se calcula al vuelo y no se
+    guarda. Las respuestas y el historial están en `mnt_criticidad_evaluaciones`.
+
+    La columna `respaldo_equipo_id` sigue en la tabla pero ya no se mapea: la
+    reemplazó `grupo_id` (migración 20260930_02) y se borra cuando el proceso de
+    producción deje de usarla.
     """
 
     __tablename__ = "mnt_equipos"
@@ -124,7 +159,7 @@ class MntEquipo(Base):
     potencia_kw = Column(Numeric(8, 2))
     voltaje = Column(String(20))
     fecha_instalacion = Column(Date)
-    respaldo_equipo_id = Column(BigInteger, ForeignKey("mnt_equipos.id"))
+    grupo_id = Column(BigInteger, ForeignKey("mnt_grupos_redundancia.id"), index=True)
     contratista_habitual_id = Column(BigInteger, ForeignKey("mnt_contratistas.id"))
     foto = Column(LargeBinary)
     foto_mime = Column(String(40))

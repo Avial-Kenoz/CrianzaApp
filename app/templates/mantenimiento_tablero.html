@@ -26,6 +26,7 @@
     <div class="kpi {{ 'bad' if kpi.p1 }}"><div class="n">{{ kpi.p1 }}</div><div class="l">P1 abiertas</div></div>
     <div class="kpi {{ 'bad' if kpi.vencidas }}"><div class="n">{{ kpi.vencidas }}</div><div class="l">Fuera de plazo</div></div>
   </div>
+  {% include '_mnt_riesgo.html' %}
 
   <form class="toolbar" method="get" style="margin-top:16px">
     <div class="fld">

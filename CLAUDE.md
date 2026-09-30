@@ -197,9 +197,19 @@ Invariantes:
   `mnt_equipo_destinos` (varios por equipo: los sopladores centralizados atienden todo), con tres
   niveles `sitio:crianza` / `unit:<id>` / `pond:<id>`; `rules.normalizar_destinos` descarta lo
   que queda cubierto por un nivel más amplio.
-- **Redundancia** (`/equipos/nuevo?desde=<id>`) precarga una copia y ofrece respaldo mutuo, pero
-  **nunca pisa** el respaldo que el original ya tenía. La ficha avisa si un equipo tiene respaldo
-  y su encuesta dice «sin respaldo» (`service.respaldo_incoherente`).
+- **Redundancia = grupos, no pares** (`mnt_grupos_redundancia`, migración 20260930_02). Un grupo
+  es el *servicio*: `necesarios` (día) / `necesarios_noche` (horario en `mnt_parametros`
+  `noche_desde/hasta`), conmutación, y la **consecuencia** (Q1 impacto, Q4 seguridad) respondida
+  una vez para el grupo. Un equipo en grupo responde solo Q3 (reposición); Q2 (respaldo) sale del
+  margen del grupo. Q2 manual queda solo para equipos sin grupo con un respaldo que no es equipo.
+- **Criticidad nominal vs efectiva.** `mnt_equipos.criticidad` = nominal (grupo completo, caso
+  noche); se recalcula al cambiar evaluaciones o grupos y **al arrancar la app**
+  (`service.recalcular_todas`). La efectiva (`criticidad_de(nominal=False)`) mira cuántos del
+  grupo operan ahora y no se guarda. **La prioridad del aviso** usa la criticidad *del servicio
+  sin respaldo* + el respaldo disponible en ese momento: si el que quedó solo falla, nace P1.
+- ⚠️ **`mnt_equipos.respaldo_equipo_id` sigue en la tabla pero no está mapeada** (expandir y
+  contraer): la usa el código viejo mientras no se despliegue. Falta la migración que la borra,
+  y antes de borrarla debe re-convertir en grupos los vínculos creados entre medio.
 - **Los tiempos salen de `mnt_ot_eventos`, nunca de columnas sueltas.** Cada cambio guarda
   `ocurrido_at` (editable) y `registrado_at`; `rules.tramos` reparte las horas por estado
   (reacción = detección → acuse). Por eso una hora nueva no puede ser anterior al último evento
@@ -221,10 +231,13 @@ Invariantes:
   solo puede escribir a quien le hizo /start: HTTP 403 en la bitácora = falta el /start.
 - Sistemas y tipos crecen desde la ficha («+ Nuevo…», `POST /catalogos/{que}/rapido`, JSON) y se
   limpian con **fusionar** (mueve equipos y desactiva el duplicado; no borra).
-- ⚠️ **Producción corre desde este mismo árbol de trabajo** (sin `--reload`): cualquier reinicio,
-  del watchdog o manual, carga lo que haya en disco, terminado o no. Los datos `mnt_*` de
-  producción ya son reales (desde 2026-09-29): para limpiar pruebas, borrar por prefijo (`ZZ …`),
-  nunca la tabla entera.
+- ⚠️ **Producción corre desde `Desktop/CrianzaApp`** (sin `--reload`): cualquier reinicio, del
+  watchdog o manual, carga lo que haya en disco. Por eso **el desarrollo va en otro árbol**:
+  `git worktree` en `Desktop/CrianzaApp-dev` (usa el `.venv` de `CrianzaApp`), y producción solo
+  cambia al llevarle una rama terminada. Las migraciones igual van contra la BD compartida: deben
+  ser compatibles con el código que está corriendo (solo agregar; borrar después de desplegar).
+  Los datos `mnt_*` de producción son reales (desde 2026-09-29): para limpiar pruebas, borrar
+  por prefijo (`ZZ …`), nunca la tabla entera.
 - El QR apunta a `t.me/<bot>?start=EQ-xxx` y **no se imprime** sin `MNT_TELEGRAM_BOT_USERNAME`
   (un QR con destino equivocado queda pegado en terreno).
 - Para probar sin los schedulers de calidad de agua (que en `start_dev.cmd` correrían en paralelo

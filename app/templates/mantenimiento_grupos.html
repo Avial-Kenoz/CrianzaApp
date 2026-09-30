@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grupos de redundancia – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb">Mantenimiento</div>
+  <div class="page-title">Grupos de redundancia</div>
+  <div class="page-sub">
+    Cada grupo es un <b>servicio</b> que prestan varios equipos que se respaldan entre sí: dos bombas gemelas,
+    o seis sopladores de los que bastan algunos. La criticidad de cada equipo cambia según cuántos del grupo
+    estén operando: si el que queda solo falla, su aviso nace P1.
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_mnt_tabs.html' %}
+
+  <div class="toolbar">
+    <span class="mono" style="align-self:center">Ahora rige el horario de <b>{{ 'noche' if es_noche else 'día' }}</b>.</span>
+    <div style="flex:1"></div>
+    <a class="btn btn-primary" href="{{ prefix }}/grupos/nuevo">+ Nuevo grupo</a>
+  </div>
+
+  <div class="card">
+    {% if estados %}
+    <table>
+      <thead><tr><th>Servicio</th><th>Sitio</th><th>Equipos</th><th class="num">Operan</th><th class="num">Necesarios</th><th>Estado</th><th>Conmutación</th></tr></thead>
+      <tbody>
+        {% for s in estados %}{% set g = s.grupo %}
+        <tr>
+          <td><a class="row-link" href="{{ prefix }}/grupos/{{ g.id }}">{{ g.nombre }}</a></td>
+          <td><span class="pill sitio-{{ g.sitio }}">{{ sitio_labels[g.sitio] }}</span></td>
+          <td class="mono">{% for e in s.miembros %}<a class="row-link" href="{{ prefix }}/equipos/{{ e.id }}" style="{{ 'color:#b91c1c' if e in s.detenidos }}">{{ e.codigo }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td>
+          <td class="num">{{ s.operando | length }} / {{ s.miembros | length }}</td>
+          <td class="num">{{ g.necesarios }}{% if g.necesarios_noche and g.necesarios_noche != g.necesarios %} · noche {{ g.necesarios_noche }}{% endif %}</td>
+          <td>
+            {% if s.estado == 'holgado' %}<span class="pill ok">{{ s.margen }} de sobra</span>
+            {% elif s.estado == 'sin_respaldo' %}<span class="pill bad">Sin respaldo</span>
+            {% else %}<span class="pill bad">Faltan {{ -s.margen }}</span>{% endif %}
+          </td>
+          <td class="mono">{{ 'Automática' if g.conmutacion == 'automatica' else 'Manual' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No hay grupos. Se crean aquí, o solos al usar «Crear redundancia» en la ficha de un equipo.</div>
+    {% endif %}
+  </div>
+</div>
+</body>
+</html>
