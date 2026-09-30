@@ -172,6 +172,30 @@ ahí dejó el botón "acepto" muerto y al operador encerrado. Es contenido de em
 puede depender de que cargue el resto de la app. Al tocar la PWA hay que **subir `CACHE` en
 `sw.js`** o la tablet sigue sirviendo la versión anterior.
 
+## Directorio de personas (identidad única)
+
+`personas` (`app/models/personas.py`, migración 20260930_03) es **la** identidad: nombre,
+Telegram (`telegram_id`, texto), teléfono. Se edita solo en **Configuración → Personas y
+notificaciones** (`app/api/personas_views.py`, `/views/ui/config/personas`). Cada módulo guarda
+solo sus preferencias apuntando a ella (`persona_id`):
+
+- **Calidad de agua**: `water_quality_alert_recipients` (nivel, rotación, filtros). `name` y
+  `telegram_chat_id` son **propiedades** que leen de la persona (las columnas viejas quedan como
+  `_name`/`_telegram_chat_id`, sin uso): `wq_notify` no cambió. No se puede filtrar/ordenar por
+  ellas en SQL (se ordena en Python).
+- **Mantenimiento**: `mnt_personas` = el *rol* (rol, sitios de alarma, horario). `nombre`,
+  `telegram_user_id` y `bot_iniciado` son propiedades; para buscar por Telegram usar
+  `service.rol_de_telegram`. `bot_iniciado` = existe en `mnt_telegram_contactos`.
+- Las pantallas de destinatarios, semaneros y roles de mantenimiento conservan su URL pero se
+  muestran dentro de Configuración (`personas_views.tabs_personas`). La bandeja de Telegram sin
+  vincular está en el Directorio.
+- Desactivar a una persona la apaga en cascada en cada módulo; reactivarla no los reactiva.
+- ⚠️ Expandir y contraer: las columnas viejas de identidad siguen en la BD (nullable). Al arrancar,
+  `services.personas.sincronizar` enlaza cualquier fila sin `persona_id` (creada por código
+  anterior). Falta la migración que las borra.
+- `app/maintenance/models.py` referencia `"Persona"` **por nombre**: importar
+  `app.models.personas` ahí causa un import circular (app/models/__init__ importa mantenimiento).
+
 ## Módulo Mantenimiento de Maquinaria
 
 Ver `especificacion_mantenimiento_v1.md`. **PR1, PR2 y PR3 hechos** (catálogo de equipos con

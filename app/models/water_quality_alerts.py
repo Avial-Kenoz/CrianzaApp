@@ -1,6 +1,8 @@
 from sqlalchemy import (Column, BigInteger, Integer, String, Boolean, Date,
                         Numeric, TIMESTAMP, ForeignKey, JSON)
+from sqlalchemy.orm import relationship
 from app.db.session import Base
+from app.models.personas import Persona  # noqa: F401  (relationship("Persona"))
 
 
 class WaterQualityAlert(Base):
@@ -176,10 +178,25 @@ class WaterQualityAlertRecipient(Base):
     __tablename__ = "water_quality_alert_recipients"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    name = Column(String(120), nullable=False)
-    telegram_chat_id = Column(String(40), nullable=False, unique=True)
+    # Identidad: vive en el directorio `personas` (migración 20260930_03). Las
+    # columnas `name` y `telegram_chat_id` quedan solo como respaldo mientras el
+    # código viejo no se despliegue; se leen por las propiedades de abajo, que
+    # prefieren la persona. Por eso `wq_notify` sigue usando `d.name` y
+    # `d.telegram_chat_id` sin enterarse del cambio.
+    persona_id = Column(BigInteger, ForeignKey("personas.id"), unique=True)
+    persona = relationship("Persona", lazy="joined")
+    _name = Column("name", String(120))
+    _telegram_chat_id = Column("telegram_chat_id", String(40), unique=True)
     user_id = Column(BigInteger, ForeignKey("users.id"))
     active = Column(Boolean, nullable=False, default=True)
+
+    @property
+    def name(self) -> str:
+        return (self.persona.nombre if self.persona else self._name) or "(sin nombre)"
+
+    @property
+    def telegram_chat_id(self):
+        return self.persona.telegram_id if self.persona else self._telegram_chat_id
 
     min_level = Column(String(20), nullable=False, default="alarma")
     # Entra en el turno de semaneros (migración 20260929_04).

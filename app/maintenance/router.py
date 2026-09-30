@@ -818,17 +818,18 @@ def qr_hoja(request: Request, sitio: str = "crianza", codigos: str = ""):
 def personas_lista(request: Request, editar: Optional[int] = None, inactivas: str = ""):
     db = SessionLocal()
     try:
+        from app.api.personas_views import tabs_personas
+        from app.services.personas import listar as listar_directorio
+
         lista = service.personas(db, solo_activas=not inactivas)
-        sin_vincular = service.contactos_sin_vincular(db)
-        n_avisos = dict(db.query(MntAviso.telegram_chat_id, func.count(MntAviso.id))
-                        .filter(MntAviso.telegram_chat_id.in_([c.telegram_user_id for c in sin_vincular] or [""]))
-                        .group_by(MntAviso.telegram_chat_id).all())
+        con_rol = {p.persona_id for p in service.personas(db, solo_activas=False)}
         return _render(
             "mantenimiento_personas.html", request, active="personas",
+            tabs=tabs_personas("mantenimiento"),
             personas=lista, editando=db.get(MntPersona, editar) if editar else None,
+            candidatas=[d for d in listar_directorio(db) if d.id not in con_rol],
             advertencias=service.advertencias_personas(db),
-            sin_vincular=sin_vincular, n_avisos=n_avisos,
-            todas_personas=service.personas(db),
+            n_sin_vincular=len([c for c in service.contactos_sin_vincular(db) if not c.bloqueado]),
             bot=telegram_bot.estado, bot_username=_bot_username(),
             errores_envio=notify.ultimos_errores(db), dur=rules.formato_duracion, ahora=datetime.now(),
             dias=list(enumerate(rules.DIAS_LABELS)), fmt_hora=rules.formato_hora,
@@ -844,49 +845,20 @@ async def persona_guardar(request: Request):
     datos = dict(form)
     datos["alarmas_sitios"] = form.getlist("alarmas_sitios")
     datos["horario_dias"] = form.getlist("horario_dias")
-    persona_id = datos.get("persona_id")
+    # `rol_id` = la fila de mantenimiento (editar); `persona_id` = la persona
+    # del directorio (alta del rol). La bandeja de Telegram se movió al
+    # Directorio (Configuración → Personas).
+    rol_id = datos.get("rol_id")
     db = SessionLocal()
     try:
-        persona = db.get(MntPersona, int(persona_id)) if persona_id else None
+        persona = db.get(MntPersona, int(rol_id)) if rol_id and rol_id.isdigit() else None
         persona = service.guardar_persona(db, datos, persona)
         db.commit()
         return _volver(f"{PREFIX}/personas", msg=f"{persona.nombre} guardado.")
     except ErrorValidacion as e:
         db.rollback()
-        destino = f"{PREFIX}/personas" + (f"?editar={persona_id}" if persona_id else "")
+        destino = f"{PREFIX}/personas" + (f"?editar={rol_id}" if rol_id else "")
         return _volver(destino, err=str(e))
-    finally:
-        db.close()
-
-
-@router.post("/personas/telegram/{contacto_id}/vincular")
-async def contacto_vincular(request: Request, contacto_id: int):
-    form = await request.form()
-    db = SessionLocal()
-    try:
-        pid = form.get("persona_id")
-        p = service.vincular_contacto(db, contacto_id,
-                                      persona_id=int(pid) if pid and pid.isdigit() else None,
-                                      nombre_nuevo=form.get("nombre_nuevo"), rol=form.get("rol") or "reportante")
-        db.commit()
-        return _volver(f"{PREFIX}/personas", msg=f"Telegram vinculado a {p.nombre}.")
-    except ErrorValidacion as e:
-        db.rollback()
-        return _volver(f"{PREFIX}/personas", err=str(e))
-    finally:
-        db.close()
-
-
-@router.post("/personas/telegram/{contacto_id}/bloquear")
-def contacto_bloquear(contacto_id: int, bloquear: str = Form("1")):
-    db = SessionLocal()
-    try:
-        c = db.get(MntTelegramContacto, contacto_id)
-        if c is not None:
-            c.bloqueado = bloquear == "1"
-            db.commit()
-        return _volver(f"{PREFIX}/personas", msg="Contacto bloqueado: el bot lo ignorará." if bloquear == "1"
-                       else "Contacto desbloqueado.")
     finally:
         db.close()
 

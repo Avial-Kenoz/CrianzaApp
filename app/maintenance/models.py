@@ -15,8 +15,14 @@ from sqlalchemy import (
     Column, BigInteger, Integer, String, Text, Boolean, Numeric, Date,
     TIMESTAMP, ForeignKey, LargeBinary, JSON,
 )
+from sqlalchemy.orm import object_session, relationship
 
 from app.db.session import Base
+
+# `Persona` (el directorio) se referencia por nombre y NO se importa: importar
+# app.models.personas ejecutaría app/models/__init__.py, que a su vez importa
+# este módulo a medio cargar (import circular). SQLAlchemy resuelve el nombre
+# al configurar los mappers; para entonces app.models ya cargó Persona.
 
 
 SITIOS = ("crianza", "planta")
@@ -66,10 +72,12 @@ class MntContratista(Base):
 
 
 class MntPersona(Base):
-    """Quién reporta, gestiona, ejecuta o recibe alarmas.
+    """El **rol en mantenimiento** de una persona del directorio.
 
-    Propia del módulo y no `users`: la mayoría de quienes reportan por Telegram
-    no tienen cuenta en ninguna app, y los de Planta viven en otra base.
+    La identidad (nombre, Telegram) vive en `personas` (migración 20260930_03),
+    compartida con calidad de agua; aquí solo quedan las preferencias del
+    módulo. `nombre`, `telegram_user_id` y `bot_iniciado` son propiedades de
+    solo lectura; para filtrar por ellas en SQL hay que unir con `Persona`.
 
     `alarmas_sitios` dice de qué sitios recibe SIEMPRE las alarmas P1 (lista
     separada por coma). El semanero de Crianza no se configura aquí: sale de la
@@ -83,11 +91,14 @@ class MntPersona(Base):
     __tablename__ = "mnt_personas"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    nombre = Column(String(120), nullable=False)
+    persona_id = Column(BigInteger, ForeignKey("personas.id"), unique=True)
+    persona = relationship("Persona", lazy="joined")
+    # Respaldo de la identidad mientras el código viejo no se despliegue.
+    _nombre = Column("nombre", String(120))
+    _telegram_user_id = Column("telegram_user_id", String(40), unique=True)
+    _bot_iniciado = Column("bot_iniciado", Boolean, nullable=False, default=False)
     rol = Column(String(20), nullable=False, default="reportante")
     sitio = Column(String(10))
-    telegram_user_id = Column(String(40), unique=True)
-    bot_iniciado = Column(Boolean, nullable=False, default=False)
     alarmas_sitios = Column(String(20))
     recibe_resumen = Column(Boolean, nullable=False, default=False)
     horario_dias = Column(String(20))
@@ -97,6 +108,24 @@ class MntPersona(Base):
     activo = Column(Boolean, nullable=False, default=True)
     created_at = Column(TIMESTAMP)
     updated_at = Column(TIMESTAMP)
+
+    @property
+    def nombre(self) -> str:
+        return (self.persona.nombre if self.persona else self._nombre) or "(sin nombre)"
+
+    @property
+    def telegram_user_id(self):
+        return self.persona.telegram_id if self.persona else self._telegram_user_id
+
+    @property
+    def bot_iniciado(self) -> bool:
+        """Le escribió al bot de mantenimiento al menos una vez (sin eso el bot
+        no puede escribirle). Se deduce de la bandeja de contactos."""
+        uid = self.telegram_user_id
+        s = object_session(self)
+        if not uid or s is None:
+            return False
+        return s.query(MntTelegramContacto.id).filter(MntTelegramContacto.telegram_user_id == uid).first() is not None
 
 
 class MntGrupoRedundancia(Base):

@@ -15,6 +15,7 @@ from app.db.session import SessionLocal
 from app.maintenance import notify, service
 from app.maintenance.models import MntAviso, MntNotificacion, MntPersona, MntTelegramContacto
 from app.maintenance.telegram_api import TelegramError
+from app.services import personas as directorio
 from app.maintenance.telegram_bot import Bot
 
 UID = "990000001"          # usuario de Telegram ficticio
@@ -94,8 +95,14 @@ def limpiar():
         f"delete from mnt_equipo_destinos where equipo_id in {eq}",
         "delete from mnt_equipos where nombre like 'ZZ %'",
         "delete from mnt_grupos_redundancia where nombre like 'ZZ %'",
-        "delete from mnt_notificaciones where persona_id in (select id from mnt_personas where nombre like 'ZZ %')",
-        "delete from mnt_personas where nombre like 'ZZ %'",
+        # Personas de prueba: por nombre ZZ o por los Telegram ficticios.
+        "delete from mnt_notificaciones where persona_id in (select m.id from mnt_personas m join personas p "
+        f"on p.id = m.persona_id where p.nombre like 'ZZ %' or p.telegram_id in ('{UID}', '{UID2}'))",
+        "update mnt_avisos set reportado_por_id = null where reportado_por_id in (select m.id from mnt_personas m "
+        f"join personas p on p.id = m.persona_id where p.nombre like 'ZZ %' or p.telegram_id in ('{UID}', '{UID2}'))",
+        "delete from mnt_personas where persona_id in (select id from personas where nombre like 'ZZ %' "
+        f"or telegram_id in ('{UID}', '{UID2}'))",
+        f"delete from personas where nombre like 'ZZ %' or telegram_id in ('{UID}', '{UID2}')",
         f"delete from mnt_telegram_contactos where telegram_user_id in ('{UID}', '{UID2}')",
     ]:
         db.execute(text(sql))
@@ -353,10 +360,11 @@ class NotifyTest(unittest.TestCase):
         db = SessionLocal()
         cls.eq = service.crear_equipo(db, {"sitio": "planta", "nombre": "ZZ Camara N"}, R_A,
                                       origen="crianza", autor="test")
-        db.add(MntPersona(nombre="ZZ Encargado N", rol="encargado", telegram_user_id=UID,
-                          alarmas_sitios="crianza,planta", activo=True, bot_iniciado=True))
-        db.add(MntPersona(nombre="ZZ Supervisor N", rol="supervisor_planta", telegram_user_id=UID2,
-                          alarmas_sitios="planta", activo=True, bot_iniciado=False))
+        # Identidad en el directorio; el rol de mantenimiento apunta a ella.
+        enc = directorio.guardar(db, {"nombre": "ZZ Encargado N", "telegram_id": UID})
+        sup = directorio.guardar(db, {"nombre": "ZZ Supervisor N", "telegram_id": UID2})
+        db.add(MntPersona(persona_id=enc.id, rol="encargado", alarmas_sitios="crianza,planta", activo=True))
+        db.add(MntPersona(persona_id=sup.id, rol="supervisor_planta", alarmas_sitios="planta", activo=True))
         db.commit()
         cls.eq_id = cls.eq.id
         db.close()

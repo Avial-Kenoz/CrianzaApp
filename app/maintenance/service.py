@@ -21,6 +21,7 @@ from app.maintenance.models import (
     MntEquipoDestino, MntCriticidadEvaluacion, MntParametro, MntAviso, MntOt, MntOtEvento,
     MntTelegramContacto, MntGrupoRedundancia,
 )
+from app.models.personas import Persona
 
 
 class ErrorValidacion(ValueError):
@@ -193,25 +194,34 @@ def guardar_contratista(db: Session, datos: dict, contratista: Optional[MntContr
 # Personas
 # ---------------------------------------------------------------------------
 def personas(db: Session, solo_activas: bool = True) -> list:
-    q = db.query(MntPersona)
+    """Roles de mantenimiento, ordenados por el nombre del directorio. Activa =
+    activa en el módulo Y en el directorio."""
+    q = db.query(MntPersona).join(Persona, Persona.id == MntPersona.persona_id)
     if solo_activas:
-        q = q.filter(MntPersona.activo.is_(True))
-    return q.order_by(MntPersona.nombre).all()
+        q = q.filter(MntPersona.activo.is_(True), Persona.activo.is_(True))
+    return q.order_by(Persona.nombre).all()
+
+
+def rol_de_telegram(db: Session, telegram_id: Optional[str]) -> Optional[MntPersona]:
+    if not telegram_id:
+        return None
+    return (db.query(MntPersona).join(Persona, Persona.id == MntPersona.persona_id)
+            .filter(Persona.telegram_id == str(telegram_id)).first())
 
 
 def guardar_persona(db: Session, datos: dict, persona: Optional[MntPersona] = None) -> MntPersona:
-    nombre = (datos.get("nombre") or "").strip()
-    if not nombre:
-        raise ErrorValidacion("La persona necesita un nombre.")
+    """Rol de mantenimiento de una persona del directorio (la identidad se edita
+    en Configuración → Personas). Al crear, `persona_id` es obligatorio."""
+    if persona is None:
+        pid = _id_o_none(datos.get("persona_id"))
+        dir_p = db.get(Persona, pid) if pid else None
+        if dir_p is None:
+            raise ErrorValidacion("Elige a la persona del directorio.")
+        if db.query(MntPersona).filter(MntPersona.persona_id == dir_p.id).first():
+            raise ErrorValidacion(f"{dir_p.nombre} ya tiene un rol en mantenimiento: edítalo en la lista.")
     rol = datos.get("rol") or "reportante"
     if rol not in ROLES_PERSONA:
         raise ErrorValidacion("Rol inválido.")
-
-    telegram = (datos.get("telegram_user_id") or "").strip() or None
-    if telegram:
-        otra = db.query(MntPersona).filter(MntPersona.telegram_user_id == telegram).first()
-        if otra and (persona is None or otra.id != persona.id):
-            raise ErrorValidacion(f"El ID de Telegram {telegram} ya está asociado a {otra.nombre}.")
 
     alarmas = [s for s in (datos.get("alarmas_sitios") or []) if s in SITIOS]
     dias = sorted({int(d) for d in (datos.get("horario_dias") or []) if str(d).isdigit() and 0 <= int(d) <= 6})
@@ -228,17 +238,10 @@ def guardar_persona(db: Session, datos: dict, persona: Optional[MntPersona] = No
 
     now = datetime.now()
     if persona is None:
-        persona = MntPersona(created_at=now, activo=True, bot_iniciado=False)
+        persona = MntPersona(persona_id=dir_p.id, created_at=now, activo=True)
         db.add(persona)
-    persona.nombre = nombre
     persona.rol = rol
     persona.sitio = _sitio_o_none(datos.get("sitio"))
-    if telegram != persona.telegram_user_id:
-        # El bot solo puede escribirle a quien ya le escribió: si ese ID ya
-        # aparece como contacto, está iniciado; si no, hasta que haga /start.
-        persona.bot_iniciado = bool(telegram and db.query(MntTelegramContacto)
-                                    .filter(MntTelegramContacto.telegram_user_id == telegram).first())
-    persona.telegram_user_id = telegram
     persona.alarmas_sitios = ",".join(s for s in SITIOS if s in alarmas) or None
     persona.recibe_resumen = recibe_resumen
     persona.horario_dias = ",".join(str(d) for d in dias) or None
@@ -254,9 +257,9 @@ def guardar_persona(db: Session, datos: dict, persona: Optional[MntPersona] = No
 # ---------------------------------------------------------------------------
 def registrar_contacto(db: Session, telegram_user_id: str, nombre: Optional[str],
                        username: Optional[str]) -> tuple[MntTelegramContacto, Optional[MntPersona]]:
-    """Cada mensaje al bot pasa por aquí: guarda o refresca el contacto y, si
-    ya es una persona vinculada, la marca como «bot iniciado» (ahora el bot
-    puede escribirle). Devuelve (contacto, persona o None)."""
+    """Cada mensaje al bot pasa por aquí: guarda o refresca el contacto (que es
+    lo que hace «bot iniciado»: el bot ya puede escribirle). Devuelve
+    (contacto, rol de mantenimiento o None)."""
     uid = str(telegram_user_id)
     now = datetime.now()
     c = db.query(MntTelegramContacto).filter(MntTelegramContacto.telegram_user_id == uid).first()
@@ -266,42 +269,58 @@ def registrar_contacto(db: Session, telegram_user_id: str, nombre: Optional[str]
     c.nombre = (nombre or "").strip()[:120] or c.nombre
     c.username = (username or "").strip()[:80] or c.username
     c.ultimo_contacto = now
-    p = db.query(MntPersona).filter(MntPersona.telegram_user_id == uid).first()
-    if p is not None and not p.bot_iniciado:
-        p.bot_iniciado = True
-    return c, p
+    db.flush()
+    rol = rol_de_telegram(db, uid)
+    if rol is None:
+        # Ya está en el directorio (p. ej. solo por calidad de agua) pero no en
+        # mantenimiento: si le escribe a este bot, al menos es reportante. Así
+        # sus avisos quedan atribuidos a él y no a un nombre de Telegram suelto.
+        dir_p = db.query(Persona).filter(Persona.telegram_id == uid).first()
+        if dir_p is not None:
+            rol = MntPersona(persona_id=dir_p.id, rol="reportante", activo=True, created_at=now, updated_at=now)
+            db.add(rol)
+            db.flush()
+    return c, rol
 
 
 def contactos_sin_vincular(db: Session) -> list:
-    vinculados = {u for (u,) in db.query(MntPersona.telegram_user_id)
-                  .filter(MntPersona.telegram_user_id.isnot(None)).all()}
+    """Quienes le escribieron al bot y no son nadie en el directorio."""
+    vinculados = {u for (u,) in db.query(Persona.telegram_id).filter(Persona.telegram_id.isnot(None)).all()}
     return [c for c in db.query(MntTelegramContacto).order_by(MntTelegramContacto.ultimo_contacto.desc()).all()
             if c.telegram_user_id not in vinculados]
 
 
 def vincular_contacto(db: Session, contacto_id: int, *, persona_id: Optional[int] = None,
                       nombre_nuevo: Optional[str] = None, rol: str = "reportante") -> MntPersona:
-    """Asocia un contacto de Telegram a una persona (existente o nueva) y le
-    atribuye los avisos que ya había mandado sin estar vinculado."""
+    """Asocia un contacto de Telegram a una persona del directorio (existente o
+    nueva), le da rol en mantenimiento si no lo tenía (le escribió al bot de
+    mantenimiento: al menos avisa) y le atribuye los avisos que ya mandó."""
+    from app.services import personas as directorio
+
     c = db.get(MntTelegramContacto, contacto_id)
     if c is None:
         raise ErrorValidacion("Ese contacto no existe.")
-    otra = db.query(MntPersona).filter(MntPersona.telegram_user_id == c.telegram_user_id).first()
+    otra = directorio.por_telegram(db, c.telegram_user_id)
     if otra is not None:
-        raise ErrorValidacion(f"Ese Telegram ya está vinculado a {otra.nombre}.")
+        raise ErrorValidacion(f"Ese Telegram ya es de {otra.nombre}.")
     if persona_id:
-        p = db.get(MntPersona, persona_id)
-        if p is None:
+        dir_p = db.get(Persona, persona_id)
+        if dir_p is None:
             raise ErrorValidacion("Esa persona no existe.")
+        if dir_p.telegram_id:
+            raise ErrorValidacion(f"{dir_p.nombre} ya tiene otro Telegram ({dir_p.telegram_id}).")
     else:
-        nombre = (nombre_nuevo or c.nombre or "").strip()
-        if not nombre:
-            raise ErrorValidacion("Indica el nombre de la persona nueva.")
-        p = MntPersona(nombre=nombre, rol=rol if rol in ROLES_PERSONA else "reportante",
+        try:
+            dir_p = directorio.guardar(db, {"nombre": nombre_nuevo or c.nombre})
+        except directorio.ErrorPersona as e:
+            raise ErrorValidacion(str(e))
+    dir_p.telegram_id = c.telegram_user_id
+    dir_p.updated_at = datetime.now()
+    p = db.query(MntPersona).filter(MntPersona.persona_id == dir_p.id).first()
+    if p is None:
+        p = MntPersona(persona_id=dir_p.id, rol=rol if rol in ROLES_PERSONA else "reportante",
                        activo=True, created_at=datetime.now())
         db.add(p)
-    p.telegram_user_id = c.telegram_user_id
-    p.bot_iniciado = True                    # si está en la bandeja, ya le escribió al bot
     p.updated_at = datetime.now()
     db.flush()
     (db.query(MntAviso)
@@ -876,13 +895,17 @@ ESTADOS_INICIALES = ("pendiente", "espera_contratista", "espera_repuesto", "en_e
 
 
 def resolver_actor(db: Session, texto: Optional[str]) -> tuple[Optional[int], Optional[str]]:
-    """Nombre escrito en «Registra» → (persona_id, nombre). Si coincide con una
-    persona (sin mayúsculas) queda vinculado; si no, se guarda el texto tal
+    """Nombre escrito en «Registra» → (rol de mantenimiento id, nombre). Si
+    coincide con una persona del directorio que tiene rol en mantenimiento
+    (sin mayúsculas ni tildes) queda vinculado; si no, se guarda el texto tal
     cual. En la web de Crianza no hay login: esto anota, no acredita."""
+    from app.services.personas import clave_nombre
+
     t = (texto or "").strip()
     if not t:
         return None, None
-    p = db.query(MntPersona).filter(func.lower(MntPersona.nombre) == t.lower()).first()
+    clave = clave_nombre(t)
+    p = next((m for m in personas(db, solo_activas=False) if clave_nombre(m.nombre) == clave), None)
     return (p.id, p.nombre) if p else (None, t)
 
 

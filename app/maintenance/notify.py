@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.maintenance import rules
 from app.maintenance.models import (
-    SITIO_LABELS, MntAviso, MntEquipo, MntNotificacion, MntOt, MntPersona,
+    SITIO_LABELS, MntAviso, MntEquipo, MntNotificacion, MntOt,
 )
 from app.maintenance.telegram_api import Api, TelegramError
 
@@ -72,9 +72,11 @@ def destinatarios_alarma(db: Session, sitio: str, ahora: Optional[datetime] = No
     de mantenimiento solo puede escribirle si le hizo /start (spec §6.4): si no,
     el envío falla con 403 y queda en la bitácora.
     """
+    from app.maintenance.service import personas as roles_activos
+
     ahora = ahora or datetime.now()
     out, vistos = [], set()
-    for p in db.query(MntPersona).filter(MntPersona.activo.is_(True)).all():
+    for p in roles_activos(db):                  # activos en el módulo y en el directorio
         if sitio in (p.alarmas_sitios or "").split(",") and p.telegram_user_id:
             if p.telegram_user_id not in vistos:
                 vistos.add(p.telegram_user_id)
@@ -99,8 +101,10 @@ def semanero_actual(db: Session, ahora: datetime) -> Optional[dict]:
     r = db.get(WaterQualityAlertRecipient, rid)
     if r is None or not r.telegram_chat_id:
         return None
-    # Si el semanero también es persona del módulo, se atribuye a ella.
-    p = db.query(MntPersona).filter(MntPersona.telegram_user_id == str(r.telegram_chat_id)).first()
+    # Si el semanero también tiene rol en mantenimiento, se atribuye a él (con
+    # el directorio único es la misma persona: se reconoce por su Telegram).
+    from app.maintenance.service import rol_de_telegram
+    p = rol_de_telegram(db, str(r.telegram_chat_id))
     return {"persona_id": p.id if p else None, "nombre": f"{r.name} (semanero)",
             "chat_id": str(r.telegram_chat_id)}
 

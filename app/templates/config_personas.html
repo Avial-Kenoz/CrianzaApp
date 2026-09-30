@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Personas – Configuración – Crianza</title>
+  {% include '_mnt_style.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="/views/ui/config">Configuración</a> / Personas y notificaciones</div>
+  <div class="page-title">Personas y notificaciones</div>
+  <div class="page-sub">
+    Cada persona se registra <b>una sola vez</b>, con su Telegram. Los módulos (calidad de agua, mantenimiento)
+    guardan solo qué recibe cada una: se configuran en sus pestañas.
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_alertas_tabs.html' %}
+
+  {# ---------------------------------------------------------- bandeja Telegram #}
+  {% if sin_vincular %}
+  <div class="section-title" style="margin-top:0">Le escribieron al bot de mantenimiento y no están en el directorio ({{ sin_vincular | length }})</div>
+  <div class="card" style="margin-bottom:6px">
+    <table>
+      <thead><tr><th>Quién escribió</th><th>ID de Telegram</th><th>Último contacto</th><th class="num">Avisos</th><th>Es…</th><th></th></tr></thead>
+      <tbody>
+        {% for c in sin_vincular %}
+        <tr class="{{ 'baja' if c.bloqueado }}">
+          <td><b>{{ c.nombre or '—' }}</b>{% if c.username %}<div class="mono">@{{ c.username }}</div>{% endif %}</td>
+          <td class="mono">{{ c.telegram_user_id }}</td>
+          <td class="mono">{{ c.ultimo_contacto.strftime('%d-%m %H:%M') }}</td>
+          <td class="num">{{ n_avisos.get(c.telegram_user_id, 0) }}</td>
+          <td>
+            {% if not c.bloqueado %}
+            <form class="inline" method="post" action="{{ prefix }}/telegram/{{ c.id }}/vincular" style="display:flex; gap:6px; flex-wrap:wrap">
+              <select name="persona_id" onchange="this.form.querySelector('.nuevo').hidden = !!this.value">
+                <option value="">+ Persona nueva…</option>
+                {% for p in sin_telegram %}<option value="{{ p.id }}">{{ p.nombre }}</option>{% endfor %}
+              </select>
+              <span class="nuevo" style="display:contents">
+                <input type="text" name="nombre_nuevo" value="{{ c.nombre or '' }}" maxlength="120" placeholder="Nombre y apellido" style="width:170px">
+              </span>
+              <button class="btn btn-mini" type="submit">Vincular</button>
+            </form>
+            {% else %}<span class="mono">bloqueado</span>{% endif %}
+          </td>
+          <td>
+            <form class="inline" method="post" action="{{ prefix }}/telegram/{{ c.id }}/bloquear">
+              <input type="hidden" name="bloquear" value="{{ '0' if c.bloqueado else '1' }}">
+              <button class="btn btn-mini" type="submit">{{ 'Desbloquear' if c.bloqueado else 'Bloquear' }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="hint" style="margin-bottom:10px">Al vincular queda en el directorio con ese Telegram, como «reportante» de mantenimiento, y con sus avisos anteriores atribuidos.</div>
+  {% endif %}
+
+  {# ------------------------------------------------------------------ formulario #}
+  {% set p = editando %}
+  <div class="section-title">{{ 'Editar ' ~ p.nombre if p else 'Agregar persona' }}</div>
+  <form class="form-card" method="post" action="{{ prefix }}">
+    {% if p %}<input type="hidden" name="persona_id" value="{{ p.id }}" />{% endif %}
+    <div class="grid-form">
+      <div><label for="nombre" class="req">Nombre y apellido</label>
+        <input type="text" id="nombre" name="nombre" maxlength="120" required value="{{ p.nombre if p else '' }}" /></div>
+      <div><label for="telegram_id">ID de Telegram</label>
+        <input type="text" id="telegram_id" name="telegram_id" maxlength="40" inputmode="numeric" value="{{ (p.telegram_id or '') if p else '' }}" />
+        <div class="hint">Lo normal es no escribirlo: la persona le manda /start al bot de mantenimiento y se vincula desde la bandeja de arriba.</div></div>
+      <div><label for="telefono">Teléfono</label>
+        <input type="text" id="telefono" name="telefono" maxlength="40" value="{{ (p.telefono or '') if p else '' }}" /></div>
+      <div><label for="email">Correo</label>
+        <input type="text" id="email" name="email" maxlength="190" value="{{ (p.email or '') if p else '' }}" /></div>
+      <div class="wide"><label for="notas">Notas</label><input type="text" id="notas" name="notas" value="{{ (p.notas or '') if p else '' }}" /></div>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:16px">
+      <button class="btn btn-primary" type="submit">{{ 'Guardar' if p else 'Agregar' }}</button>
+      {% if p %}<a class="btn btn-ghost" href="{{ prefix }}">Cancelar</a>{% endif %}
+    </div>
+  </form>
+
+  {# ---------------------------------------------------------------------- lista #}
+  <div class="section-title">Directorio</div>
+  <form class="toolbar" method="get">
+    <label class="chk"><input type="checkbox" name="inactivas" value="1" {% if f_inactivas %}checked{% endif %} onchange="this.form.submit()"> Incluir inactivas</label>
+  </form>
+  <div class="card">
+    {% if personas %}
+    <table>
+      <thead><tr><th>Nombre</th><th>Telegram</th><th>Teléfono</th><th>Calidad de agua</th><th>Mantenimiento</th><th></th></tr></thead>
+      <tbody>
+        {% for x in personas %}{% set part = participa.get(x.id, {}) %}
+        <tr class="{{ 'baja' if not x.activo }}">
+          <td><b>{{ x.nombre }}</b>{% if x.notas %}<div class="mono">{{ x.notas }}</div>{% endif %}</td>
+          <td>
+            {% if x.telegram_id %}<span class="mono">{{ x.telegram_id }}</span>
+              {% if x.telegram_id in iniciados %}<span class="pill ok" title="Le escribió al bot de mantenimiento">bot mant. OK</span>
+              {% else %}<span class="pill pend" title="No le ha escrito /start al bot de mantenimiento">sin /start mant.</span>{% endif %}
+            {% else %}<span class="pill muted">sin Telegram</span>{% endif %}
+          </td>
+          <td class="mono">{{ x.telefono or '—' }}</td>
+          <td>
+            {% if part.wq %}<a class="row-link" href="/views/ui/calidad-agua/alertas/destinatarios">
+              {{ 'recibe desde ' ~ part.wq.min_level if part.wq.active else 'inactivo' }}{{ ' · rotación' if part.wq.in_rotation and part.wq.active }}</a>
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if part.mnt %}<a class="row-link" href="/views/ui/mantenimiento/personas?editar={{ part.mnt.id }}">
+              {{ roles[part.mnt.rol] if part.mnt.activo else 'inactivo' }}{% if part.mnt.alarmas_sitios and part.mnt.activo %} · alarmas {{ part.mnt.alarmas_sitios | replace(',', ' y ') }}{% endif %}</a>
+            {% else %}—{% endif %}
+          </td>
+          <td style="white-space:nowrap">
+            <a class="btn btn-mini" href="{{ prefix }}?editar={{ x.id }}">Editar</a>
+            <form class="inline" method="post" action="{{ prefix }}/{{ x.id }}/activo">
+              <input type="hidden" name="activo" value="{{ '0' if x.activo else '1' }}" />
+              <button class="btn btn-mini" type="submit">{{ 'Desactivar' if x.activo else 'Activar' }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Todavía no hay personas.</div>
+    {% endif %}
+  </div>
+  <div class="note">
+    Desactivar a una persona aquí la saca de <b>todos</b> los módulos a la vez. Para que solo deje de recibir
+    un tipo de aviso, desactívala en la pestaña de ese módulo.
+  </div>
+</div>
+</body>
+</html>

@@ -24,6 +24,7 @@ from app.api.sexado import router as sexado_router, admin_router as sexado_admin
 from app.api.silage import router as silage_router
 from app.api.silage_views import router as silage_views_router
 from app.maintenance.router import router as maintenance_router
+from app.api.personas_views import router as personas_router
 from app.maintenance import telegram_bot as maintenance_bot
 from app.services.pond_cache_scheduler import start_scheduler, shutdown_scheduler
 from app.services.wq_alerts_scheduler import (
@@ -58,15 +59,19 @@ def _recalcular_criticidades() -> None:
     import logging
     from app.db.session import SessionLocal
     from app.maintenance import service as maintenance_service
+    from app.services import personas as directorio
     db = SessionLocal()
     try:
+        # Primero el directorio: un destinatario o una persona de mantenimiento
+        # creados por el código anterior (sin persona_id) quedan enlazados.
+        enlazadas = directorio.sincronizar(db)
         n = maintenance_service.recalcular_todas(db)
         db.commit()
-        if n:
-            logging.getLogger("mnt").info("mantenimiento: %s criticidades puestas al día", n)
+        if n or enlazadas:
+            logging.getLogger("mnt").info("arranque: %s criticidades al día, %s personas enlazadas", n, enlazadas)
     except Exception:
         db.rollback()
-        logging.getLogger("mnt").exception("mantenimiento: no se pudieron recalcular las criticidades")
+        logging.getLogger("mnt").exception("arranque: no se pudo sincronizar personas/criticidades")
     finally:
         db.close()
 
@@ -137,6 +142,7 @@ app.include_router(sexado_admin_router)
 app.include_router(silage_router)
 app.include_router(silage_views_router)
 app.include_router(maintenance_router)
+app.include_router(personas_router)
 
 @app.get("/")
 def root():

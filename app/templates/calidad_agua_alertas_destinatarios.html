@@ -29,10 +29,11 @@
 {% include '_sidebar.html' %}
 
 <div class="page">
-  <div class="crumb"><a href="/views/ui/calidad-agua">Calidad de agua</a> ·
-    <a href="/views/ui/calidad-agua/alertas">Alertas</a> · Destinatarios</div>
-  <div class="page-title">Destinatarios</div>
-  <div class="page-sub">A quién le llega cada aviso por Telegram. Se edita acá, sin tocar el servidor.</div>
+  <div class="crumb"><a href="/views/ui/config">Configuración</a> ·
+    <a href="/views/ui/config/personas">Personas y notificaciones</a> · Calidad de agua</div>
+  <div class="page-title">Personas y notificaciones</div>
+  <div class="page-sub">Calidad de agua: a quién le llega cada aviso por Telegram. El nombre y el Telegram de
+    cada persona se editan en el <a href="/views/ui/config/personas">Directorio</a>; aquí, solo qué recibe.</div>
 
   {% include '_alertas_tabs.html' %}
 
@@ -52,12 +53,12 @@
           {% for d in destinatarios %}
           <tr>
             <td>
-              <input type="text" name="name_{{ d.id }}" value="{{ d.name }}" maxlength="120" />
+              <a href="/views/ui/config/personas?editar={{ d.persona_id }}" style="font-weight:650">{{ d.name }}</a>
               <input type="text" name="note_{{ d.id }}" value="{{ d.note or '' }}"
                      placeholder="turno, rol, observación" maxlength="200"
                      style="margin-top:5px; font-size:.78rem;" />
             </td>
-            <td><input type="text" name="chat_{{ d.id }}" value="{{ d.telegram_chat_id }}" maxlength="40" /></td>
+            <td class="nowrap">{% if d.telegram_chat_id %}<code>{{ d.telegram_chat_id }}</code>{% else %}<span style="color:#b91c1c; font-weight:650">sin Telegram</span>{% endif %}</td>
             <td>
               <select name="min_level_{{ d.id }}">
                 <option value="alerta" {{ 'selected' if d.min_level == 'alerta' else '' }}>alerta</option>
@@ -95,8 +96,14 @@
       <table>
         <tbody>
           <tr>
-            <td style="width:26%"><input type="text" name="nuevo_name" placeholder="Nombre y apellido" maxlength="120" /></td>
-            <td style="width:20%"><input type="text" name="nuevo_chat" placeholder="chat_id de Telegram" maxlength="40" /></td>
+            <td style="width:40%">
+              <select name="nuevo_persona_id">
+                <option value="">— Persona del directorio —</option>
+                {% for p in candidatas %}<option value="{{ p.id }}">{{ p.nombre }}{{ '' if p.telegram_id else ' (sin Telegram)' }}</option>{% endfor %}
+              </select>
+              {% if not candidatas %}<div class="muted" style="font-size:.78rem; margin-top:4px">Todas las personas del directorio ya están aquí.
+                <a href="/views/ui/config/personas">Agregar persona</a></div>{% endif %}
+            </td>
             <td style="width:16%">
               <select name="nuevo_min_level">
                 <option value="alarma">alarma</option>
@@ -133,8 +140,10 @@
               <code>scripts\telegram_chat_id.py --probar 8815279164</code> le manda un mensaje de
               prueba. Si responde <em>403</em>, esa persona bloqueó al bot y no va a recibir nada:
               mejor descubrirlo ahora que la noche que pase algo.</li>
-          <li><strong>Se agrega acá abajo</strong>, en “Agregar destinatario”: nombre y el chat_id que
-              devolvió el script.</li>
+          <li><strong>Se registra en el <a href="/views/ui/config/personas">Directorio</a></strong>
+              (Configuración → Personas), con el chat_id que devolvió el script como su ID de Telegram.
+              Si ya estaba (p. ej. porque le escribió al bot de mantenimiento), no hay que hacer nada.</li>
+          <li><strong>Se agrega acá abajo</strong>, en “Agregar destinatario”, eligiéndola de la lista.</li>
           <li><strong>Se decide su rol.</strong> Si entra en el turno de semaneros, marcar
               <em>rotación</em> y asignarle semanas en
               <a href="/views/ui/calidad-agua/alertas/semaneros">Semaneros</a>. Si no —jefatura,
@@ -167,7 +176,7 @@
 
     <div class="actions">
       <button type="submit" class="btn btn-primary">Guardar destinatarios</button>
-      <a href="/views/ui/calidad-agua/alertas" class="btn btn-ghost">Volver</a>
+      <a href="/views/ui/config/personas" class="btn btn-ghost">Volver</a>
     </div>
   </form>
 

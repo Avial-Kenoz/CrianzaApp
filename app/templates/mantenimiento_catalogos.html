@@ -10,14 +10,14 @@
 {% include '_sidebar.html' %}
 
 <div class="page">
-  <div class="crumb">Mantenimiento</div>
+  <div class="crumb"><a href="/views/ui/config">Configuración</a> / Mantenimiento</div>
   <div class="page-title">Catálogos y parámetros</div>
   <div class="page-sub">Sistemas y tipos de equipo para ordenar el catálogo, y los parámetros del módulo.</div>
 
   {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
   {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
 
-  {% include '_mnt_tabs.html' %}
+  {% include '_mnt_config_tabs.html' %}
 
   {# Fusionar duplicados («Bombas» y «Bombeo»): mueve los equipos al destino y
      desactiva el sobrante. Es lo que evita que el catálogo se ensucie al crecer. #}

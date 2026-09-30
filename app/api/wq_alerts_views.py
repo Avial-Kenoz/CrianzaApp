@@ -33,6 +33,8 @@ from app.models.cultivation_units import CultivationUnit
 from app.models.ponds import Pond
 from app.models.users import User
 from app.models.water_quality_thresholds import WaterQualityThreshold
+from app.models.personas import Persona
+from app.services.personas import listar as listar_personas
 from app.models.water_quality_alerts import (
     WaterQualityAlert,
     WaterQualityAlertNotification,
@@ -168,15 +170,18 @@ def _volumen(db, rules: dict, now: datetime) -> dict:
 
 
 def _tabs(activa: str) -> list:
+    # Destinatarios y Semaneros son configuración de personas: se muestran en
+    # Configuración → Personas y notificaciones (mismas URL), no aquí.
+    if activa in ("destinatarios", "semaneros"):
+        from app.api.personas_views import tabs_personas
+        return tabs_personas("calidad" if activa == "destinatarios" else "semaneros")
     return [
         {"href": "/views/ui/calidad-agua/alertas", "label": "Alertas",
          "activa": activa == "alertas"},
         {"href": "/views/ui/calidad-agua/alertas/reglas", "label": "Reglas",
          "activa": activa == "reglas"},
-        {"href": "/views/ui/calidad-agua/alertas/destinatarios",
-         "label": "Destinatarios", "activa": activa == "destinatarios"},
-        {"href": "/views/ui/calidad-agua/alertas/semaneros",
-         "label": "Semaneros", "activa": activa == "semaneros"},
+        {"href": "/views/ui/config/personas", "label": "Destinatarios ↗",
+         "activa": False},
     ]
 
 
@@ -408,9 +413,11 @@ def destinatarios_form(request: Request, msg: Optional[str] = None):
             envios[d.id] = (db.query(WaterQualityAlertNotification)
                               .filter(WaterQualityAlertNotification.recipient_id == d.id)
                               .count())
+        ya = {d.persona_id for d in dest if d.persona_id}
+        candidatas = [p for p in listar_personas(db) if p.id not in ya]
         html = jinja_env.get_template("calidad_agua_alertas_destinatarios.html").render(
             request=request, msg=msg, tabs=_tabs("destinatarios"),
-            destinatarios=dest, units=units, envios=envios,
+            destinatarios=dest, units=units, envios=envios, candidatas=candidatas,
             kind_labels=KIND_LABELS)
         return HTMLResponse(html)
     finally:
@@ -428,9 +435,9 @@ async def destinatarios_save(request: Request):
             # No hay borrar, sólo desactivar: la bitácora de envíos referencia
             # al destinatario y el historial tiene que seguir diciendo a quién
             # se avisó anoche.
+            # El nombre y el Telegram ya no se editan aquí: son de la persona
+            # (Configuración → Personas → Directorio).
             suf = "_{}".format(d.id)
-            d.name = (form.get("name" + suf) or d.name).strip()[:120]
-            d.telegram_chat_id = (form.get("chat" + suf) or d.telegram_chat_id).strip()[:40]
             d.active = bool(form.get("active" + suf))
             d.in_rotation = bool(form.get("rotacion" + suf))
             d.min_level = form.get("min_level" + suf) or "alarma"
@@ -442,28 +449,27 @@ async def destinatarios_save(request: Request):
             d.updated_at = now
 
         texto = "Destinatarios guardados."
-        nombre = (form.get("nuevo_name") or "").strip()
-        chat = (form.get("nuevo_chat") or "").strip()
-        if nombre and chat:
+        pid = _int_o_none(form.get("nuevo_persona_id"))
+        persona = db.get(Persona, pid) if pid else None
+        if persona is not None:
             ya = (db.query(WaterQualityAlertRecipient)
-                    .filter(WaterQualityAlertRecipient.telegram_chat_id == chat)
-                    .first())
+                    .filter(WaterQualityAlertRecipient.persona_id == persona.id).first())
             if ya is not None:
-                # Ese chat ya tenía dueño. Se reactiva —el caso real es "volvió
-                # el encargado que habíamos sacado"— pero NO se renombra: quien
-                # creía estar agregando a alguien habría renombrado a otro sin
-                # enterarse, y los avisos seguirían yendo al teléfono de antes.
+                # Ya era destinatario (quizás desactivado): se reactiva — el caso
+                # real es "volvió el encargado que habíamos sacado".
                 ya.active = True
                 ya.updated_at = now
-                texto = ("Ese chat ya estaba registrado a nombre de {}: se "
-                         "reactivó sin cambiarle el nombre.").format(ya.name)
+                texto = "{} ya era destinatario: se reactivó.".format(persona.nombre)
             else:
                 db.add(WaterQualityAlertRecipient(
-                    name=nombre[:120], telegram_chat_id=chat[:40], active=True,
+                    persona_id=persona.id, active=True,
                     min_level=form.get("nuevo_min_level") or "alarma",
                     in_rotation=bool(form.get("nuevo_rotacion")),
                     note=(form.get("nuevo_note") or "").strip()[:200] or None,
                     created_at=now, updated_at=now))
+                if not persona.telegram_id:
+                    texto += (" Ojo: {} no tiene Telegram en el directorio; no le llegará nada "
+                              "hasta que se lo agreguen.").format(persona.nombre)
         db.commit()
         return RedirectResponse(
             url="/views/ui/calidad-agua/alertas/destinatarios?msg=" + quote_plus(texto),
@@ -500,14 +506,15 @@ def semaneros_form(request: Request, mes: Optional[str] = None,
         }
         # Sólo quienes entran en la rotación pueden ser semaneros; el resto
         # tiene otro rol y recibe por su cuenta.
-        candidatos = (db.query(WaterQualityAlertRecipient)
-                        .filter(WaterQualityAlertRecipient.active.is_(True),
-                                WaterQualityAlertRecipient.in_rotation.is_(True))
-                        .order_by(WaterQualityAlertRecipient.name).all())
-        fuera = (db.query(WaterQualityAlertRecipient)
-                   .filter(WaterQualityAlertRecipient.active.is_(True),
-                           WaterQualityAlertRecipient.in_rotation.is_(False))
-                   .order_by(WaterQualityAlertRecipient.name).all())
+        # El nombre es de la persona (directorio): se ordena en Python.
+        candidatos = sorted((db.query(WaterQualityAlertRecipient)
+                               .filter(WaterQualityAlertRecipient.active.is_(True),
+                                       WaterQualityAlertRecipient.in_rotation.is_(True)).all()),
+                            key=lambda d: d.name.lower())
+        fuera = sorted((db.query(WaterQualityAlertRecipient)
+                          .filter(WaterQualityAlertRecipient.active.is_(True),
+                                  WaterQualityAlertRecipient.in_rotation.is_(False)).all()),
+                       key=lambda d: d.name.lower())
 
         lunes_hoy = _lunes(hoy)
         filas = []

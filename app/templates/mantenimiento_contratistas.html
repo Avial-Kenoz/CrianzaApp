@@ -10,7 +10,7 @@
 {% include '_sidebar.html' %}
 
 <div class="page">
-  <div class="crumb">Mantenimiento</div>
+  <div class="crumb"><a href="/views/ui/config">Configuración</a> / Mantenimiento</div>
   <div class="page-title">Contratistas</div>
   <div class="page-sub">
     Empresas externas. No usan el sistema: le reportan al encargado, que registra en la OT.
@@ -19,7 +19,7 @@
   {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
   {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
 
-  {% include '_mnt_tabs.html' %}
+  {% include '_mnt_config_tabs.html' %}
 
   {% set c = editando %}
   <div class="section-title">{{ 'Editar ' ~ c.empresa if c else 'Agregar contratista' }}</div>

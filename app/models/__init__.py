@@ -3,6 +3,9 @@ from .cultivation_units import CultivationUnit
 from .pond_types import PondType
 from .lots import Lot
 from .users import User
+# Directorio de personas único (identidad), compartido por calidad de agua y
+# mantenimiento, que guardan solo sus preferencias apuntando a él.
+from .personas import Persona
 from .roles import Role
 from .users_roles import UserRole
 from .ponds import Pond

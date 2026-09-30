@@ -21,6 +21,13 @@ jinja_env = Environment(loader=FileSystemLoader(str(template_dir)))
 # Secciones de configuración registradas (título, descripción, URL, ícono emoji)
 CONFIG_SECTIONS = [
     {
+        "title": "Personas y notificaciones",
+        "desc": "Directorio único (nombre y Telegram) y qué recibe cada persona: alertas de calidad de agua, "
+                "semaneros y avisos de mantenimiento.",
+        "url": "/views/ui/config/personas",
+        "icon": "👤",
+    },
+    {
         "title": "Umbrales de calidad de agua",
         "desc": "Alertas y alarmas de oxígeno, amonio y nitrito, y tolerancias de validación.",
         "url": "/views/ui/calidad-agua/umbrales",
@@ -57,14 +64,14 @@ CONFIG_SECTIONS = [
         "icon": "🧪",
     },
     {
-        "title": "Mantenimiento: personas y avisos",
-        "desc": "Encargado, supervisores y técnicos; quién recibe las alarmas P1 y el resumen, y en qué horario.",
-        "url": "/views/ui/mantenimiento/personas",
+        "title": "Mantenimiento: contratistas",
+        "desc": "Empresas externas que atienden los equipos (no usan el sistema: reportan al encargado).",
+        "url": "/views/ui/mantenimiento/contratistas",
         "icon": "🔧",
     },
     {
         "title": "Mantenimiento: catálogos y plazos",
-        "desc": "Sistemas, tipos de equipo y plazos objetivo por prioridad.",
+        "desc": "Sistemas, tipos de equipo, plazos objetivo por prioridad y horario nocturno.",
         "url": "/views/ui/mantenimiento/catalogos",
         "icon": "⚙️",
     },

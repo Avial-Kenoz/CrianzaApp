@@ -1,11 +1,10 @@
-{# Navegación común del módulo de mantenimiento. `active` marca la pestaña actual. #}
+{# Navegación de la plataforma de trabajo de mantenimiento. `active` marca la pestaña actual.
+   Personas, contratistas y catálogos son configuración: viven en Configuración
+   (_mnt_config_tabs.html y Configuración → Personas y notificaciones). #}
 <div class="tabs">
   <a href="{{ prefix }}/tablero" class="{{ 'on' if active == 'tablero' }}">Tablero</a>
   <a href="{{ prefix }}/parte" class="{{ 'on' if active == 'parte' }}">Parte diario</a>
   <a href="{{ prefix }}/equipos" class="{{ 'on' if active == 'equipos' }}">Equipos</a>
   <a href="{{ prefix }}/grupos" class="{{ 'on' if active == 'grupos' }}">Grupos de redundancia</a>
   <a href="{{ prefix }}/qr" class="{{ 'on' if active == 'qr' }}">Etiquetas QR</a>
-  <a href="{{ prefix }}/personas" class="{{ 'on' if active == 'personas' }}">Personas</a>
-  <a href="{{ prefix }}/contratistas" class="{{ 'on' if active == 'contratistas' }}">Contratistas</a>
-  <a href="{{ prefix }}/catalogos" class="{{ 'on' if active == 'catalogos' }}">Catálogos y parámetros</a>
 </div>
