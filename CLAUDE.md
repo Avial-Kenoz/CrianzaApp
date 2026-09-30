@@ -253,6 +253,19 @@ Invariantes:
   calidad de agua (solo Crianza); confirmación al que avisó (acuse y cierre). Van en un hilo
   aparte con su sesión, después del commit, y cada intento queda en `mnt_notificaciones`. Un bot
   solo puede escribir a quien le hizo /start: HTTP 403 en la bitácora = falta el /start.
+- ⚠️ **Los envíos a personas reales solo salen con `MNT_BOT_ENABLED=1`** (`notify.envios_habilitados`):
+  `en_segundo_plano` no hace nada sin él. Así un servidor de prueba (misma BD) no le escribe al
+  semanero: el 30-09 unas pruebas generaron alarmas P1 reales que se salvaron solo por falta de
+  token. En pruebas, llamar a las funciones de `notify` con una API falsa y **limitarlas a datos
+  ZZ** (`_solo_roles`, `_solo_equipos`): marcar como repetida una alarma P1 real con la API falsa
+  haría que producción no la repita nunca.
+- **PR4** (`scheduler.py`, cada 5 min, solo producción): **resumen** de fallas menores a quien
+  tiene `recibe_resumen`, en los cortes de `resumen_horas`, dentro de su horario, uno por corte
+  (se deduplica con `mnt_notificaciones`; vigencia de 2 h por corte) y **repetición única** de
+  P1 sin movimiento (`p1_repetir_horas`). Vista previa y «Enviar resumen ahora» en `/resumen`.
+- **«Pendiente de pago»** es un estado de espera (el contratista no parte/no entrega hasta que se
+  pague): el equipo sigue detenido y el tiempo va al tramo `pago`. Vista agregada de tramos en
+  `/tiempos` (`service.analisis_tiempos`).
 - Sistemas y tipos crecen desde la ficha («+ Nuevo…», `POST /catalogos/{que}/rapido`, JSON) y se
   limpian con **fusionar** (mueve equipos y desactiva el duplicado; no borra).
 - ⚠️ **Producción corre desde `Desktop/CrianzaApp`** (sin `--reload`): cualquier reinicio, del

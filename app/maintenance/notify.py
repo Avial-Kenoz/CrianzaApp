@@ -8,7 +8,14 @@ En PR3:
 - **Confirmación al que avisó**: cuando su aviso se acepta y cuando la OT se
   cierra. Es barata y cambia la cultura: quien avisa ve que sirvió.
 
-Las fallas menores (P2/P3) no generan mensajes sueltos: van al resumen (PR4).
+En PR4:
+- **Resumen** de fallas menores (P2/P3), OT abiertas y fuera de plazo, y
+  servicios sin respaldo, a quien tiene `recibe_resumen`, en las horas de
+  `resumen_horas` y solo dentro de su horario. Uno por corte y por persona.
+- **Repetición de P1 sin movimiento**: si una OT P1 (o un aviso P1 sin
+  atender) pasa `p1_repetir_horas` sin cambios, se avisa una vez más.
+
+Las fallas menores no generan mensajes sueltos: van al resumen.
 
 Cada intento queda en `mnt_notificaciones` con su resultado. Los envíos corren
 en un hilo aparte con su propia sesión: una red lenta no puede dejar colgada
@@ -36,6 +43,8 @@ logger = logging.getLogger("mnt_notify")
 
 BASE_URL = (os.getenv("CRIANZA_BASE_URL") or "http://192.168.1.201:8002").rstrip("/")
 URL_TABLERO = BASE_URL + "/views/ui/mantenimiento/tablero"
+URL_PARTE = BASE_URL + "/views/ui/mantenimiento/parte"
+DIAS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 
 
 def _registrar(db: Session, *, motivo: str, ok: bool, error: Optional[str] = None,
@@ -187,6 +196,158 @@ def confirmar_cierre(db: Session, ot_id: int, api: Optional[Api] = None) -> None
                 texto=f"✅ {eq.codigo} {eq.nombre} quedó en servicio"
                       f"{f' a las {hora:%H:%M}' if hora else ''} ({rules.folio_ot(ot.id)}). ¡Gracias por avisar!")
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Resumen de fallas menores (PR4)
+# ---------------------------------------------------------------------------
+def texto_resumen(db: Session, ahora: Optional[datetime] = None, *, vacio_ok: bool = False) -> Optional[str]:
+    """El resumen para el encargado. None si no hay nada pendiente (un «todo en
+    orden» diario es ruido), salvo `vacio_ok` (envío manual: confirma que llega)."""
+    from app.maintenance import service
+
+    ahora = ahora or datetime.now()
+    equipos = {e.id: e for e in service.equipos(db, incluir_baja=True)}
+    avisos = service.avisos_nuevos(db)
+    abiertas = service.ots(db)
+    ev = service.eventos_por_ot(db, [o.id for o in abiertas])
+    vencidas = [o for o in abiertas if service.ot_fuera_de_plazo(o, ahora)]
+    riesgo = service.servicios_en_riesgo(db, ahora)
+
+    def eq(i):
+        e = equipos.get(i)
+        return f"{e.codigo} {e.nombre}" if e else "?"
+
+    lineas = [f"📋 Resumen de mantenimiento · {DIAS[ahora.weekday()]} {ahora:%d-%m %H:%M}"]
+    if avisos:
+        lineas.append(f"\nAvisos sin atender: {len(avisos)}")
+        for a in avisos[:10]:
+            lineas.append(f" • {rules.folio_aviso(a.id)} {eq(a.equipo_id)} · {a.prioridad_sugerida} · "
+                          f"hace {rules.formato_duracion((ahora - a.detectado_at).total_seconds() / 3600)}")
+        if len(avisos) > 10:
+            lineas.append(f"   …y {len(avisos) - 10} más")
+    if abiertas:
+        por = {p: sum(1 for o in abiertas if o.prioridad == p) for p in ("P1", "P2", "P3")}
+        lineas.append(f"\nOT abiertas: {len(abiertas)} (P1 {por['P1']} · P2 {por['P2']} · P3 {por['P3']})")
+    if vencidas:
+        lineas.append(f"Fuera de plazo: {len(vencidas)}")
+        for o in vencidas[:10]:
+            ult = ev[o.id][-1].ocurrido_at if ev.get(o.id) else o.inicio_at
+            lineas.append(f" • {rules.folio_ot(o.id)} {eq(o.equipo_id)} · {rules.ESTADOS_OT[o.estado]} · "
+                          f"sin movimiento hace {rules.formato_duracion((ahora - ult).total_seconds() / 3600)}")
+    if riesgo:
+        lineas.append("\nServicios sin respaldo:")
+        for r in riesgo:
+            det = ", ".join(e.codigo for e in r["detenidos"]) or "—"
+            lineas.append(f" • {r['grupo'].nombre} ({'sin respaldo' if r['margen'] == 0 else 'faltan equipos'}; detenidos: {det})")
+    if len(lineas) == 1:
+        if not vacio_ok:
+            return None
+        lineas.append("\nSin pendientes ✅")
+    lineas.append(f"\nParte diario: {URL_PARTE}")
+    return "\n".join(lineas)
+
+
+def destinatarios_resumen(db: Session) -> list:
+    """Roles activos con `recibe_resumen` y Telegram."""
+    from app.maintenance.service import personas as roles_activos
+    return [p for p in roles_activos(db) if p.recibe_resumen and p.telegram_user_id]
+
+
+def enviar_resumenes(db: Session, api: Optional[Api] = None, ahora: Optional[datetime] = None,
+                     *, forzar: bool = False, _solo_roles: Optional[set] = None) -> int:
+    """Manda el resumen a quien corresponda. Devuelve cuántos se enviaron.
+
+    Automático (`forzar=False`): solo si hay un corte vigente de
+    `resumen_horas`, la persona está dentro de su horario y no se le mandó ya
+    en este corte. Manual (`forzar=True`, botón «Enviar resumen ahora»): a
+    todos los que reciben el resumen, a cualquier hora, aunque no haya
+    pendientes.
+    """
+    from app.maintenance import service
+
+    ahora = ahora or datetime.now()
+    hora = ahora.hour + ahora.minute / 60.0
+    if not forzar:
+        corte = rules.corte_vigente(hora, rules.parse_cortes(service.parametros(db).get("resumen_horas")))
+        if corte is None:
+            return 0
+        desde_corte = ahora.replace(hour=int(corte), minute=int(round((corte % 1) * 60)), second=0, microsecond=0)
+    dest = destinatarios_resumen(db)
+    if _solo_roles is not None:          # solo pruebas: no registrar envíos a personas reales
+        dest = [p for p in dest if p.id in _solo_roles]
+    if not forzar:
+        dest = [p for p in dest if rules.en_horario(ahora.weekday(), hora, p.horario_dias, p.horario_desde, p.horario_hasta)
+                and not db.query(MntNotificacion.id).filter(
+                    MntNotificacion.motivo == "resumen", MntNotificacion.chat_id == p.telegram_user_id,
+                    MntNotificacion.ok.is_(True), MntNotificacion.enviado_at >= desde_corte).first()]
+    if not dest:
+        return 0
+    texto = texto_resumen(db, ahora, vacio_ok=forzar)
+    if texto is None:
+        return 0
+    api = api or Api()
+    n = sum(_enviar(db, api, chat_id=p.telegram_user_id, texto=texto, motivo="resumen",
+                    destino=p.nombre, persona_id=p.id) for p in dest)
+    db.commit()
+    return n
+
+
+# ---------------------------------------------------------------------------
+# Repetición de P1 sin movimiento (PR4)
+# ---------------------------------------------------------------------------
+def repetir_p1(db: Session, api: Optional[Api] = None, ahora: Optional[datetime] = None,
+               *, _solo_equipos: Optional[set] = None) -> int:
+    """Una alarma P1 no puede quedar en silencio: si una OT P1 abierta (o un
+    aviso P1 sin atender) pasa `p1_repetir_horas` sin cambios, se avisa UNA vez
+    más a los mismos destinatarios de la alarma. Devuelve cuántos mensajes salieron."""
+    from app.maintenance import service
+
+    ahora = ahora or datetime.now()
+    try:
+        umbral = float(str(service.parametros(db).get("p1_repetir_horas") or "2").replace(",", "."))
+    except ValueError:
+        umbral = 2.0
+    ya = lambda **k: db.query(MntNotificacion.id).filter(  # noqa: E731
+        MntNotificacion.motivo == "repeticion_p1", *[getattr(MntNotificacion, c) == v for c, v in k.items()]).first()
+
+    # `_solo_equipos` es solo para pruebas: si una prueba marcara como repetida
+    # una alarma P1 real, producción ya no la volvería a avisar.
+    fuera = (lambda eid: _solo_equipos is not None and eid not in _solo_equipos)  # noqa: E731
+    pendientes = []   # (texto, sitio, aviso_id, ot_id)
+    for o in service.ots(db):
+        if o.prioridad != "P1" or fuera(o.equipo_id) or ya(ot_id=o.id):
+            continue
+        ult = service._ultima_hora(db, o)
+        horas = (ahora - ult).total_seconds() / 3600
+        if horas >= umbral:
+            e = db.get(MntEquipo, o.equipo_id)
+            pendientes.append((f"🔁 P1 sin movimiento hace {rules.formato_duracion(horas)} · {SITIO_LABELS[e.sitio]}\n"
+                               f"{rules.folio_ot(o.id)} · {e.codigo} {e.nombre}\n"
+                               f"Estado: {rules.ESTADOS_OT[o.estado]}\nTablero: {URL_TABLERO}", e.sitio, None, o.id))
+    for a in service.avisos_nuevos(db):
+        if a.prioridad_sugerida != "P1" or fuera(a.equipo_id) or ya(aviso_id=a.id):
+            continue
+        horas = (ahora - a.created_at).total_seconds() / 3600
+        if horas >= umbral:
+            e = db.get(MntEquipo, a.equipo_id)
+            pendientes.append((f"🔁 P1 sin atender hace {rules.formato_duracion(horas)} · {SITIO_LABELS[e.sitio]}\n"
+                               f"{rules.folio_aviso(a.id)} · {e.codigo} {e.nombre} · nadie ha hecho el acuse\n"
+                               f"Tablero: {URL_TABLERO}", e.sitio, a.id, None))
+    if not pendientes:
+        return 0
+    api = api or Api()
+    n = 0
+    for texto, sitio, aviso_id, ot_id in pendientes:
+        dest = destinatarios_alarma(db, sitio, ahora)
+        if not dest:
+            _registrar(db, motivo="repeticion_p1", ok=False, aviso_id=aviso_id, ot_id=ot_id, destino="(nadie)",
+                       error=f"Nadie recibe las alarmas P1 de {SITIO_LABELS.get(sitio)}")
+        for d in dest:
+            n += _enviar(db, api, chat_id=d["chat_id"], texto=texto, motivo="repeticion_p1",
+                         destino=d["nombre"], persona_id=d["persona_id"], aviso_id=aviso_id, ot_id=ot_id)
+    db.commit()
+    return n
 
 
 # ---------------------------------------------------------------------------

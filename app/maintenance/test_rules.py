@@ -12,6 +12,38 @@ def _r(impacto, respaldo, reposicion="c", seguridad="no"):
             "reposicion": reposicion, "seguridad_ambiente": seguridad}
 
 
+class PagoYResumenTest(unittest.TestCase):
+    def test_pendiente_de_pago_es_tramo_propio(self):
+        from datetime import datetime, timedelta
+        t0 = datetime(2026, 10, 1, 8, 0)
+        h = lambda x: t0 + timedelta(hours=x)   # noqa: E731
+        ev = [("pendiente", h(1)), ("pendiente_pago", h(2)), ("en_ejecucion", h(50))]
+        t = rules.tramos(t0, ev, h(52))
+        self.assertEqual((t["pago"], t["ejecucion"], t["gestion"]), (48, 2, 1))
+        self.assertTrue(rules.transicion_valida("espera_contratista", "pendiente_pago"))
+        self.assertTrue(rules.transicion_valida("pendiente_pago", "en_ejecucion"))
+        self.assertIn("pendiente_pago", rules.ESTADOS_ABIERTOS)
+
+    def test_corte_vigente(self):
+        cortes = [8.5, 14.0]
+        self.assertIsNone(rules.corte_vigente(8.0, cortes))
+        self.assertEqual(rules.corte_vigente(8.5, cortes), 8.5)
+        self.assertEqual(rules.corte_vigente(10.4, cortes), 8.5)      # dentro de la ventana de 2 h
+        self.assertIsNone(rules.corte_vigente(10.6, cortes))          # ya no «resume» la mañana
+        self.assertEqual(rules.corte_vigente(14.2, cortes), 14.0)
+
+    def test_en_horario(self):
+        self.assertTrue(rules.en_horario(0, 9.0, "0,1,2,3,4", 8.5, 17.5))
+        self.assertFalse(rules.en_horario(5, 9.0, "0,1,2,3,4", 8.5, 17.5))   # sábado
+        self.assertFalse(rules.en_horario(0, 18.0, "0,1,2,3,4", 8.5, 17.5))
+        self.assertTrue(rules.en_horario(2, 23.0, "2", 22, 6))                 # cruza medianoche
+        self.assertFalse(rules.en_horario(0, 9.0, None, 8.5, 17.5))
+
+    def test_parse_cortes(self):
+        self.assertEqual(rules.parse_cortes("14:00, 8:30, basura"), [8.5, 14.0])
+        self.assertEqual(rules.parse_cortes(""), [])
+
+
 class GrupoTest(unittest.TestCase):
     def test_noche_cruza_medianoche(self):
         self.assertTrue(rules.es_noche(22.0, 20.0, 8.0))

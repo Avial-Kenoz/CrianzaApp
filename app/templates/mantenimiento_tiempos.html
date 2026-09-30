@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>¿Dónde se va el tiempo? – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+  <style>
+    .tbar.grande { height: 22px; border-radius: 8px; }
+    .grupo td:first-child { font-weight: 650; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb">Mantenimiento</div>
+  <div class="page-title">¿Dónde se va el tiempo?</div>
+  <div class="page-sub">
+    El tiempo de las OT, desde que se detecta la falla hasta el cierre, repartido según quién tenía la pelota.
+    Es la medida del problema de fondo: los mantenimientos que se alargan.
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_mnt_tabs.html' %}
+
+  <form class="toolbar" method="get">
+    <div class="fld"><label>Cerradas desde</label><input type="date" name="desde" value="{{ f_desde }}"></div>
+    <div class="fld"><label>hasta</label><input type="date" name="hasta" value="{{ f_hasta }}"></div>
+    <div class="fld"><label>Sitio</label>
+      <select name="sitio"><option value="">Ambos</option>{% for k, l in sitio_labels.items() %}<option value="{{ k }}" {% if f.sitio == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+    <div class="fld"><label>Prioridad</label>
+      <select name="prioridad"><option value="">Todas</option>{% for k in prioridades %}<option value="{{ k }}" {% if f.prioridad == k %}selected{% endif %}>{{ k }}</option>{% endfor %}</select></div>
+    <div class="fld"><label>Sistema</label>
+      <select name="sistema_id"><option value="">Todos</option>{% for s in sistemas %}<option value="{{ s.id }}" {% if f.sistema_id == s.id %}selected{% endif %}>{{ s.nombre }}</option>{% endfor %}</select></div>
+    <div class="fld"><label>Contratista</label>
+      <select name="contratista_id"><option value="">Todos</option>{% for c in contratistas %}<option value="{{ c.id }}" {% if f.contratista_id == c.id %}selected{% endif %}>{{ c.empresa }}</option>{% endfor %}</select></div>
+    <label class="chk" style="align-self:center"><input type="checkbox" name="abiertas" value="1" {% if f_abiertas %}checked{% endif %}> Sumar también las abiertas (hasta ahora)</label>
+    <button class="btn btn-primary" type="submit">Ver</button>
+  </form>
+
+  {% if r.pocos_datos %}
+  <div class="note warn" style="margin:0 0 14px">
+    <b>Pocos datos:</b> los valores son orientativos hasta completar {{ 6 }} meses de registro
+    {% if r.inicio_registro %}(desde el {{ r.inicio_registro.strftime('%d-%m-%Y') }}; hasta el {{ r.pocos_datos_hasta.strftime('%d-%m-%Y') }}){% endif %}.
+    Cada cifra muestra en cuántas OT se basa (n).
+  </div>
+  {% endif %}
+
+  {% if r.n %}
+  <div class="kpis">
+    <div class="kpi hi"><div class="n">{{ r.n }}</div><div class="l">OT medidas</div></div>
+    <div class="kpi"><div class="n">{{ dur(r.promedio) }}</div><div class="l">Duración promedio por OT</div></div>
+    <div class="kpi"><div class="n">{{ dur(r.fuera_servicio_prom) if r.fuera_servicio_prom is not none else '—' }}</div>
+      <div class="l">Equipo detenido, promedio · n = {{ r.n_fuera_servicio }}</div></div>
+    <div class="kpi {{ 'bad' if r.fuera_de_plazo }}"><div class="n">{{ r.fuera_de_plazo }}</div>
+      <div class="l">Fuera de plazo ({{ (r.fuera_de_plazo / r.n * 100) | round | int }} %)</div></div>
+  </div>
+
+  <div class="section-title">En qué se fue el tiempo · {{ dur(r.total.total) }} en total</div>
+  <div class="form-card">
+    {% with t = r.total %}<div class="tbar grande" title="">
+      {% for k in tramos_labels %}{% if t[k] > 0 %}<i class="t-{{ k }}" style="width: {{ (t[k] / t.total * 100) | round(2) }}%" title="{{ tramos_labels[k] }}: {{ dur(t[k]) }}"></i>{% endif %}{% endfor %}
+    </div>{% endwith %}
+    <table style="margin-top:12px">
+      <thead><tr><th>Tramo</th><th>Qué significa</th><th class="num">Horas</th><th class="num">%</th><th class="num">Promedio por OT</th></tr></thead>
+      <tbody>
+        {% set que = {'reaccion': 'desde la detección hasta el acuse de recibo', 'gestion': 'aceptada, sin que nadie trabaje ni espere algo concreto',
+                      'contratista': 'se llamó al contratista y no llega', 'repuesto': 'se pidió el repuesto y no llega',
+                      'pago': 'esperando el pago de la factura', 'ejecucion': 'reparando', 'verificacion': 'reparada, falta confirmar que funciona'} %}
+        {% for k, l in tramos_labels.items() %}
+        <tr>
+          <td><span class="leyenda" style="margin:0"><span class="t-{{ k }}">{{ l }}</span></span></td>
+          <td class="desc">{{ que[k] }}</td>
+          <td class="num mono">{{ dur(r.total[k]) if r.total[k] else '—' }}</td>
+          <td class="num mono">{{ (r.total[k] / r.total.total * 100) | round | int if r.total.total else 0 }} %</td>
+          <td class="num mono">{{ dur(r.total[k] / r.n) if r.total[k] else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% macro tabla_grupo(titulo, filas) %}
+  <div class="section-title">{{ titulo }}</div>
+  <div class="card">
+    <table class="grupo">
+      <thead><tr><th>{{ titulo.split(' ')[-1] | capitalize }}</th><th class="num">n</th><th class="num">Promedio</th><th style="width:45%">Reparto</th></tr></thead>
+      <tbody>
+        {% for g in filas %}
+        <tr>
+          <td>{{ g.nombre }}</td>
+          <td class="num mono">{{ g.n }}</td>
+          <td class="num mono">{{ dur(g.total / g.n) }}</td>
+          <td>{% with t = g %}{% include '_mnt_tbar.html' %}{% endwith %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endmacro %}
+  {{ tabla_grupo('Por sistema', r.por_sistema) }}
+  {{ tabla_grupo('Por contratista', r.por_contratista) }}
+  {{ tabla_grupo('Por prioridad', r.por_prioridad) }}
+
+  <div class="section-title">Las más lentas</div>
+  <div class="card">
+    <table>
+      <thead><tr><th>OT</th><th>Equipo</th><th>Prioridad</th><th>Estado</th><th class="num">Duración</th><th>Reparto</th></tr></thead>
+      <tbody>
+        {% for x in r.mas_lentas %}{% set o = x.ot %}
+        <tr>
+          <td><a class="row-link code" href="{{ prefix }}/ots/{{ o.id }}">{{ folio_ot(o.id) }}</a></td>
+          <td><span class="code">{{ x.equipo.codigo }}</span> {{ x.equipo.nombre }}</td>
+          <td><span class="pill pri-{{ o.prioridad }}">{{ o.prioridad }}</span></td>
+          <td><span class="pill ot-{{ o.estado }}">{{ estados_ot[o.estado] }}</span>{% if x.vencida %} <span class="vencida mono">fuera de plazo</span>{% endif %}</td>
+          <td class="num mono">{{ dur(x.tramos.total) }}</td>
+          <td>{% with t = x.tramos %}{% include '_mnt_tbar.html' %}{% endwith %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card"><div class="empty">
+    No hay OT {{ 'cerradas ni abiertas' if f_abiertas else 'cerradas' }} en ese período con esos filtros.
+    {% if not f_abiertas %}Prueba marcando «Sumar también las abiertas».{% endif %}
+  </div></div>
+  {% endif %}
+</div>
+</body>
+</html>

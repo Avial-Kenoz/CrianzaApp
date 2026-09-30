@@ -1297,6 +1297,95 @@ def eventos_por_ot(db: Session, ot_ids: list[int]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# ¿Dónde se va el tiempo? (spec §5.5, PR4)
+# ---------------------------------------------------------------------------
+MESES_POCOS_DATOS = 6
+
+
+def inicio_registro(db: Session) -> Optional[datetime]:
+    """Desde cuándo hay registro: el parámetro `inicio_registro` o la primera OT."""
+    v = (parametros(db).get("inicio_registro") or "").strip()
+    if v:
+        try:
+            return datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            pass
+    return db.query(func.min(MntOt.inicio_at)).scalar()
+
+
+def analisis_tiempos(db: Session, *, desde: datetime, hasta: datetime, sitio: Optional[str] = None,
+                     prioridad: Optional[str] = None, sistema_id: Optional[int] = None,
+                     contratista_id: Optional[int] = None, incluir_abiertas: bool = False,
+                     ahora: Optional[datetime] = None) -> dict:
+    """Suma los tramos de las OT del período y los reparte por grupo.
+
+    - Cerradas: las que cerraron entre `desde` y `hasta`. Las anuladas no
+      cuentan (no hubo reparación que medir).
+    - `incluir_abiertas`: suma también las abiertas, con el tiempo que llevan
+      hasta ahora (útil para ver dónde se está atascando lo de hoy).
+    """
+    ahora = ahora or datetime.now()
+    q = db.query(MntOt).join(MntEquipo, MntEquipo.id == MntOt.equipo_id)
+    cerradas = q.filter(MntOt.estado == "cerrada", MntOt.cierre_at >= desde, MntOt.cierre_at < hasta)
+    lista = cerradas.all()
+    if incluir_abiertas:
+        lista += q.filter(MntOt.estado.in_(rules.ESTADOS_ABIERTOS), MntOt.inicio_at < hasta).all()
+    equipos_map = {e.id: e for e in db.query(MntEquipo).all()}
+    if sitio:
+        lista = [o for o in lista if equipos_map[o.equipo_id].sitio == sitio]
+    if prioridad:
+        lista = [o for o in lista if o.prioridad == prioridad]
+    if sistema_id:
+        lista = [o for o in lista if equipos_map[o.equipo_id].sistema_id == sistema_id]
+    if contratista_id:
+        lista = [o for o in lista if o.contratista_id == contratista_id]
+
+    ev = eventos_por_ot(db, [o.id for o in lista])
+    sistemas_n = {s.id: s.nombre for s in db.query(MntSistema).all()}
+    contratistas_n = {c.id: c.empresa for c in db.query(MntContratista).all()}
+    vacio = lambda: {**{t: 0.0 for t in rules.TRAMOS}, "total": 0.0, "n": 0}  # noqa: E731
+
+    total = vacio()
+    grupos: dict = {"sistema": {}, "contratista": {}, "prioridad": {}}
+    filas, fuera, fuera_serv = [], 0, []
+    for o in lista:
+        t = tramos_de(o, ev[o.id], ahora)
+        e = equipos_map[o.equipo_id]
+        claves = {
+            "sistema": sistemas_n.get(e.sistema_id, "Sin sistema"),
+            "contratista": (contratistas_n.get(o.contratista_id) if o.ejecutor_tipo == "contratista"
+                            else "Interno" if o.ejecutor_tipo == "interno" else "Sin asignar"),
+            "prioridad": o.prioridad,
+        }
+        for acc in [total] + [grupos[g].setdefault(k, vacio()) for g, k in claves.items()]:
+            for k in rules.TRAMOS:
+                acc[k] += t[k]
+            acc["total"] += t["total"]
+            acc["n"] += 1
+        vencida = ot_fuera_de_plazo(o, ahora)
+        fuera += vencida
+        if o.equipo_detenido_desde:
+            fin = o.equipo_en_servicio_at or o.cierre_at or ahora
+            fuera_serv.append(max(0.0, (fin - o.equipo_detenido_desde).total_seconds() / 3600))
+        filas.append({"ot": o, "equipo": e, "tramos": t, "vencida": vencida})
+
+    ordenar = lambda d: sorted(({"nombre": k, **v} for k, v in d.items()), key=lambda x: -x["total"])  # noqa: E731
+    inicio = inicio_registro(db)
+    return {
+        "total": total, "n": total["n"], "fuera_de_plazo": fuera,
+        "promedio": (total["total"] / total["n"]) if total["n"] else None,
+        "fuera_servicio_prom": (sum(fuera_serv) / len(fuera_serv)) if fuera_serv else None,
+        "n_fuera_servicio": len(fuera_serv),
+        "por_sistema": ordenar(grupos["sistema"]), "por_contratista": ordenar(grupos["contratista"]),
+        "por_prioridad": sorted(({"nombre": k, **v} for k, v in grupos["prioridad"].items()), key=lambda x: x["nombre"]),
+        "mas_lentas": sorted(filas, key=lambda f: -f["tramos"]["total"])[:10],
+        "inicio_registro": inicio,
+        "pocos_datos": inicio is None or ahora < inicio + timedelta(days=MESES_POCOS_DATOS * 30.5),
+        "pocos_datos_hasta": (inicio + timedelta(days=MESES_POCOS_DATOS * 30.5)) if inicio else None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Destinos disponibles (solo Crianza)
 # ---------------------------------------------------------------------------
 def destinos_disponibles(db: Session) -> list[dict]:

@@ -426,5 +426,78 @@ class NotifyTest(unittest.TestCase):
             db.close()
 
 
+class ResumenYRepeticionTest(unittest.TestCase):
+    """PR4. Todo se limita a datos ZZ (`_solo_roles`, `_solo_equipos`): estas
+    funciones recorren la base compartida y no deben tocar lo real."""
+
+    @classmethod
+    def setUpClass(cls):
+        limpiar()
+        db = SessionLocal()
+        cls.eq = service.crear_equipo(db, {"sitio": "crianza", "nombre": "ZZ Soplador RR"}, R_A,
+                                      origen="crianza", autor="test").id
+        enc = directorio.guardar(db, {"nombre": "ZZ Encargado RR", "telegram_id": UID})
+        rol = MntPersona(persona_id=enc.id, rol="encargado", alarmas_sitios="crianza,planta", activo=True,
+                         recibe_resumen=True, horario_dias="0,1,2,3,4,5,6", horario_desde=0, horario_hasta=23.99)
+        db.add(rol)
+        db.commit()
+        cls.rol = rol.id
+        db.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        limpiar()
+
+    def test_resumen_por_corte_una_vez(self):
+        from datetime import datetime as dt
+        db = SessionLocal()
+        original = service.parametros(db).get("resumen_horas") or ""   # la BD es compartida: se restaura al final
+        try:
+            service.actualizar_parametros(db, {"resumen_horas": "8:30"})
+            db.flush()
+            service.crear_aviso(db, equipo_id=self.eq, condicion="degradado", origen="web")
+            db.commit()
+            api = FakeApi()
+            antes = dt.now().replace(hour=7, minute=0)
+            self.assertEqual(notify.enviar_resumenes(db, api, antes, _solo_roles={self.rol}), 0)   # aún no es la hora
+            hora = dt.now().replace(hour=8, minute=40)
+            self.assertEqual(notify.enviar_resumenes(db, api, hora, _solo_roles={self.rol}), 1)
+            self.assertIn("Resumen de mantenimiento", api.ultimo()["texto"])
+            self.assertIn("Avisos sin atender", api.ultimo()["texto"])
+            # mismo corte: no se repite (el registro del envío lo impide)
+            self.assertEqual(notify.enviar_resumenes(db, api, hora.replace(minute=50), _solo_roles={self.rol}), 0)
+            # forzado (botón): sale igual
+            self.assertEqual(notify.enviar_resumenes(db, api, hora, forzar=True, _solo_roles={self.rol}), 1)
+        finally:
+            db.rollback()
+            service.actualizar_parametros(db, {"resumen_horas": original})
+            db.commit()
+            db.close()
+
+    def test_repeticion_p1_una_sola_vez(self):
+        from datetime import timedelta as td
+        db = SessionLocal()
+        try:
+            a = service.crear_aviso(db, equipo_id=self.eq, condicion="detenido", origen="web")
+            db.commit()
+            self.assertEqual(a.prioridad_sugerida, "P1")
+            api = FakeApi()
+            recien = a.created_at + td(minutes=30)
+            self.assertEqual(notify.repetir_p1(db, api, recien, _solo_equipos={self.eq}), 0)   # aún no pasa el umbral
+            tarde = a.created_at + td(hours=3)
+            n = notify.repetir_p1(db, api, tarde, _solo_equipos={self.eq})
+            self.assertGreaterEqual(n, 1)
+            self.assertIn("P1 sin atender", api.ultimo()["texto"])
+            self.assertEqual(notify.repetir_p1(db, api, tarde + td(hours=5), _solo_equipos={self.eq}), 0)   # una sola vez
+            # OT P1 sin movimiento
+            r = service.aceptar_avisos(db, [a.id], cuando=a.detectado_at + td(minutes=5))
+            db.commit()
+            ot = r["creadas"][0]
+            self.assertEqual(notify.repetir_p1(db, api, ot.inicio_at + td(hours=4), _solo_equipos={self.eq}) >= 1, True)
+            self.assertIn("P1 sin movimiento", api.ultimo()["texto"])
+        finally:
+            db.close()
+
+
 if __name__ == "__main__":
     unittest.main()

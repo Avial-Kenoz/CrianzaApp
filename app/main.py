@@ -50,6 +50,9 @@ def _start_maintenance_bot() -> None:
     # Solo arranca con MNT_BOT_ENABLED=1 (producción): Telegram admite un único
     # lector por token y un segundo proceso le robaría los avisos.
     maintenance_bot.iniciar()
+    # Resumen de fallas menores y repetición de P1 (también solo en producción).
+    from app.maintenance import scheduler as maintenance_scheduler
+    maintenance_scheduler.iniciar()
 
 
 @app.on_event("startup")
@@ -79,6 +82,8 @@ def _recalcular_criticidades() -> None:
 @app.on_event("shutdown")
 def _stop_maintenance_bot() -> None:
     maintenance_bot.detener()
+    from app.maintenance import scheduler as maintenance_scheduler
+    maintenance_scheduler.detener()
 
 
 @app.on_event("shutdown")

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Resumen – Mantenimiento – Crianza</title>
+  {% include '_mnt_style.html' %}
+  <style>
+    .tg { background: #eef6ff; border: 1px solid #cfe3fb; border-radius: 12px; padding: 14px 16px;
+          white-space: pre-wrap; font-size: .86rem; line-height: 1.5; max-width: 620px; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+
+<div class="page">
+  <div class="crumb"><a href="{{ prefix }}/tablero">Mantenimiento · Tablero</a> / Resumen</div>
+  <div class="page-title">Resumen de fallas menores</div>
+  <div class="page-sub">
+    Las fallas P2 y P3 no mandan mensajes sueltos: van en este resumen, que sale solo a las
+    {% for c in cortes %}<b>{{ fmt_hora(c) }}</b>{% if not loop.last %} y {% endif %}{% else %}(sin horas configuradas){% endfor %}
+    a quien lo recibe, dentro de su horario. Las alarmas P1 salen al instante y no pasan por aquí.
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+
+  {% include '_mnt_tabs.html' %}
+
+  <div class="two-col">
+    <div>
+      <div class="section-title" style="margin-top:0">Así se vería ahora</div>
+      <div class="tg">{{ texto }}</div>
+      <form method="post" action="{{ prefix }}/resumen/enviar" style="margin-top:12px"
+            onsubmit="return confirm('¿Enviar el resumen ahora a {{ destinatarios | length }} persona(s)?');">
+        <button class="btn btn-primary" type="submit" {% if not destinatarios or not habilitado %}disabled{% endif %}>Enviar resumen ahora</button>
+        {% if not habilitado %}<span class="hint">Deshabilitado en este servidor: los mensajes solo salen desde producción.</span>
+        {% elif not destinatarios %}<span class="hint">Nadie recibe el resumen.</span>{% endif %}
+      </form>
+    </div>
+    <div>
+      <div class="section-title" style="margin-top:0">Lo reciben</div>
+      <div class="form-card">
+        {% for p in destinatarios %}
+        <div style="margin-bottom:6px"><b>{{ p.nombre }}</b>
+          <div class="mono">{% for d in (p.horario_dias or '').split(',') if d %}{{ dias[d|int][1] }}{% if not loop.last %} {% endif %}{% endfor %}
+            · {{ fmt_hora(p.horario_desde) }}–{{ fmt_hora(p.horario_hasta) }}</div></div>
+        {% else %}
+        <div class="empty" style="padding:10px">Nadie. Márcalo en
+          <a href="/views/ui/mantenimiento/personas" style="color:#2563eb">Configuración → Personas → Mantenimiento</a>.</div>
+        {% endfor %}
+        <div class="hint">Las horas del resumen se cambian en Configuración → Mantenimiento → Catálogos y parámetros.</div>
+      </div>
+
+      <div class="section-title">Últimos envíos</div>
+      <div class="card">
+        {% if ultimos %}
+        <table>
+          <tbody>
+            {% for n in ultimos %}
+            <tr><td class="mono">{{ n.enviado_at.strftime('%d-%m %H:%M') }}</td>
+                <td class="mono">{{ 'resumen' if n.motivo == 'resumen' else 'repetición P1' }}</td>
+                <td>{{ n.destino }}</td>
+                <td>{% if n.ok %}<span class="pill ok">ok</span>{% else %}<span class="pill bad" title="{{ n.error }}">falló</span>{% endif %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<div class="empty">Todavía no se ha enviado ninguno.</div>{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -216,12 +216,17 @@ ESTADOS_OT = {
     "pendiente": "Pendiente",
     "espera_contratista": "Espera contratista",
     "espera_repuesto": "Espera repuesto",
+    "pendiente_pago": "Pendiente de pago",
     "en_ejecucion": "En ejecución",
     "reparada": "Reparada (por verificar)",
     "cerrada": "Cerrada",
     "anulada": "Anulada",
 }
-ESTADOS_ABIERTOS = ("pendiente", "espera_contratista", "espera_repuesto", "en_ejecucion", "reparada")
+# «Pendiente de pago»: el contratista no parte o no entrega hasta que se le
+# pague la factura. Es una espera como la del repuesto: el equipo sigue
+# detenido, y el tramo mide cuánto demora el pago (decisión 2026-09-30).
+ESTADOS_ABIERTOS = ("pendiente", "espera_contratista", "espera_repuesto", "pendiente_pago",
+                    "en_ejecucion", "reparada")
 ESTADOS_FINALES = ("cerrada", "anulada")
 
 # Cada estado dice quién tiene la pelota; el tramo es lo que acumula mientras
@@ -231,6 +236,7 @@ TRAMO_DE_ESTADO = {
     "pendiente": "gestion",
     "espera_contratista": "contratista",
     "espera_repuesto": "repuesto",
+    "pendiente_pago": "pago",
     "en_ejecucion": "ejecucion",
     "reparada": "verificacion",
 }
@@ -239,6 +245,7 @@ TRAMOS = {
     "gestion": "Gestión",
     "contratista": "Contratista",
     "repuesto": "Repuesto",
+    "pago": "Pago",
     "ejecucion": "Ejecución",
     "verificacion": "Verificación",
 }
@@ -306,6 +313,49 @@ def folio_aviso(i: int) -> str:
 
 def folio_ot(i: int) -> str:
     return f"OT-{i:04d}"
+
+
+# ---------------------------------------------------------------------------
+# Resumen de fallas menores (spec §6.4)
+# ---------------------------------------------------------------------------
+VENTANA_RESUMEN_H = 2.0
+
+
+def corte_vigente(hora: float, cortes: list[float], ventana: float = VENTANA_RESUMEN_H) -> Optional[float]:
+    """El corte del resumen que corresponde enviar a esta hora, o None.
+
+    Un corte (8,5 = 08:30) queda vigente durante `ventana` horas: si el
+    servidor estuvo caído justo a esa hora, el resumen sale al volver, pero no
+    horas más tarde (a esa altura ya no «resume» la mañana). Si hay varios
+    vigentes, gana el más reciente.
+    """
+    vigentes = [c for c in cortes if c <= hora < c + ventana]
+    return max(vigentes) if vigentes else None
+
+
+def en_horario(dia_semana: int, hora: float, dias: Optional[str], desde, hasta) -> bool:
+    """¿Está dentro del horario de la persona? (formato de mnt_personas:
+    días 0 = lunes separados por coma, horas decimales). Sin horario = nunca:
+    el resumen es para quien lo pidió con horario (guardar_persona lo exige)."""
+    if not dias or desde is None or hasta is None:
+        return False
+    if str(dia_semana) not in [d.strip() for d in dias.split(",")]:
+        return False
+    lo, hi = float(desde), float(hasta)
+    return (lo <= hora < hi) if lo <= hi else (hora >= lo or hora < hi)
+
+
+def parse_cortes(valor: Optional[str]) -> list[float]:
+    """«8:30, 14:00» → [8.5, 14.0]; ignora lo mal escrito."""
+    out = []
+    for x in (valor or "").split(","):
+        try:
+            h = parse_hora(x)
+        except ValueError:
+            continue
+        if h is not None:
+            out.append(h)
+    return sorted(out)
 
 
 # ---------------------------------------------------------------------------

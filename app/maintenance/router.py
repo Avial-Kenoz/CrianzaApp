@@ -404,6 +404,68 @@ async def ot_definitiva(request: Request, ot_id: int):
 
 
 # ---------------------------------------------------------------------------
+# ¿Dónde se va el tiempo? (PR4)
+# ---------------------------------------------------------------------------
+@router.get("/tiempos", response_class=HTMLResponse)
+def tiempos(request: Request, desde: str = "", hasta: str = "", sitio: str = "", prioridad: str = "",
+            sistema_id: str = "", contratista_id: str = "", abiertas: str = ""):
+    db = SessionLocal()
+    try:
+        hoy = datetime.now().date()
+        try:
+            d = datetime.strptime(desde, "%Y-%m-%d") if desde else datetime.combine(hoy - timedelta(days=90), datetime.min.time())
+            h = datetime.strptime(hasta, "%Y-%m-%d") if hasta else datetime.combine(hoy, datetime.min.time())
+        except ValueError:
+            return _volver(f"{PREFIX}/tiempos", err="Fecha inválida.")
+        filtros = {
+            "sitio": sitio if sitio in SITIOS else None,
+            "prioridad": prioridad if prioridad in rules.PRIORIDADES else None,
+            "sistema_id": int(sistema_id) if sistema_id.isdigit() else None,
+            "contratista_id": int(contratista_id) if contratista_id.isdigit() else None,
+        }
+        res = service.analisis_tiempos(db, desde=d, hasta=h + timedelta(days=1), incluir_abiertas=bool(abiertas), **filtros)
+        return _render(
+            "mantenimiento_tiempos.html", request, active="tiempos", r=res,
+            f_desde=d.date(), f_hasta=h.date(), f_abiertas=bool(abiertas), f=filtros,
+            sistemas=service.sistemas(db, solo_activos=False), contratistas=service.contratistas(db, solo_activos=False),
+            **_ot_ctx(),
+        )
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Resumen de fallas menores (PR4)
+# ---------------------------------------------------------------------------
+@router.get("/resumen", response_class=HTMLResponse)
+def resumen(request: Request):
+    """Vista previa del resumen tal como sale por Telegram, a quién le llega y cuándo."""
+    db = SessionLocal()
+    try:
+        from app.maintenance.models import MntNotificacion
+        params = service.parametros(db)
+        return _render(
+            "mantenimiento_resumen.html", request, active="tablero",
+            texto=notify.texto_resumen(db, vacio_ok=True),
+            destinatarios=notify.destinatarios_resumen(db),
+            cortes=rules.parse_cortes(params.get("resumen_horas")), fmt_hora=rules.formato_hora,
+            dias=list(enumerate(rules.DIAS_LABELS)), habilitado=notify.envios_habilitados(),
+            ultimos=(db.query(MntNotificacion).filter(MntNotificacion.motivo.in_(["resumen", "repeticion_p1"]))
+                     .order_by(MntNotificacion.enviado_at.desc()).limit(10).all()),
+        )
+    finally:
+        db.close()
+
+
+@router.post("/resumen/enviar")
+def resumen_enviar():
+    if not notify.envios_habilitados():
+        return _volver(f"{PREFIX}/resumen", err="Los envíos están deshabilitados en este servidor (solo salen desde producción).")
+    notify.en_segundo_plano(lambda db: notify.enviar_resumenes(db, forzar=True))
+    return _volver(f"{PREFIX}/resumen", msg="Resumen enviado a quienes lo reciben. Refresca en unos segundos para ver el resultado abajo.")
+
+
+# ---------------------------------------------------------------------------
 # Parte diario
 # ---------------------------------------------------------------------------
 @router.get("/parte", response_class=HTMLResponse)
