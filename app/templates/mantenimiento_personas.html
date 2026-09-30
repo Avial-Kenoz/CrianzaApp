@@ -22,10 +22,77 @@
 
   {% include '_mnt_tabs.html' %}
 
+  {# ---------------------------------------------------------------- estado del bot #}
+  <div class="note {{ '' if bot.activo and not bot.ultimo_error else 'warn' }}" style="margin:0 0 14px">
+    <b>Bot de mantenimiento</b>{% if bot_username %} · <span class="code">@{{ bot_username }}</span>{% endif %}:
+    {% if bot.activo %}
+      escuchando desde {{ bot.desde.strftime('%d-%m %H:%M') }}{% if bot.ultimo_ok %} · última lectura hace {{ dur((ahora - bot.ultimo_ok).total_seconds() / 3600) }}{% endif %}
+      · {{ bot.procesados }} mensaje{{ 's' if bot.procesados != 1 else '' }} procesado{{ 's' if bot.procesados != 1 else '' }}.
+    {% else %}
+      <b>no está escuchando</b>{% if bot.motivo_inactivo %} ({{ bot.motivo_inactivo }}){% endif %}. Los avisos por Telegram no llegan.
+    {% endif %}
+    {% if bot.ultimo_error %}<div class="mono" style="margin-top:4px">Último error {{ bot.ultimo_error_at.strftime('%d-%m %H:%M') }}: {{ bot.ultimo_error }}
+      {% if '409' in bot.ultimo_error %} — <b>otro proceso está leyendo con el mismo token</b> (¿servidor de desarrollo con MNT_BOT_ENABLED=1?).{% endif %}</div>{% endif %}
+  </div>
+
   {% if advertencias %}
   <ul class="warn-list">
     {% for a in advertencias %}<li class="note warn" style="margin:0">⚠️ {{ a }}</li>{% endfor %}
   </ul>
+  {% endif %}
+
+  {% if errores_envio %}
+  <div class="note bad" style="margin:0 0 14px">
+    <b>Mensajes que no llegaron</b> (últimos {{ errores_envio | length }}):
+    <ul style="margin:6px 0 0 18px">
+      {% for n in errores_envio %}
+      <li class="mono">{{ n.enviado_at.strftime('%d-%m %H:%M') }} · {{ n.motivo }} → {{ n.destino or n.chat_id }}: {{ n.error }}</li>
+      {% endfor %}
+    </ul>
+    <div class="hint">«HTTP 403» casi siempre significa que esa persona no le ha escrito /start al bot.</div>
+  </div>
+  {% endif %}
+
+  {# ------------------------------------------------------------ bandeja sin vincular #}
+  {% if sin_vincular %}
+  <div class="section-title" style="margin-top:6px">Telegram sin vincular ({{ sin_vincular | length }})</div>
+  <div class="card" style="margin-bottom:6px">
+    <table>
+      <thead><tr><th>Quién escribió</th><th>ID</th><th>Último contacto</th><th class="num">Avisos</th><th>Vincular a</th><th></th></tr></thead>
+      <tbody>
+        {% for c in sin_vincular %}
+        <tr class="{{ 'baja' if c.bloqueado }}">
+          <td><b>{{ c.nombre or '—' }}</b>{% if c.username %}<div class="mono">@{{ c.username }}</div>{% endif %}</td>
+          <td class="mono">{{ c.telegram_user_id }}</td>
+          <td class="mono">{{ c.ultimo_contacto.strftime('%d-%m %H:%M') }}</td>
+          <td class="num">{{ n_avisos.get(c.telegram_user_id, 0) }}</td>
+          <td>
+            {% if not c.bloqueado %}
+            <form class="inline" method="post" action="{{ prefix }}/personas/telegram/{{ c.id }}/vincular" style="display:flex; gap:6px; flex-wrap:wrap">
+              <select name="persona_id" onchange="this.form.querySelector('.nuevo').hidden = !!this.value">
+                <option value="">+ Persona nueva…</option>
+                {% for p in todas_personas if not p.telegram_user_id %}<option value="{{ p.id }}">{{ p.nombre }}</option>{% endfor %}
+              </select>
+              <span class="nuevo" style="display:contents">
+                <input type="text" name="nombre_nuevo" value="{{ c.nombre or '' }}" maxlength="120" placeholder="Nombre" style="width:150px">
+                <select name="rol">{% for k, l in roles_persona.items() %}<option value="{{ k }}" {% if k == 'reportante' %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+              </span>
+              <button class="btn btn-mini" type="submit">Vincular</button>
+            </form>
+            {% else %}<span class="mono">bloqueado</span>{% endif %}
+          </td>
+          <td>
+            <form class="inline" method="post" action="{{ prefix }}/personas/telegram/{{ c.id }}/bloquear">
+              <input type="hidden" name="bloquear" value="{{ '0' if c.bloqueado else '1' }}">
+              <button class="btn btn-mini" type="submit">{{ 'Desbloquear' if c.bloqueado else 'Bloquear' }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="hint" style="margin-bottom:10px">Al vincular, sus avisos anteriores quedan atribuidos a esa persona y el bot ya puede escribirle.</div>
   {% endif %}
 
   {% set p = editando %}
@@ -53,7 +120,7 @@
       <div>
         <label for="telegram_user_id">ID de Telegram</label>
         <input type="text" id="telegram_user_id" name="telegram_user_id" maxlength="40" inputmode="numeric" value="{{ p.telegram_user_id or '' if p else '' }}" />
-        <div class="hint">Desde PR3 se vincula solo, desde la bandeja de «no vinculados».</div>
+        <div class="hint">Lo normal es no escribirlo: la persona le manda /start al bot y se vincula desde la bandeja «sin vincular».</div>
       </div>
       <div>
         <label for="planta_username">Usuario en PlantaApp</label>

@@ -21,11 +21,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from jinja2 import Environment, FileSystemLoader
 
 from app.db.session import SessionLocal
-from app.maintenance import rules, service
+from app.maintenance import notify, rules, service, telegram_bot
 from app.maintenance.models import (
     SITIOS, SITIO_LABELS, MntAviso, MntContratista, MntEquipo, MntOt, MntPersona,
-    MntSistema, MntTipoEquipo, MntParametro,
+    MntSistema, MntTipoEquipo, MntParametro, MntTelegramContacto,
 )
+from sqlalchemy import func
 from app.maintenance.service import ErrorValidacion
 
 PREFIX = "/views/ui/mantenimiento"
@@ -203,6 +204,8 @@ async def aviso_nuevo(request: Request):
             foto=contenido if contenido and len(contenido) <= 3 * 1024 * 1024 else None,
         )
         db.commit()
+        if aviso.prioridad_sugerida == "P1":
+            notify.en_segundo_plano(notify.alarma_aviso, aviso.id)
         return _volver(f"{PREFIX}/tablero",
                        msg=f"Aviso {rules.folio_aviso(aviso.id)} registrado · sugerida {aviso.prioridad_sugerida}.")
     except (ErrorValidacion, ValueError) as e:
@@ -222,6 +225,7 @@ async def avisos_aceptar(request: Request):
         r = service.aceptar_avisos(db, ids, estado_inicial=form.get("estado_inicial") or "pendiente",
                                    cuando=_parse_dt(form.get("cuando")), actor_texto=form.get("actor"))
         db.commit()
+        notify.en_segundo_plano(notify.confirmar_acuse, ids)
         partes = []
         if r["creadas"]:
             partes.append(f"{len(r['creadas'])} OT creada{'s' if len(r['creadas']) != 1 else ''} "
@@ -248,6 +252,7 @@ async def aviso_unir(request: Request, aviso_id: int):
             return _volver(f"{PREFIX}/tablero", err="Aviso u OT inexistente.")
         service.unir_aviso(db, aviso, ot, actor_texto=form.get("actor"))
         db.commit()
+        notify.en_segundo_plano(notify.confirmar_acuse, [aviso.id])
         return _volver(f"{PREFIX}/tablero", msg=f"{rules.folio_aviso(aviso.id)} unido a {rules.folio_ot(ot.id)}.")
     except ErrorValidacion as e:
         db.rollback()
@@ -282,6 +287,19 @@ def aviso_foto(aviso_id: int):
         if a is None or not a.foto:
             return Response(status_code=404)
         return Response(content=a.foto, media_type="image/jpeg")
+    finally:
+        db.close()
+
+
+@router.get("/avisos/{aviso_id}/audio")
+def aviso_audio(aviso_id: int):
+    """Nota de voz del aviso (ogg/opus de Telegram). Se escucha, no se transcribe."""
+    db = SessionLocal()
+    try:
+        a = db.get(MntAviso, aviso_id)
+        if a is None or not a.audio:
+            return Response(status_code=404)
+        return Response(content=a.audio, media_type="audio/ogg")
     finally:
         db.close()
 
@@ -352,6 +370,7 @@ async def ot_cerrar(request: Request, ot_id: int):
             cuando=_parse_dt(form.get("cuando")), repuestos=form.get("repuestos"),
             trabajo=form.get("trabajo"), actor_texto=form.get("actor"))
         db.commit()
+        notify.en_segundo_plano(notify.confirmar_cierre, ot.id)
         extra = " Quedó como provisorio: crea la OT del arreglo definitivo abajo." if ot.provisorio else ""
         return _volver(f"{PREFIX}/ots/{ot_id}", msg=f"{rules.folio_ot(ot.id)} cerrada.{extra}")
     except ErrorValidacion as e:
@@ -717,10 +736,18 @@ def personas_lista(request: Request, editar: Optional[int] = None, inactivas: st
     db = SessionLocal()
     try:
         lista = service.personas(db, solo_activas=not inactivas)
+        sin_vincular = service.contactos_sin_vincular(db)
+        n_avisos = dict(db.query(MntAviso.telegram_chat_id, func.count(MntAviso.id))
+                        .filter(MntAviso.telegram_chat_id.in_([c.telegram_user_id for c in sin_vincular] or [""]))
+                        .group_by(MntAviso.telegram_chat_id).all())
         return _render(
             "mantenimiento_personas.html", request, active="personas",
             personas=lista, editando=db.get(MntPersona, editar) if editar else None,
             advertencias=service.advertencias_personas(db),
+            sin_vincular=sin_vincular, n_avisos=n_avisos,
+            todas_personas=service.personas(db),
+            bot=telegram_bot.estado, bot_username=_bot_username(),
+            errores_envio=notify.ultimos_errores(db), dur=rules.formato_duracion, ahora=datetime.now(),
             dias=list(enumerate(rules.DIAS_LABELS)), fmt_hora=rules.formato_hora,
             f_inactivas=bool(inactivas), sitios=SITIOS,
         )
@@ -745,6 +772,38 @@ async def persona_guardar(request: Request):
         db.rollback()
         destino = f"{PREFIX}/personas" + (f"?editar={persona_id}" if persona_id else "")
         return _volver(destino, err=str(e))
+    finally:
+        db.close()
+
+
+@router.post("/personas/telegram/{contacto_id}/vincular")
+async def contacto_vincular(request: Request, contacto_id: int):
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        pid = form.get("persona_id")
+        p = service.vincular_contacto(db, contacto_id,
+                                      persona_id=int(pid) if pid and pid.isdigit() else None,
+                                      nombre_nuevo=form.get("nombre_nuevo"), rol=form.get("rol") or "reportante")
+        db.commit()
+        return _volver(f"{PREFIX}/personas", msg=f"Telegram vinculado a {p.nombre}.")
+    except ErrorValidacion as e:
+        db.rollback()
+        return _volver(f"{PREFIX}/personas", err=str(e))
+    finally:
+        db.close()
+
+
+@router.post("/personas/telegram/{contacto_id}/bloquear")
+def contacto_bloquear(contacto_id: int, bloquear: str = Form("1")):
+    db = SessionLocal()
+    try:
+        c = db.get(MntTelegramContacto, contacto_id)
+        if c is not None:
+            c.bloqueado = bloquear == "1"
+            db.commit()
+        return _volver(f"{PREFIX}/personas", msg="Contacto bloqueado: el bot lo ignorará." if bloquear == "1"
+                       else "Contacto desbloqueado.")
     finally:
         db.close()
 
@@ -825,7 +884,9 @@ def catalogos(request: Request):
         for e in todos:
             uso_sis[e.sistema_id] = uso_sis.get(e.sistema_id, 0) + 1
             uso_tipo[e.tipo_id] = uso_tipo.get(e.tipo_id, 0) + 1
-        params = db.query(MntParametro).order_by(MntParametro.id).all()
+        # Las claves con «_» son internas (p. ej. `_bot_offset`): no se editan a mano.
+        params = [p for p in db.query(MntParametro).order_by(MntParametro.id).all()
+                  if not p.clave.startswith("_")]
         return _render(
             "mantenimiento_catalogos.html", request, active="catalogos",
             sistemas=service.sistemas(db, solo_activos=False),

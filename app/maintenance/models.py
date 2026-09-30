@@ -258,7 +258,46 @@ class MntAviso(Base):
     estado = Column(String(15), nullable=False, default="nuevo", index=True)
     ot_id = Column(BigInteger, ForeignKey("mnt_ots.id"))
     motivo_descarte = Column(String(200))
+    # Chat desde el que se avisó por Telegram: para confirmarle al que avisó
+    # aunque todavía no esté vinculado a una persona.
+    telegram_chat_id = Column(String(40))
     created_at = Column(TIMESTAMP, nullable=False)
+
+
+class MntTelegramContacto(Base):
+    """Todo el que le escribe al bot, vinculado o no (bandeja, spec §6.3)."""
+
+    __tablename__ = "mnt_telegram_contactos"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    telegram_user_id = Column(String(40), nullable=False, unique=True)
+    nombre = Column(String(120))
+    username = Column(String(80))
+    primer_contacto = Column(TIMESTAMP, nullable=False)
+    ultimo_contacto = Column(TIMESTAMP, nullable=False)
+    bloqueado = Column(Boolean, nullable=False, default=False)
+
+
+class MntNotificacion(Base):
+    """Cada mensaje que el módulo intentó mandar y cómo le fue.
+
+    `motivo`: alarma_p1, confirmacion_acuse, confirmacion_cierre…
+    `destino`: nombre legible (persona o «semanero»), para leer la bitácora
+    sin cruzar ids.
+    """
+
+    __tablename__ = "mnt_notificaciones"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    motivo = Column(String(30), nullable=False)
+    aviso_id = Column(BigInteger, ForeignKey("mnt_avisos.id", ondelete="SET NULL"), index=True)
+    ot_id = Column(BigInteger, ForeignKey("mnt_ots.id", ondelete="SET NULL"), index=True)
+    persona_id = Column(BigInteger, ForeignKey("mnt_personas.id", ondelete="SET NULL"))
+    destino = Column(String(120))
+    chat_id = Column(String(40))
+    ok = Column(Boolean, nullable=False)
+    error = Column(String(300))
+    enviado_at = Column(TIMESTAMP, nullable=False)
 
 
 class MntOtEvento(Base):

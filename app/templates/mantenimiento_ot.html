@@ -79,7 +79,9 @@
               <td><span class="code">{{ folio_aviso(a.id) }}</span><div class="mono">{{ a.detectado_at.strftime('%d-%m %H:%M') }}</div></td>
               <td><span class="pill cond-{{ a.condicion }}">{{ condiciones[a.condicion] }}</span>
                 {% if a.respaldo_entro %}<div class="mono">Respaldo entró: {{ respaldo_entro[a.respaldo_entro] }}</div>{% endif %}</td>
-              <td class="desc">{{ a.descripcion or '—' }}{% if a.reportante_texto %}<div class="mono">— {{ a.reportante_texto }}</div>{% endif %}</td>
+              <td class="desc">{{ a.descripcion or ('' if a.audio else '—') }}
+                {% if a.audio %}<audio controls preload="none" src="{{ prefix }}/avisos/{{ a.id }}/audio" style="height:30px; max-width:220px; display:block"></audio>{% endif %}
+                {% if a.reportante_texto %}<div class="mono">— {{ a.reportante_texto }}{{ ' · Telegram' if a.origen == 'telegram' }}</div>{% endif %}</td>
               <td>{% if a.foto %}<a href="{{ prefix }}/avisos/{{ a.id }}/foto" target="_blank"><img class="thumb" src="{{ prefix }}/avisos/{{ a.id }}/foto" alt="foto"></a>{% endif %}</td>
             </tr>
             {% else %}

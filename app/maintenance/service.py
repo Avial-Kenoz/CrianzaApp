@@ -18,6 +18,7 @@ from app.maintenance import rules
 from app.maintenance.models import (
     SITIOS, MntSistema, MntTipoEquipo, MntContratista, MntPersona, MntEquipo,
     MntEquipoDestino, MntCriticidadEvaluacion, MntParametro, MntAviso, MntOt, MntOtEvento,
+    MntTelegramContacto,
 )
 
 
@@ -53,7 +54,7 @@ def actualizar_parametros(db: Session, valores: dict) -> int:
     cambios = 0
     now = datetime.now()
     for p in db.query(MntParametro).all():
-        if p.clave not in valores:
+        if p.clave not in valores or p.clave.startswith("_"):
             continue
         nuevo = (valores[p.clave] or "").strip()
         if p.clave.endswith("_horas") and p.clave != "resumen_horas":
@@ -232,8 +233,10 @@ def guardar_persona(db: Session, datos: dict, persona: Optional[MntPersona] = No
     persona.rol = rol
     persona.sitio = _sitio_o_none(datos.get("sitio"))
     if telegram != persona.telegram_user_id:
-        # Un ID nuevo no está verificado hasta que esa persona le escriba al bot.
-        persona.bot_iniciado = False
+        # El bot solo puede escribirle a quien ya le escribió: si ese ID ya
+        # aparece como contacto, está iniciado; si no, hasta que haga /start.
+        persona.bot_iniciado = bool(telegram and db.query(MntTelegramContacto)
+                                    .filter(MntTelegramContacto.telegram_user_id == telegram).first())
     persona.telegram_user_id = telegram
     persona.alarmas_sitios = ",".join(s for s in SITIOS if s in alarmas) or None
     persona.recibe_resumen = recibe_resumen
@@ -243,6 +246,67 @@ def guardar_persona(db: Session, datos: dict, persona: Optional[MntPersona] = No
     persona.planta_username = (datos.get("planta_username") or "").strip() or None
     persona.updated_at = now
     return persona
+
+
+# ---------------------------------------------------------------------------
+# Contactos de Telegram y vinculación (spec §6.3)
+# ---------------------------------------------------------------------------
+def registrar_contacto(db: Session, telegram_user_id: str, nombre: Optional[str],
+                       username: Optional[str]) -> tuple[MntTelegramContacto, Optional[MntPersona]]:
+    """Cada mensaje al bot pasa por aquí: guarda o refresca el contacto y, si
+    ya es una persona vinculada, la marca como «bot iniciado» (ahora el bot
+    puede escribirle). Devuelve (contacto, persona o None)."""
+    uid = str(telegram_user_id)
+    now = datetime.now()
+    c = db.query(MntTelegramContacto).filter(MntTelegramContacto.telegram_user_id == uid).first()
+    if c is None:
+        c = MntTelegramContacto(telegram_user_id=uid, primer_contacto=now, bloqueado=False)
+        db.add(c)
+    c.nombre = (nombre or "").strip()[:120] or c.nombre
+    c.username = (username or "").strip()[:80] or c.username
+    c.ultimo_contacto = now
+    p = db.query(MntPersona).filter(MntPersona.telegram_user_id == uid).first()
+    if p is not None and not p.bot_iniciado:
+        p.bot_iniciado = True
+    return c, p
+
+
+def contactos_sin_vincular(db: Session) -> list:
+    vinculados = {u for (u,) in db.query(MntPersona.telegram_user_id)
+                  .filter(MntPersona.telegram_user_id.isnot(None)).all()}
+    return [c for c in db.query(MntTelegramContacto).order_by(MntTelegramContacto.ultimo_contacto.desc()).all()
+            if c.telegram_user_id not in vinculados]
+
+
+def vincular_contacto(db: Session, contacto_id: int, *, persona_id: Optional[int] = None,
+                      nombre_nuevo: Optional[str] = None, rol: str = "reportante") -> MntPersona:
+    """Asocia un contacto de Telegram a una persona (existente o nueva) y le
+    atribuye los avisos que ya había mandado sin estar vinculado."""
+    c = db.get(MntTelegramContacto, contacto_id)
+    if c is None:
+        raise ErrorValidacion("Ese contacto no existe.")
+    otra = db.query(MntPersona).filter(MntPersona.telegram_user_id == c.telegram_user_id).first()
+    if otra is not None:
+        raise ErrorValidacion(f"Ese Telegram ya está vinculado a {otra.nombre}.")
+    if persona_id:
+        p = db.get(MntPersona, persona_id)
+        if p is None:
+            raise ErrorValidacion("Esa persona no existe.")
+    else:
+        nombre = (nombre_nuevo or c.nombre or "").strip()
+        if not nombre:
+            raise ErrorValidacion("Indica el nombre de la persona nueva.")
+        p = MntPersona(nombre=nombre, rol=rol if rol in ROLES_PERSONA else "reportante",
+                       activo=True, created_at=datetime.now())
+        db.add(p)
+    p.telegram_user_id = c.telegram_user_id
+    p.bot_iniciado = True                    # si está en la bandeja, ya le escribió al bot
+    p.updated_at = datetime.now()
+    db.flush()
+    (db.query(MntAviso)
+       .filter(MntAviso.telegram_chat_id == c.telegram_user_id, MntAviso.reportado_por_id.is_(None))
+       .update({MntAviso.reportado_por_id: p.id}, synchronize_session=False))
+    return p
 
 
 def advertencias_personas(db: Session) -> list[str]:
@@ -261,6 +325,14 @@ def advertencias_personas(db: Session) -> list[str]:
                        f"mantenimiento (/start). Hasta que lo haga, el bot no puede escribirle.")
     if not any(p.recibe_resumen for p in activas):
         out.append("Nadie recibe el resumen de fallas menores.")
+    # El semanero de Crianza sale de la rotación de calidad de agua: recibir
+    # ese bot no habilita a este. Si nunca le escribió, la alarma nocturna no le llega.
+    from app.maintenance.notify import semanero_actual
+    sem = semanero_actual(db, datetime.now())
+    if sem and not db.query(MntTelegramContacto).filter(
+            MntTelegramContacto.telegram_user_id == sem["chat_id"]).first():
+        out.append(f"{sem['nombre']} está de turno esta semana pero nunca le ha escrito al bot de "
+                   f"mantenimiento: no recibirá las alarmas P1 de Crianza hasta que le mande /start.")
     return out
 
 
@@ -580,7 +652,8 @@ def plazo_de(db: Session, prioridad: str) -> Optional[Decimal]:
 def crear_aviso(db: Session, *, equipo_id: int, condicion: str, origen: str,
                 detectado_at: Optional[datetime] = None, respaldo_entro: Optional[str] = None,
                 descripcion: Optional[str] = None, reportado_por_id: Optional[int] = None,
-                reportante_texto: Optional[str] = None, foto: Optional[bytes] = None) -> MntAviso:
+                reportante_texto: Optional[str] = None, foto: Optional[bytes] = None,
+                audio: Optional[bytes] = None, telegram_chat_id: Optional[str] = None) -> MntAviso:
     """Registra un aviso de falla. La misma función la usará el bot (PR3).
 
     La entrada nunca rechaza por falta de datos accesorios (spec §6.2): solo
@@ -605,7 +678,7 @@ def crear_aviso(db: Session, *, equipo_id: int, condicion: str, origen: str,
         respaldo_entro=respaldo_entro, descripcion=(descripcion or "").strip() or None,
         reportado_por_id=reportado_por_id,
         reportante_texto=(reportante_texto or "").strip() or None,
-        foto=foto or None,
+        foto=foto or None, audio=audio or None, telegram_chat_id=telegram_chat_id,
         prioridad_sugerida=rules.prioridad_sugerida(equipo.criticidad, condicion, respaldo_entro),
         estado="nuevo", created_at=now,
     )

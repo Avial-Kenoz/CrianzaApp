@@ -81,4 +81,6 @@ from app.maintenance.models import (
     MntOt,
     MntAviso,
     MntOtEvento,
+    MntTelegramContacto,
+    MntNotificacion,
 )

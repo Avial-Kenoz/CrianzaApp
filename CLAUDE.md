@@ -174,10 +174,11 @@ puede depender de que cargue el resto de la app. Al tocar la PWA hay que **subir
 
 ## Módulo Mantenimiento de Maquinaria
 
-Ver `especificacion_mantenimiento_v1.md`. **PR1 y PR2 hechos** (catálogo de equipos con encuesta
-de criticidad, personas, contratistas, hoja de QR; avisos, acuse en lote, OT con estados y
-tramos, parte diario, cierre); pendientes PR3 (bot), PR3P (satélite de Planta), PR4 (alarmas y
-resumen por Telegram, vista agregada de tiempos)… A diferencia del resto de la app, vive en **su propio
+Ver `especificacion_mantenimiento_v1.md`. **PR1, PR2 y PR3 hechos** (catálogo de equipos con
+encuesta de criticidad, personas, contratistas, hoja de QR; avisos, acuse en lote, OT con estados
+y tramos, parte diario, cierre; bot de Telegram @AcuicolaMantenimientoBOt con alarma P1 por sitio
+y confirmaciones al que avisó); pendientes PR3P (satélite de Planta), PR4 (resumen, repetición de
+P1, vista agregada de tiempos)… A diferencia del resto de la app, vive en **su propio
 paquete** `app/maintenance/` (`models.py`, `rules.py`, `service.py`, `router.py` →
 `/views/ui/mantenimiento/*`; plantillas `mantenimiento_*.html` + parciales `_mnt_*`).
 Invariantes:
@@ -187,7 +188,8 @@ Invariantes:
   una API firmada (PR3P). No duplicar lógica allá.
 - **Toda regla va en `service.py`/`rules.py`**, nunca en el router: la web, la API de Planta y el
   bot llaman a las mismas funciones. `rules.py` es puro y tiene pruebas sin pytest:
-  `.venv\Scripts\python.exe -m unittest app.maintenance.test_rules`.
+  `.venv\Scripts\python.exe -m unittest app.maintenance.test_rules` (y, con `DATABASE_URL`
+  forzada a fastapp_etapa1, `app.maintenance.test_bot`).
 - **La criticidad no se elige, se calcula** de la encuesta (tabla en `rules.py`, replicada en JS
   en `_mnt_encuesta.html` solo como vista previa: si se cambia una, cambiar la otra). Cada
   evaluación se guarda con sus respuestas y `regla_version`; nunca se borra.
@@ -207,6 +209,16 @@ Invariantes:
 - **El estado del equipo se deriva** (`recalcular_estado_equipo`): detenido/degradado si tiene un
   aviso sin atender o una OT abierta (no «reparada») con esa condición. Llamarlo en todo lo que
   cambie avisos u OT.
+- **Bot** (`telegram_bot.py`): token propio `MNT_TELEGRAM_TOKEN` (no el de calidad de agua) y
+  **solo arranca con `MNT_BOT_ENABLED=1`**. Telegram admite UN lector por token: nunca ponerlo en
+  1 en dev ni en un script (el 409 se ve en Personas → estado del bot). El último update va en
+  `mnt_parametros._bot_offset` (claves con «_» no salen en la UI). La conversación vive en
+  memoria (se pierde al reiniciar; expira a los 10 min y se guarda si ya tenía condición).
+  `Bot` recibe la API por parámetro: `test_bot.py` lo prueba sin red contra la BD (datos `ZZ`).
+- **Mensajes salientes** (`notify.py`): alarma P1 a `alarmas_sitios` + semanero de turno de
+  calidad de agua (solo Crianza); confirmación al que avisó (acuse y cierre). Van en un hilo
+  aparte con su sesión, después del commit, y cada intento queda en `mnt_notificaciones`. Un bot
+  solo puede escribir a quien le hizo /start: HTTP 403 en la bitácora = falta el /start.
 - Sistemas y tipos crecen desde la ficha («+ Nuevo…», `POST /catalogos/{que}/rapido`, JSON) y se
   limpian con **fusionar** (mueve equipos y desactiva el duplicado; no borra).
 - ⚠️ **Producción corre desde este mismo árbol de trabajo** (sin `--reload`): cualquier reinicio,
