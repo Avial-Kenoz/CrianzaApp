@@ -192,8 +192,22 @@ def confirmar_cierre(db: Session, ot_id: int, api: Optional[Api] = None) -> None
 # ---------------------------------------------------------------------------
 # En segundo plano
 # ---------------------------------------------------------------------------
+def envios_habilitados() -> bool:
+    """Los mensajes a personas reales salen SOLO donde el bot está habilitado
+    (`MNT_BOT_ENABLED=1`, producción). Pasó el 30-09: pruebas en un servidor de
+    desarrollo, contra la base compartida, generaron alarmas P1 dirigidas al
+    semanero real; no salieron solo porque ese servidor no tenía el token."""
+    return (os.getenv("MNT_BOT_ENABLED") or "").strip() == "1"
+
+
 def en_segundo_plano(fn, *args) -> None:
-    """Corre `fn(db, *args)` en un hilo con su propia sesión. Nunca levanta."""
+    """Corre `fn(db, *args)` en un hilo con su propia sesión. Nunca levanta.
+    Fuera de producción no hace nada (ver `envios_habilitados`); las pruebas
+    llaman a las funciones directo, con una API falsa."""
+    if not envios_habilitados():
+        logger.info("mnt: envío omitido (%s): MNT_BOT_ENABLED no es 1", getattr(fn, "__name__", fn))
+        return
+
     def _run():
         db = SessionLocal()
         try:
