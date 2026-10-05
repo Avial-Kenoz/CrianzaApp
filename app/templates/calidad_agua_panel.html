@@ -167,6 +167,8 @@
     .pond-table tr.pr-alerta { background: #fffdf5; }
     .pond-table tr.pr-alarma { background: #fff8f8; }
     .pond-table tr.pr-stale td { opacity: .45; }
+    .pond-table tr.pr-hist td { opacity: .35; }
+    .pond-table td.pt-flags { white-space: nowrap; }
     .pond-table td.pv-alerta { color: #b45309; }
     .pond-table td.pv-alarma { color: #b91c1c; }
     .pt-flags { width: 34px; }
@@ -250,6 +252,27 @@
     .param.p-alerta { border-color: #fde68a; background: #fffdf5; }
     .flags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; font-size: .82rem; color: #6b7280; }
     .no-data { color: #9ca3af; font-size: .86rem; padding: 6px 0; }
+    /* Tendencia del biofiltro: se elige el parametro tocando la fila o el chip. */
+    .bf-table tr[data-param] { cursor: pointer; }
+    .bf-table tr[data-param]:hover td { background: #f3f4f6; }
+    .bf-table tr.tr-sel td { background: #eef2ff; }
+    .bf-table tr.tr-sel td:first-child { box-shadow: inset 3px 0 0 #6366f1; }
+    .trend-card { margin-top: 14px; background: #f9fafb; border: 1px solid #eef0f2;
+                  border-radius: 12px; padding: 12px 14px; }
+    .tr-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    .tr-title { font-size: .86rem; font-weight: 700; color: #111827; }
+    .tr-n { font-size: .7rem; color: #9ca3af; }
+    .tr-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 6px; }
+    .tr-chip { border: 1px solid #e5e7eb; background: #fff; color: #4b5563; font: inherit;
+               font-size: .72rem; font-weight: 600; padding: 3px 9px; border-radius: 999px; cursor: pointer; }
+    .tr-chip.tr-der { border-style: dashed; }
+    .tr-chip.on { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+    .tr-read { min-height: 1.2em; font-size: .74rem; color: #374151; font-variant-numeric: tabular-nums; }
+    .tr-read b { font-weight: 700; }
+    .tr-plot svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+    .tr-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: .7rem; color: #6b7280; margin-top: 4px; }
+    .tr-legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+    .tr-legend i.dash { border-top-style: dashed; }
     .no-data a, .sub-card a { color: #2563eb; text-decoration: none; }
   </style>
 </head>
@@ -384,15 +407,15 @@
         <table class="bf-table">
           <thead><tr><th>Parámetro</th><th class="col-in">Entrada</th><th class="col-out">Salida</th></tr></thead>
           <tbody>
-            <tr><td>pH</td><td>{{ fmt(bf.in_ph, '2') }}</td><td>{{ fmt(bf.out_ph, '2') }}</td></tr>
-            <tr><td>Temperatura</td><td>{{ fmt(bf.in_temp_c, '1', '°C') }}</td><td>{{ fmt(bf.out_temp_c, '1', '°C') }}</td></tr>
-            <tr><td>Alcalinidad</td><td>{{ fmt(bf.in_alkalinity, '0', 'mg CaCO₃/L') }}</td><td><span class="meta" title="La alcalinidad se titula solo a la entrada">solo entrada</span></td></tr>
-            <tr><td>O₂ disuelto</td><td>{{ fmt(bf.in_do_mg_l, '1', 'mg/L') }}</td><td>{{ fmt(bf.out_do_mg_l, '1', 'mg/L') }}</td></tr>
-            <tr><td>Amonio (NH₄-N)</td><td>{{ fmt(bf.in_nh4_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_nh4_n, '3', 'mg/L') }}</td></tr>
-            <tr><td>Nitrito (NO₂-N)</td><td>{{ fmt_hl(bf.in_no2_n, '3', 'mg/L', u.bf_levels.get('in_no2_n')) }}</td><td>{{ fmt_hl(bf.out_no2_n, '3', 'mg/L', u.bf_levels.get('out_no2_n')) }}</td></tr>
-            <tr><td>Nitrato (NO₃-N)</td><td>{{ fmt(bf.in_no3_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_no3_n, '3', 'mg/L') }}</td></tr>
-            <tr><td>N total</td><td>{{ fmt(bf.tn_in, '2', 'mg/L') }}</td><td>{{ fmt(bf.tn_out, '2', 'mg/L') }}</td></tr>
-            <tr><td>NH₃-N no ionizado</td><td>{{ fmt_hl(bf.nh3_n_in, '4', 'mg/L', u.bf_levels.get('nh3_n_in')) }}</td><td>{{ fmt_hl(bf.nh3_n_out, '4', 'mg/L', u.bf_levels.get('nh3_n_out')) }}</td></tr>
+            <tr data-param="ph"><td>pH</td><td>{{ fmt(bf.in_ph, '2') }}</td><td>{{ fmt(bf.out_ph, '2') }}</td></tr>
+            <tr data-param="temp"><td>Temperatura</td><td>{{ fmt(bf.in_temp_c, '1', '°C') }}</td><td>{{ fmt(bf.out_temp_c, '1', '°C') }}</td></tr>
+            <tr data-param="alk"><td>Alcalinidad</td><td>{{ fmt(bf.in_alkalinity, '0', 'mg CaCO₃/L') }}</td><td><span class="meta" title="La alcalinidad se titula solo a la entrada">solo entrada</span></td></tr>
+            <tr data-param="do"><td>O₂ disuelto</td><td>{{ fmt(bf.in_do_mg_l, '1', 'mg/L') }}</td><td>{{ fmt(bf.out_do_mg_l, '1', 'mg/L') }}</td></tr>
+            <tr data-param="nh4"><td>Amonio (NH₄-N)</td><td>{{ fmt(bf.in_nh4_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_nh4_n, '3', 'mg/L') }}</td></tr>
+            <tr data-param="no2"><td>Nitrito (NO₂-N)</td><td>{{ fmt_hl(bf.in_no2_n, '3', 'mg/L', u.bf_levels.get('in_no2_n')) }}</td><td>{{ fmt_hl(bf.out_no2_n, '3', 'mg/L', u.bf_levels.get('out_no2_n')) }}</td></tr>
+            <tr data-param="no3"><td>Nitrato (NO₃-N)</td><td>{{ fmt(bf.in_no3_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_no3_n, '3', 'mg/L') }}</td></tr>
+            <tr data-param="tn"><td>N total</td><td>{{ fmt(bf.tn_in, '2', 'mg/L') }}</td><td>{{ fmt(bf.tn_out, '2', 'mg/L') }}</td></tr>
+            <tr data-param="nh3"><td>NH₃-N no ionizado</td><td>{{ fmt_hl(bf.nh3_n_in, '4', 'mg/L', u.bf_levels.get('nh3_n_in')) }}</td><td>{{ fmt_hl(bf.nh3_n_out, '4', 'mg/L', u.bf_levels.get('nh3_n_out')) }}</td></tr>
           </tbody>
         </table>
         <div class="flags">
@@ -417,14 +440,14 @@
           <thead><tr><th>Estanque</th><th>O₂</th><th>T</th><th>Sat</th><th></th></tr></thead>
           <tbody>
           {% for p in u.pond_rows %}
-          <tr class="pr-{{ p.alarm_level or 'nd' }}{{ ' pr-stale' if p.stale else '' }}"
-              {% if p.has_data %}title="Hace {{ p.hours_ago }} h{{ ' · vencida' if p.stale else '' }}{% if p.reading.water_temp_inherited %} · T heredada{% endif %}{% if p.consistency_flag == 'sospechoso' %} · terna sospechosa{% endif %}"{% endif %}>
+          <tr class="pr-{{ p.alarm_level or 'nd' }}{{ ' pr-stale' if p.stale else '' }}{{ ' pr-hist' if p.historica else '' }}"
+              {% if p.has_data %}title="Hace {{ p.hours_ago }} h{{ ' · vencida' if p.stale else '' }}{% if p.historica %} · más de 24 h: ya no colorea la unidad{% if p.level_hist %} (esa lectura quedó en {{ p.level_hist }}){% endif %}{% endif %}{% if p.reading.water_temp_inherited %} · T heredada{% endif %}{% if p.consistency_flag == 'sospechoso' %} · terna sospechosa{% endif %}"{% endif %}>
             <td class="pt-name">{{ p.pond_name.split(' - ')[0] }}</td>
             {% if p.has_data %}
             <td class="{{ 'pv-'+p.levels.get('do_mg_l') if p.levels.get('do_mg_l','ok') != 'ok' else '' }}">{{ '%.1f'|format(p.reading.do_mg_l) if p.reading.do_mg_l is not none else '—' }}</td>
             <td>{{ '%.1f'|format(p.reading.water_temp_c) if p.reading.water_temp_c is not none else '—' }}</td>
             <td class="{{ 'pv-'+p.levels.get('saturation_pct') if p.levels.get('saturation_pct','ok') != 'ok' else '' }}">{{ '%.0f'|format(p.sat_pct) if p.sat_pct is not none else '—' }}%</td>
-            <td class="pt-flags">{% if p.consistency_flag == 'sospechoso' %}<span class="mini-warn" title="Terna sospechosa">⚑</span>{% endif %}{% if p.reading.water_temp_inherited %}<span class="mini-mut" title="Temperatura heredada">T</span>{% endif %}{% if p.alarm_level == 'alarma' and not p.reading.acknowledged %}<span class="mini-alarm" title="Alarma sin acción registrada">⚠</span>{% endif %}</td>
+            <td class="pt-flags">{% if p.historica %}<span class="mini-mut" title="Lectura de hace {{ (p.hours_ago / 24)|round(0)|int }} d{% if p.level_hist %}, quedó en {{ p.level_hist }}{% endif %}">{{ (p.hours_ago / 24)|round(0)|int }} d</span>{% endif %}{% if p.consistency_flag == 'sospechoso' %}<span class="mini-warn" title="Terna sospechosa">⚑</span>{% endif %}{% if p.reading.water_temp_inherited %}<span class="mini-mut" title="Temperatura heredada">T</span>{% endif %}{% if p.alarm_level == 'alarma' and not p.reading.acknowledged %}<span class="mini-alarm" title="Alarma sin acción registrada">⚠</span>{% endif %}</td>
             {% else %}
             <td colspan="4" class="pt-nodata"><a href="/views/ui/calidad-agua/oxigeno/nueva?pond_id={{ p.pond_id }}">sin lecturas →</a></td>
             {% endif %}
@@ -434,6 +457,23 @@
         </table>
         {% else %}
         <div class="no-data">Esta unidad no tiene estanques activos asociados.</div>
+        {% endif %}
+        {% if u.bf_trend|length >= 2 %}
+        <div class="trend-card" data-trend="{{ u.unit_id }}">
+          <div class="tr-head">
+            <div class="tr-title">Tendencia · <span class="tr-param"></span></div>
+            <div class="tr-n">últimos {{ u.bf_trend|length }} muestreos</div>
+          </div>
+          <div class="tr-chips">
+            {% for k, lab in [('ph','pH'),('temp','Temp'),('alk','Alcalinidad'),('do','O₂'),('nh4','NH₄'),('no2','NO₂'),('no3','NO₃'),('tn','N total'),('nh3','NH₃'),('eta','η'),('rem','Removido')] %}
+            <button type="button" class="tr-chip{{ ' tr-der' if k in ('eta','rem') else '' }}" data-param="{{ k }}">{{ lab }}</button>
+            {% endfor %}
+          </div>
+          <div class="tr-read"></div>
+          <div class="tr-plot"></div>
+          <div class="tr-legend"></div>
+          <script type="application/json" class="tr-data">{{ u.bf_trend|tojson }}</script>
+        </div>
         {% endif %}
         </div>
         <div class="col col-dg">
@@ -529,6 +569,155 @@
     });
     var openUnit = {{ open_unit if open_unit else 'null' }};
     if (openUnit !== null) { show(openUnit, true); }
+  })();
+</script>
+<script>
+  /* Tendencia del biofiltro: ultimos muestreos de la unidad, entrada y salida.
+     El eje X va por fecha real para que un hueco de muestreo se vea como hueco. */
+  (function() {
+    var LINES = {{ trend_lines|tojson }};
+    var P = {
+      ph:   { label: 'pH', unit: '', dec: 2 },
+      temp: { label: 'Temperatura', unit: '°C', dec: 1 },
+      alk:  { label: 'Alcalinidad', unit: 'mg CaCO₃/L', dec: 0, single: 'Entrada' },
+      'do': { label: 'O₂ disuelto', unit: 'mg/L', dec: 1 },
+      nh4:  { label: 'Amonio (NH₄-N)', unit: 'mg/L', dec: 3 },
+      no2:  { label: 'Nitrito (NO₂-N)', unit: 'mg/L', dec: 3 },
+      no3:  { label: 'Nitrato (NO₃-N)', unit: 'mg/L', dec: 2 },
+      tn:   { label: 'N total', unit: 'mg/L', dec: 2 },
+      nh3:  { label: 'NH₃-N no ionizado', unit: 'mg/L', dec: 4 },
+      eta:  { label: 'η · amonio removido en una pasada', unit: '%', dec: 0, single: 'η', zero: true },
+      rem:  { label: 'Amonio removido por pasada (entrada − salida)', unit: 'mg/L', dec: 2, single: 'Removido', zero: true }
+    };
+    var C_IN = '#2563eb', C_OUT = '#059669', C_ONE = '#4f46e5';
+    var NS = 'http://www.w3.org/2000/svg';
+
+    function el(tag, attrs, parent) {
+      var e = document.createElementNS(NS, tag);
+      for (var k in attrs) e.setAttribute(k, attrs[k]);
+      if (parent) parent.appendChild(e);
+      return e;
+    }
+    function num(v, dec) { return v == null ? '—' : v.toFixed(dec).replace('.', ','); }
+    function ddmm(iso) { return iso.slice(8, 10) + '-' + iso.slice(5, 7); }
+
+    function draw(card, key) {
+      var data = JSON.parse(card.querySelector('.tr-data').textContent);
+      var cfg = P[key];
+      var W = 420, H = 190, L = 40, R = 10, T = 10, B = 24;
+      var t = data.map(function(p) { return Date.parse(p.d); });
+      var t0 = t[0], t1 = t[t.length - 1], span = Math.max(t1 - t0, 1);
+      var vals = [];
+      data.forEach(function(p) { p[key].forEach(function(v) { if (v != null) vals.push(v); }); });
+
+      card.querySelector('.tr-param').textContent = cfg.label;
+      card.querySelectorAll('.tr-chip').forEach(function(b) { b.classList.toggle('on', b.dataset.param === key); });
+      var panel = card.closest('.detail-panel');
+      if (panel) panel.querySelectorAll('.bf-table tr[data-param]').forEach(function(r) {
+        r.classList.toggle('tr-sel', r.dataset.param === key);
+      });
+      var plot = card.querySelector('.tr-plot'), read = card.querySelector('.tr-read');
+      var legend = card.querySelector('.tr-legend');
+      plot.innerHTML = ''; legend.innerHTML = ''; read.innerHTML = '';
+      if (!vals.length) { plot.innerHTML = '<div class="no-data">Sin datos de este parámetro en los últimos muestreos.</div>'; return; }
+
+      var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+      if (cfg.zero) lo = Math.min(0, lo);
+      // Un umbral entra a la escala solo si no aplasta los datos; si no, se anota.
+      var lines = [], fuera = [];
+      var th = LINES[key] || {};
+      [['alert', '#f59e0b', 'alerta'], ['alarm', '#dc2626', 'alarma']].forEach(function(x) {
+        var v = th[x[0]];
+        if (v == null) return;
+        if (v <= hi * 2 && v >= lo / 2) { lines.push([v, x[1], x[2]]); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+        else fuera.push(x[2] + ' ' + num(v, cfg.dec));
+      });
+      var pad = (hi - lo) * 0.08 || Math.abs(hi) * 0.1 || 1;
+      lo = cfg.zero ? Math.max(lo - pad, Math.min(lo, 0)) : lo - pad; hi += pad;
+      // Marcas del eje en numeros redondos (1, 2, 2,5 o 5 x 10^n).
+      var raw = (hi - lo) / 4, mag = Math.pow(10, Math.floor(Math.log10(raw))), step = mag * 10;
+      [1, 2, 2.5, 5, 10].some(function(m) { if (m * mag >= raw) { step = m * mag; return true; } });
+      lo = Math.floor(lo / step + 1e-9) * step; hi = Math.ceil(hi / step - 1e-9) * step;
+      var sdec = Math.max(0, -Math.floor(Math.log10(step) + 1e-9) + (step / mag === 2.5 ? 1 : 0));
+      function X(ms) { return L + (ms - t0) / span * (W - L - R); }
+      function Y(v) { return T + (hi - v) / (hi - lo) * (H - T - B); }
+
+      var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': cfg.label }, plot);
+      for (var gv = lo; gv <= hi + step / 2; gv += step) {
+        var gy = Y(gv);
+        el('line', { x1: L, x2: W - R, y1: gy, y2: gy, stroke: '#eef0f2' }, svg);
+        var tx = el('text', { x: L - 6, y: gy + 3, 'text-anchor': 'end', 'font-size': 10, fill: '#9ca3af' }, svg);
+        tx.textContent = num(gv, sdec);
+      }
+      lines.forEach(function(ln) {
+        el('line', { x1: L, x2: W - R, y1: Y(ln[0]), y2: Y(ln[0]), stroke: ln[1], 'stroke-dasharray': '5 4', 'stroke-width': 1.2 }, svg);
+      });
+      // Fechas sin encimarse; la del ultimo muestreo siempre se ve.
+      var lastX = -99, lastLabel = null;
+      data.forEach(function(p, i) {
+        var x = X(t[i]), ultimo = i === data.length - 1;
+        if (x - lastX < 38) {
+          if (!ultimo) return;
+          if (lastLabel) lastLabel.remove();
+        }
+        lastLabel = el('text', { x: x, y: H - 8, 'text-anchor': ultimo ? 'end' : 'middle', 'font-size': 10, fill: '#9ca3af' }, svg);
+        lastLabel.textContent = ddmm(p.d); lastX = x;
+      });
+
+      var series = cfg.single ? [[0, C_ONE, cfg.single]] : [[0, C_IN, 'Entrada'], [1, C_OUT, 'Salida']];
+      series.forEach(function(s) {
+        var seg = [];
+        function flush() { if (seg.length > 1) el('polyline', { points: seg.join(' '), fill: 'none', stroke: s[1], 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg); seg = []; }
+        data.forEach(function(p, i) {
+          var v = p[key][s[0]];
+          if (v == null) { flush(); return; }
+          seg.push(X(t[i]).toFixed(1) + ',' + Y(v).toFixed(1));
+        });
+        flush();
+        data.forEach(function(p, i) {
+          var v = p[key][s[0]];
+          if (v != null) el('circle', { cx: X(t[i]), cy: Y(v), r: 3.2, fill: '#fff', stroke: s[1], 'stroke-width': 2 }, svg);
+        });
+        legend.insertAdjacentHTML('beforeend', '<span><i style="border-color:' + s[1] + '"></i>' + s[2] + '</span>');
+      });
+      lines.forEach(function(ln) {
+        legend.insertAdjacentHTML('beforeend', '<span><i class="dash" style="border-color:' + ln[1] + '"></i>' + ln[2] + ' ' + num(ln[0], cfg.dec) + '</span>');
+      });
+      if (fuera.length) legend.insertAdjacentHTML('beforeend', '<span>fuera de escala: ' + fuera.join(' · ') + '</span>');
+
+      // Lectura del punto mas cercano al cursor o al dedo.
+      var cursor = el('line', { y1: T, y2: H - B, stroke: '#9ca3af', 'stroke-dasharray': '2 3', visibility: 'hidden' }, svg);
+      function readout(i) {
+        var p = data[i], u = cfg.unit ? ' ' + cfg.unit : '';
+        var parts = series.map(function(s) {
+          return '<span style="color:' + s[1] + '">' + s[2] + '</span> <b>' + num(p[key][s[0]], cfg.dec) + '</b>';
+        });
+        read.innerHTML = ddmm(p.d) + ' · ' + parts.join(' · ') + u;
+        cursor.setAttribute('x1', X(t[i])); cursor.setAttribute('x2', X(t[i]));
+        cursor.setAttribute('visibility', 'visible');
+      }
+      function nearest(ev) {
+        var r = svg.getBoundingClientRect();
+        var mx = (ev.clientX - r.left) / r.width * W, best = 0;
+        t.forEach(function(ms, i) { if (Math.abs(X(ms) - mx) < Math.abs(X(t[best]) - mx)) best = i; });
+        readout(best);
+      }
+      svg.addEventListener('pointermove', nearest);
+      svg.addEventListener('pointerdown', nearest);
+      readout(data.length - 1);
+    }
+
+    document.querySelectorAll('.trend-card').forEach(function(card) {
+      var current = 'nh4';
+      card.querySelectorAll('.tr-chip').forEach(function(b) {
+        b.addEventListener('click', function() { current = b.dataset.param; draw(card, current); });
+      });
+      var panel = card.closest('.detail-panel');
+      if (panel) panel.querySelectorAll('.bf-table tr[data-param]').forEach(function(r) {
+        r.addEventListener('click', function() { current = r.dataset.param; draw(card, current); });
+      });
+      draw(card, current);
+    });
   })();
 </script>
 </div></div>

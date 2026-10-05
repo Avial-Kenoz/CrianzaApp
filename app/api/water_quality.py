@@ -49,6 +49,12 @@ jinja_env = Environment(loader=FileSystemLoader(str(template_dir)),
 
 # Una lectura de O2 se considera vencida si supera este intervalo (cada 2-4 h)
 O2_STALE_HOURS = 4
+# Pasado este plazo una lectura ya no colorea la tarjeta ni entra al minimo: es
+# historia. Una ronda atrasada no apaga una alarma (sigue roja dentro del dia),
+# pero un estanque que nadie mide hace dias -- tipicamente uno vaciado -- no
+# puede seguir mandando sobre los que si se miden. La alerta del motor no cambia:
+# sigue abierta hasta que llegue una lectura buena.
+O2_COLOR_MAX_HOURS = 24
 
 # Acciones correctivas ofrecidas ante una lectura de O2 en alarma (llamado a la
 # acción). El operador elige una al reconocer la lectura; queda en
@@ -171,6 +177,57 @@ BF_HEALTH_WARN = 0.70
 
 FEED_MIN_WINDOW_DAYS = 28       # el alimento se confirma por lotes, no a diario:
                                 # ventanas cortas dan kg/día muy ruidosos
+
+
+BF_TREND_N = 10                 # muestreos del grafico de tendencia del detalle
+
+
+def _bf_trend_by_unit(db: Session, n: int = BF_TREND_N) -> dict:
+    """{unit_id: [punto, ...]} con los ultimos n muestreos, del mas viejo al mas nuevo.
+
+    Alimenta el grafico de tendencia del detalle. Un muestreo suelto dice poco
+    (el kit de amonio trae +-0,04 mg/L); la serie es la que muestra si un filtro
+    se quedo atras. Si hay dos filas el mismo dia gana la ultima digitada: es la
+    misma regla del muestreo que muestra la tabla.
+    """
+    rows = (db.query(BiofilterReading)
+            .order_by(BiofilterReading.cultivation_unit_id,
+                      BiofilterReading.reading_date.desc(),
+                      BiofilterReading.id.desc())
+            .all())
+
+    def f(v):
+        return float(v) if v is not None else None
+
+    out: dict = {}
+    seen: set = set()
+    for r in rows:
+        uid = r.cultivation_unit_id
+        serie = out.setdefault(uid, [])
+        if len(serie) >= n or (uid, r.reading_date) in seen or r.reading_date is None:
+            continue
+        seen.add((uid, r.reading_date))
+        nh4_in, nh4_out = f(r.in_nh4_n), f(r.out_nh4_n)
+        ok_nh4 = nh4_in is not None and nh4_out is not None and nh4_in > 0
+        serie.append({
+            "d": r.reading_date.isoformat(),
+            "ph": [f(r.in_ph), f(r.out_ph)],
+            "temp": [f(r.in_temp_c), f(r.out_temp_c)],
+            "alk": [f(r.in_alkalinity), None],
+            "do": [f(r.in_do_mg_l), f(r.out_do_mg_l)],
+            "nh4": [nh4_in, nh4_out],
+            "no2": [f(r.in_no2_n), f(r.out_no2_n)],
+            "no3": [f(r.in_no3_n), f(r.out_no3_n)],
+            "tn": [f(r.tn_in), f(r.tn_out)],
+            "nh3": [f(r.nh3_n_in), f(r.nh3_n_out)],
+            # Derivados: solo existen en el grafico. Son los que muestran un
+            # filtro que no acompana la carga (remueve lo mismo con mas entrada).
+            "eta": [(1.0 - nh4_out / nh4_in) * 100.0 if ok_nh4 else None, None],
+            "rem": [nh4_in - nh4_out if ok_nh4 else None, None],
+        })
+    for serie in out.values():
+        serie.reverse()
+    return out
 
 
 def _unit_feed_n_kg_day(db: Session, unit_id: int, since: date, until: date) -> Optional[float]:
@@ -573,6 +630,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
         o2_latest = _latest_o2_by_pond(db)
         bf_latest = _latest_bf_by_unit(db)
         bf_health = _biofilter_health_by_unit(db)
+        bf_trend = _bf_trend_by_unit(db)
         # Umbrales actuales: se reinyectan al motor para derivar el motivo
         # (qué parámetro dispara la tarjeta) sin persistir nada.
         thresholds = load_thresholds(db)
@@ -611,19 +669,21 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
             for p in u_ponds:
                 r = o2_latest.get(p.id)
                 hours, stale = _o2_hours_ago(r, now, thresholds)
+                vigente = hours is not None and hours <= O2_COLOR_MAX_HOURS
                 # saturation_pct viene NULL en todo el historico: se calcula
                 # desde OD y temperatura (Benson-Krause corregido por altitud).
                 sat = (wq.expected_saturation_pct(float(r.do_mg_l), float(r.water_temp_c))
                        if (r is not None and r.do_mg_l is not None
                            and r.water_temp_c is not None) else None)
                 if sat is not None and 0 < sat < 300:
+                    if hours is not None and (o2_hours is None or hours < o2_hours):
+                        o2_hours = hours
+                        o2_at = r.reading_datetime
+                if vigente and sat is not None and 0 < sat < 300:
                     if o2_min is None or sat < o2_min:
                         # Solo el codigo: "C6", no "C6 - Carriles 6".
                         o2_min = sat
                         o2_pond = p.name.split(" - ")[0].strip()
-                    if hours is not None and (o2_hours is None or hours < o2_hours):
-                        o2_hours = hours
-                        o2_at = r.reading_datetime
                     # El nivel lo pone el motor por lectura (mira saturacion,
                     # OD absoluto y temperatura); la saturacion minima es solo
                     # el VALOR que se muestra.
@@ -635,7 +695,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 else:
                     if stale:
                         n_stale += 1
-                    if r.alarm_level:
+                    if r.alarm_level and vigente:
                         levels.append(r.alarm_level)
                         if r.alarm_level == "alarma":
                             n_alarm += 1
@@ -645,17 +705,22 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                                 n_alarm_unack += 1
                         elif r.alarm_level == "alerta":
                             n_alert += 1
-                    for rs in wq.oxygen_reasons(r.do_mg_l, r.water_temp_c,
-                                                r.saturation_pct, thresholds):
-                        unit_reasons.append((rs, p.name))
+                    if vigente:
+                        for rs in wq.oxygen_reasons(r.do_mg_l, r.water_temp_c,
+                                                    r.saturation_pct, thresholds):
+                            unit_reasons.append((rs, p.name))
                 pond_rows.append({
                     "pond_id": p.id, "pond_name": p.name, "reading": r,
-                    "alarm_level": (r.alarm_level if r else None),
+                    "alarm_level": (r.alarm_level if (r and vigente) else None),
                     "consistency_flag": (r.consistency_flag if r else None),
                     "hours_ago": hours, "stale": stale, "has_data": r is not None,
+                    # Lectura de mas de un dia: se muestra, pero ya no colorea.
+                    "historica": r is not None and not vigente,
+                    "level_hist": (r.alarm_level if (r and not vigente) else None),
                     # Nivel por campo, para destacar la celda fuera de rango.
                     "levels": (wq.oxygen_field_levels(r.do_mg_l, r.water_temp_c,
-                                                      r.saturation_pct, thresholds) if r else {}),
+                                                      r.saturation_pct, thresholds)
+                               if (r and vigente) else {}),
                     # saturation_pct viene NULL en todo el historico
                     "sat_pct": sat,
                 })
@@ -840,6 +905,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 "pond_rows": pond_rows,
                 "bf": bf,
                 "bf_levels": bf_levels,
+                "bf_trend": bf_trend.get(u.id, []),
                 "bf_conf": bf_conf,
                 "dims": dims,
                 "accion": accion,
@@ -870,6 +936,16 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
             "solar_lagunas": [u["unit_name"] for u in units_data if u.get("photo")],
             "open_unit": open,
             "o2_stale_hours": O2_STALE_HOURS,
+            # Lineas de referencia del grafico de tendencia (umbrales vigentes).
+            "trend_lines": {
+                "no2": {"alert": thresholds["nitrite_n"].get("alert"),
+                        "alarm": thresholds["nitrite_n"].get("alarm")},
+                "nh3": {"alert": thresholds["nh3_n"].get("alert"),
+                        "alarm": thresholds["nh3_n"].get("alarm")},
+                # Con aire en el reactor el OD de salida es la verificacion:
+                # bajo 4 mg/L la nitrificacion cede.
+                "do": {"alert": None, "alarm": wq.OD_REACTOR_MIN},
+            },
         }
         html = jinja_env.get_template("calidad_agua_panel.html").render(context)
         return HTMLResponse(content=html)
