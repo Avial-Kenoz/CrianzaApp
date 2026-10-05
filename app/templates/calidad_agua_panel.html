@@ -204,6 +204,9 @@
     .cap-row span { color: #6b7280; flex: 1; }
     .cap-row b { color: #111827; font-weight: 700; }
     .cap-row i { font-style: normal; font-size: .71rem; color: #b6bcc4; }
+    .cap-row b.hb-rezagado { color: #dc2626; }
+    .cap-row b.hb-justo { color: #b45309; }
+    .cap-row b.hb-al_dia { color: #15803d; }
     .cap-max { margin: 10px 0 7px; padding: 9px 10px; background: #fff;
                border: 1px solid #e5e7eb; border-radius: 8px; }
     .cm-v { font-size: 1.32rem; font-weight: 750; color: #111827; }
@@ -383,6 +386,8 @@
           <tbody>
             <tr><td>pH</td><td>{{ fmt(bf.in_ph, '2') }}</td><td>{{ fmt(bf.out_ph, '2') }}</td></tr>
             <tr><td>Temperatura</td><td>{{ fmt(bf.in_temp_c, '1', '°C') }}</td><td>{{ fmt(bf.out_temp_c, '1', '°C') }}</td></tr>
+            <tr><td>Alcalinidad</td><td>{{ fmt(bf.in_alkalinity, '0', 'mg CaCO₃/L') }}</td><td><span class="meta" title="La alcalinidad se titula solo a la entrada">solo entrada</span></td></tr>
+            <tr><td>O₂ disuelto</td><td>{{ fmt(bf.in_do_mg_l, '1', 'mg/L') }}</td><td>{{ fmt(bf.out_do_mg_l, '1', 'mg/L') }}</td></tr>
             <tr><td>Amonio (NH₄-N)</td><td>{{ fmt(bf.in_nh4_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_nh4_n, '3', 'mg/L') }}</td></tr>
             <tr><td>Nitrito (NO₂-N)</td><td>{{ fmt_hl(bf.in_no2_n, '3', 'mg/L', u.bf_levels.get('in_no2_n')) }}</td><td>{{ fmt_hl(bf.out_no2_n, '3', 'mg/L', u.bf_levels.get('out_no2_n')) }}</td></tr>
             <tr><td>Nitrato (NO₃-N)</td><td>{{ fmt(bf.in_no3_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_no3_n, '3', 'mg/L') }}</td></tr>
@@ -449,7 +454,7 @@
         {% endif %}
 
         {% set c = u.capacidad %}{% set fc = u.feed_cap %}
-        {% if c or fc %}
+        {% if c or fc or (u.health and u.health.get('balance') is not none) %}
         <div class="cap{{ ' cap-fold' if u.diag else '' }}">
           {% if u.diag %}<div class="cap-h">Capacidad del sistema</div>{% endif %}
           {% if c %}
@@ -459,6 +464,10 @@
           {% endif %}
           {% if u.health and u.health.pct %}
           <div class="cap-row"><span>Salud del biofiltro</span><b>{{ u.health.pct|round|int }}%</b><i>de {{ u.health.ref_kind }}</i></div>
+          {% endif %}
+          {% if u.health and u.health.get('balance') is not none %}
+          <div class="cap-row" title="Nitrito que procesan las NOB por cada unidad de amonio que oxidan las AOB, promedio de los últimos {{ u.health.n_samples }} muestreos. Bajo 0,95 el nitrito se acumula pasada a pasada."><span>Balance nitrito (NOB/AOB)</span><b class="hb-{{ u.health.balance_state }}">{{ '%.2f'|format(u.health.balance)|replace('.', ',') }}</b><i>{%
+            if u.health.balance_state == 'al_dia' %}al día{% elif u.health.balance_state == 'justo' %}justo{% else %}NOB rezagadas{% endif %}</i></div>
           {% endif %}
           {% if fc %}
           <div class="cap-max">
