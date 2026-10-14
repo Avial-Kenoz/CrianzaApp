@@ -649,6 +649,14 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                               SolarDaily.day <= now.date() + timedelta(days=2))
                       .order_by(SolarDaily.day).all())
         no2_fit = wq.fit_nitrite_relation(_nitrite_pairs(db))
+        # Cloruro modelado: mientras no se pueda medir con precision es la
+        # brujula de la sal. Con tau ~3 dias, 60 dias de cargas sobran.
+        salt_by_unit: dict = {}
+        for d in (db.query(WaterTreatmentDose)
+                  .filter(WaterTreatmentDose.product == "sal",
+                          WaterTreatmentDose.applied_at >= now - timedelta(days=60))
+                  .all()):
+            salt_by_unit.setdefault(d.cultivation_unit_id, []).append(d)
 
         units_data = []
         totals = {"ok": 0, "alerta": 0, "alarma": 0, "sin_dato": 0}
@@ -808,11 +816,14 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 eta, float(u.recirculation_l_s) if u.recirculation_l_s else None,
                 _reactor_m3(u))
             # Capacidad de alimentacion y cual de los techos manda.
+            ph_tarde = wq.ph_worst_of_day(
+                float(bf.in_ph) if (bf is not None and bf.in_ph) else None,
+                u.ph_afternoon_rise)
             feed_cap = wq.feed_capacity(
                 eta,
                 float(u.recirculation_l_s) if u.recirculation_l_s else None,
                 float(u.freshwater_l_s) if u.freshwater_l_s else None,
-                float(bf.in_ph) if (bf is not None and bf.in_ph) else None,
+                ph_tarde["ph"] if ph_tarde else None,
                 float(bf.in_temp_c) if (bf is not None and bf.in_temp_c) else None,
                 thresholds, no2_fit, 48.0, alk_source=alk_origen)
 
@@ -912,6 +923,9 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 "capacidad": capacidad,
                 "feed_cap": feed_cap,
                 "alk_origen": alk_origen,
+                "cl_mod": wq.modeled_chloride(
+                    salt_by_unit.get(u.id, []), u.water_volume_m3,
+                    u.freshwater_l_s, u.chloride_base_mg_l, now),
                 "flow_nominal": bool(u.flow_is_nominal),
                 "recirc_l_s": float(u.recirculation_l_s) if u.recirculation_l_s else None,
                 "health": bf_health.get(u.id),
@@ -1694,12 +1708,20 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
                 sensibilidad.append({"objetivo": t, "kg_dia": m["kg_nahco3_dia"],
                                      "choque": wq.bicarbonate_kg(vol, alk_actual, t)})
 
-        feed_cap = wq.feed_capacity(eta, q_rec, q_fresh, ph, temp, th, no2_fit,
-                                    48.0, alk_source=alk_origen)
+        # El amonio se evalúa con el pH de la tarde, no con el del muestreo:
+        # de ese techo depende cuánta sal compra algo.
+        ph_tarde = wq.ph_worst_of_day(ph, u.ph_afternoon_rise)
+        feed_cap = wq.feed_capacity(eta, q_rec, q_fresh,
+                                    ph_tarde["ph"] if ph_tarde else None,
+                                    temp, th, no2_fit, 48.0, alk_source=alk_origen)
         # Con la alcalinidad sostenida deja de ser techo: ahí recién la sal
-        # compra algo, y por eso se calcula sobre el escenario CON terapia.
-        feed_cap_con = wq.feed_capacity(eta, q_rec, q_fresh, ph, temp, th,
-                                        no2_fit, 48.0, alk_source=None)
+        # compra algo, y por eso se calcula sobre el escenario CON terapia,
+        # que además sube el pH.
+        ph_tarde_con = wq.ph_worst_of_day(ph, u.ph_afternoon_rise,
+                                          alk_actual, objetivo)
+        feed_cap_con = wq.feed_capacity(eta, q_rec, q_fresh,
+                                        ph_tarde_con["ph"] if ph_tarde_con else None,
+                                        temp, th, no2_fit, 48.0, alk_source=None)
         # El OBJETIVO de cloruro se calcula sobre el escenario con la
         # alcalinidad ya sostenida —ahi el nitrito pasa a mandar—, pero si HOY
         # manda la alcalinidad la sal no compra nada todavia. Son dos
@@ -1710,7 +1732,8 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
         cl_mod = wq.modeled_chloride(doses, vol, q_fresh,
                                      u.chloride_base_mg_l, now)
         sal = (wq.salt_plan(sal_obj["cloruro_objetivo"],
-                            (cl_mod or {}).get("cl_mg_l"), vol, q_fresh)
+                            (cl_mod or {}).get("cl_mg_l"), vol, q_fresh,
+                            cl_source=u.chloride_base_mg_l)
                if (sal_obj and sal_obj.get("cloruro_objetivo")) else None)
 
         # --- régimen de muestreo -------------------------------------------
@@ -1734,6 +1757,8 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
             "regimen": regimen, "regimenes": wq.REGIMES,
             "doses": doses, "photo": photo,
             "max_kg_turno": MAX_KG_TURNO_DEFAULT,
+            "ph_tarde": ph_tarde, "ph_tarde_con": ph_tarde_con,
+            "ph_alza_default": wq.PH_ALZA_TARDE_DEFAULT,
             "caliza_f": wq.CALIZA_POR_NAHCO3,
             "caliza_pureza": wq.CALIZA_PUREZA,
         }
@@ -1755,6 +1780,7 @@ def biofiltro_unidad_config(
     alk_target_mg_l: Optional[str] = Form(None),
     chloride_base_mg_l: Optional[str] = Form(None),
     chloride_is_measured: Optional[str] = Form(None),
+    ph_afternoon_rise: Optional[str] = Form(None),
 ):
     db = SessionLocal()
     try:
@@ -1766,7 +1792,8 @@ def biofiltro_unidad_config(
                              ("media_volume_m3", media_volume_m3),
                              ("water_volume_m3", water_volume_m3),
                              ("alk_target_mg_l", alk_target_mg_l),
-                             ("chloride_base_mg_l", chloride_base_mg_l)):
+                             ("chloride_base_mg_l", chloride_base_mg_l),
+                             ("ph_afternoon_rise", ph_afternoon_rise)):
             setattr(u, campo, _num(valor))
         u.media_type = (media_type or None)
         u.water_volume_is_estimated = bool(water_volume_is_estimated)

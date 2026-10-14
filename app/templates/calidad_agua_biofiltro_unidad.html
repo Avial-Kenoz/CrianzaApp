@@ -269,11 +269,32 @@
             <tr><td>Para sostenerlo</td><td class="num">{{ '%.0f'|format(sal.kg_dia) }} kg/día</td></tr>
           </tbody>
         </table>
+        {% if u.chloride_base_mg_l is none %}
+        <div class="note warnbox">Falta el <strong>cloruro del agua de entrada</strong> (Cloruro basal,
+          en Configuración). Se asume 0, así que la sal diaria es una <strong>cota alta</strong>:
+          el agua fresca trae su propio cloruro y la sal solo paga la diferencia.</div>
+        {% endif %}
+        {% set tc = {} %}{% for t in (feed_cap_con.techos if feed_cap_con else []) %}{% set _ = tc.update({t.key: t.feed}) %}{% endfor %}
+        {% if tc.nitrito and tc.amonio %}
+        <div class="note">La sal sube el techo de nitrito de <strong>{{ '%.0f'|format(tc.nitrito) }}</strong>
+          a <strong>{{ '%.0f'|format(tc.amonio) }} kg/día</strong> de alimento, donde lo alcanza el amonio.
+          Más sal no compra nada: pasado ese punto limita el NH₃.</div>
+        {% endif %}
+        {% if ph_tarde_con %}
+        <div class="note">Techo de amonio a <strong>pH {{ '%.2f'|format(ph_tarde_con.ph)|replace('.', ',') }}</strong>
+          = {{ '%.2f'|format(ph_tarde_con.ph_medido)|replace('.', ',') }} medido
+          {% if ph_tarde_con.ajuste_alk %}+ {{ '%.2f'|format(ph_tarde_con.ajuste_alk)|replace('.', ',') }} por la alcalinidad objetivo{% endif %}
+          + {{ '%.2f'|format(ph_tarde_con.alza_tarde)|replace('.', ',') }} de tarde
+          <span class="pill pill-warn">supuesto</span>. Sin pH por hora, el pico de la tarde se estima;
+          el alza se ajusta en Configuración.</div>
+        {% endif %}
         <div class="note">El cloruro se lava con la purga (τ ≈ {{ '%.1f'|format(sal.tau_dias)|replace('.', ',') }} días),
           así que la sal es un costo corriente y no una carga.
           {% if cl_mod %}Cloruro actual <strong>{{ '%.1f'|format(cl_mod.cl_mg_l)|replace('.', ',') }} mg/L</strong>
           — <span class="pill pill-warn">modelado</span>, no medido: sirve para dosificar, no para afirmar
           una concentración.{% endif %}</div>
+      {% elif sal_obj and not sal_obj.get('cloruro_objetivo') %}
+        <div class="note">El nitrito no limita antes que el amonio: <strong>la sal no compra nada</strong>.</div>
       {% else %}
         <div class="note">Sin datos suficientes para el objetivo de cloruro.</div>
       {% endif %}
@@ -346,6 +367,9 @@
             <div><label>Cloruro basal (mg/L)</label>
               <input type="number" step="any" name="chloride_base_mg_l" value="{{ '%g'|format(u.chloride_base_mg_l) if u.chloride_base_mg_l is not none else '' }}" />
               <label class="switch" style="margin-top:6px"><input type="checkbox" name="chloride_is_measured" {{ 'checked' if u.chloride_is_measured }} /> medido</label></div>
+            <div><label>Alza de pH en la tarde</label>
+              <input type="number" step="0.05" min="0" name="ph_afternoon_rise" value="{{ '%g'|format(u.ph_afternoon_rise) if u.ph_afternoon_rise is not none else '' }}" placeholder="{{ '%g'|format(ph_alza_default) }}" />
+              <div class="est" style="margin-top:4px">sobre el pH del muestreo; fija el techo de amonio</div></div>
           </div>
           <div class="note">El volumen de agua viene de la suma de los estanques de la unidad
             ({{ '%g'|format(u.water_volume_m3) if u.water_volume_m3 else '—' }} m³). No sabemos si incluye el

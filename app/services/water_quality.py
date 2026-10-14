@@ -1702,6 +1702,30 @@ FEED_N_FACTOR = 0.092           # kg TAN por kg de proteina (Timmons & Ebeling)
 ALK_PER_N = 7.14                # g CaCO3 consumidos por g de N nitrificado
 ALK_FLOOR = 40.0                # mg/L: bajo esto la nitrificacion se vuelve inestable
 
+# El techo de amonio se evalua con el PEOR pH del dia, no con el del muestreo.
+# El biofiltro se muestrea temprano, y a las 7 AM el NH3 casi no existe: con
+# pH 6,7 el techo daba 1.169 kg/dia, y la sal se calculaba para alcanzarlo
+# (32 kg/dia comprando capacidad que el amonio de la tarde nunca deja usar).
+# Mientras no haya pH por hora, la fotosintesis de la tarde es un supuesto.
+PH_ALZA_TARDE_DEFAULT = 0.40
+
+
+def ph_worst_of_day(ph_measured, alza_tarde=None, alk_now=None, alk_target=None):
+    """pH con que se evalua el amonio: medido + terapia + alza de la tarde.
+
+    `alk_now`/`alk_target` agregan lo que sube el pH al llevar la alcalinidad
+    al objetivo (escenario CON terapia). Sin ellos es el escenario de hoy.
+    """
+    if ph_measured is None:
+        return None
+    ph0 = float(ph_measured)
+    alza = PH_ALZA_TARDE_DEFAULT if alza_tarde is None else float(alza_tarde)
+    ajuste = 0.0
+    if alk_now and alk_target and float(alk_target) > float(alk_now):
+        ajuste = ph_after_alkalinity(ph0, alk_now, alk_target) - ph0
+    return {"ph": ph0 + ajuste + alza, "ph_medido": ph0,
+            "ajuste_alk": ajuste, "alza_tarde": alza}
+
 
 def feed_capacity(eta, q_rec, q_fresh, ph, temp_c, thresholds=None,
                   no2_fit=None, protein_pct=48.0, alk_source=None):
@@ -1709,6 +1733,9 @@ def feed_capacity(eta, q_rec, q_fresh, ph, temp_c, thresholds=None,
 
     Devuelve None si falta lo indispensable. Cada techo trae el supuesto del
     que cuelga, para que la UI pueda advertir cuando descansa en un estimado.
+
+    `ph` es el pH con que se evalua el amonio: el peor del dia
+    (`ph_worst_of_day`), no el del muestreo de la manana.
     """
     if not eta or not q_rec or eta <= 0 or eta >= 1:
         return None
@@ -1728,9 +1755,10 @@ def feed_capacity(eta, q_rec, q_fresh, ph, temp_c, thresholds=None,
         if frac > 0:
             c_max = lim_nh3 / frac
             techos.append({"key": "amonio", "label": "Amonio (NH₃)",
-                           "c_max": c_max,
+                           "c_max": c_max, "ph": float(ph),
                            "feed": c_max * clearance * 0.0864 / k_tan,
-                           "nota": "se mueve con pH y temperatura"})
+                           "nota": ("a pH %.2f de tarde (estimado)"
+                                    % float(ph)).replace(".", ",")})
 
     # --- por nitrito: via la relacion empirica ajustada a los datos --------
     lim_no2 = th.get("nitrite_n", {}).get("alert")
@@ -2032,11 +2060,16 @@ def salt_target(feed_cap, no2_fit, nitrite_alert):
     }
 
 
-def salt_plan(cl_target, cl_base, volume_m3, q_fresh_l_s):
+def salt_plan(cl_target, cl_base, volume_m3, q_fresh_l_s, cl_source=None):
     """kg de NaCl: la carga inicial y la diaria para sostenerla.
 
     Acá la sal es un costo corriente, no una carga: con la purga el cloruro se
     lava en pocos dias. La diaria suele pesar mas que la inicial.
+
+    `cl_base` es el cloruro de HOY (de el sale la carga inicial); `cl_source`
+    el del agua de entrada. La purga se lleva agua al objetivo, pero el agua
+    fresca trae su propio cloruro: la sal solo paga la diferencia, igual que
+    en el balance de alcalinidad. Sin `cl_source` se asume 0 (cota alta).
     """
     if cl_target is None or not volume_m3:
         return None
@@ -2046,7 +2079,8 @@ def salt_plan(cl_target, cl_base, volume_m3, q_fresh_l_s):
     diaria = None
     if q_fresh_l_s:
         m3_dia = float(q_fresh_l_s) * 86.4                       # L/s -> m3/dia
-        diaria = float(cl_target) * m3_dia / 1000.0 / NACL_CL_FRACTION
+        falta = max(0.0, float(cl_target) - float(cl_source or 0.0))
+        diaria = falta * m3_dia / 1000.0 / NACL_CL_FRACTION
     tau_dias = (float(volume_m3) / (float(q_fresh_l_s) * 86.4)
                 if q_fresh_l_s else None)
     return {"kg_inicial": inicial, "kg_dia": diaria, "tau_dias": tau_dias,

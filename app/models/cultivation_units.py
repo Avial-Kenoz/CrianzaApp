@@ -45,6 +45,9 @@ class CultivationUnit(Base):
     alk_target_mg_l = Column(Numeric(6, 1))
     chloride_base_mg_l = Column(Numeric(8, 2))
     chloride_is_measured = Column(Boolean, nullable=False, default=False)
+    # Cuanto sube el pH en la tarde por fotosintesis (migracion 20261014_01).
+    # Null = PH_ALZA_TARDE_DEFAULT. Fija el pH del techo de amonio.
+    ph_afternoon_rise = Column(Numeric(4, 2))
 
     # Regimen de muestreo: basal | choque | floracion | post_choque. Define
     # cada cuanto vence la alcalinidad. Vuelve solo a basal.

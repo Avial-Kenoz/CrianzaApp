@@ -410,6 +410,11 @@
             <tr data-param="ph"><td>pH</td><td>{{ fmt(bf.in_ph, '2') }}</td><td>{{ fmt(bf.out_ph, '2') }}</td></tr>
             <tr data-param="temp"><td>Temperatura</td><td>{{ fmt(bf.in_temp_c, '1', '°C') }}</td><td>{{ fmt(bf.out_temp_c, '1', '°C') }}</td></tr>
             <tr data-param="alk"><td>Alcalinidad</td><td>{{ fmt(bf.in_alkalinity, '0', 'mg CaCO₃/L') }}</td><td><span class="meta" title="La alcalinidad se titula solo a la entrada">solo entrada</span></td></tr>
+            {% if u.cl_mod %}
+            <tr data-param="cl" title="Cloruro calculado por balance de masa: cloruro del pozo + cargas de sal, lavadas por la purga (τ ≈ {{ '%.1f'|format(u.cl_mod.tau_dias)|replace('.', ',') }} días). No es una medición."><td>Cloruro (Cl⁻) <span class="meta">calculado</span></td>
+              <td>{{ fmt(u.cl_mod.cl_mg_l, '1', 'mg/L') }}</td>
+              <td>{% if bf.out_no2_n %}<span class="meta" title="Cloruro : nitrito de salida, en masa. 6:1 es el mínimo; 20:1 el criterio para especies sensibles.">{{ '%.0f'|format(u.cl_mod.cl_mg_l / bf.out_no2_n|float) }}:1 sobre NO₂-N</span>{% else %}<span class="meta">—</span>{% endif %}</td></tr>
+            {% endif %}
             <tr data-param="do"><td>O₂ disuelto</td><td>{{ fmt(bf.in_do_mg_l, '1', 'mg/L') }}</td><td>{{ fmt(bf.out_do_mg_l, '1', 'mg/L') }}</td></tr>
             <tr data-param="nh4"><td>Amonio (NH₄-N)</td><td>{{ fmt(bf.in_nh4_n, '3', 'mg/L') }}</td><td>{{ fmt(bf.out_nh4_n, '3', 'mg/L') }}</td></tr>
             <tr data-param="no2"><td>Nitrito (NO₂-N)</td><td>{{ fmt_hl(bf.in_no2_n, '3', 'mg/L', u.bf_levels.get('in_no2_n')) }}</td><td>{{ fmt_hl(bf.out_no2_n, '3', 'mg/L', u.bf_levels.get('out_no2_n')) }}</td></tr>
