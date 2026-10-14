@@ -45,7 +45,7 @@
 <div class="page">
   <div class="crumb"><a href="/views/ui/calidad-agua">Calidad de agua</a> · Carga de insumo</div>
   <div class="page-title">{{ 'Editar carga' if editing else 'Registrar carga' }}</div>
-  <div class="page-sub">Bicarbonato o sal aplicados a una unidad.</div>
+  <div class="page-sub">Carbonato, bicarbonato o sal aplicados a una unidad.</div>
 
   <form method="post" action="/views/ui/calidad-agua/carga/nueva">
     {% if editing %}<input type="hidden" name="dose_id" value="{{ editing.id }}" />{% endif %}
@@ -73,9 +73,12 @@
       <div class="section-title">Producto</div>
       <div class="fields">
         <div><label>Insumo</label>
-          <select name="product" required>
-            {% for p in ['bicarbonato', 'sal'] %}
-            <option value="{{ p }}" {{ 'selected' if (editing.product if editing else product) == p }}>{{ p }}</option>
+          <select name="product" id="product" required>
+            {# El valor "bicarbonato" se mantiene: las cargas ya registradas lo usan. #}
+            {% for p, label in [('carbonato de calcio', 'carbonato de calcio (cal agrícola)'),
+                                ('bicarbonato', 'bicarbonato de sodio'),
+                                ('sal', 'sal')] %}
+            <option value="{{ p }}" {{ 'selected' if (editing.product if editing else product) == p }}>{{ label }}</option>
             {% endfor %}
           </select></div>
         <div><label>Cantidad (kg)</label>
@@ -91,6 +94,7 @@
             value="{{ editing.application_point or '' if editing else '' }}" /></div>
       </div>
 
+      <div id="par-block">
       <div class="section-title" id="par-title">Par dosis-respuesta</div>
       <div class="fields">
         <div><label>Alcalinidad antes (mg/L)</label>
@@ -110,6 +114,12 @@
         Estas dos alcalinidades son lo único que <strong>calibra el consumo real</strong>.
         Se piden durante el choque; en mantención se pueden dejar vacías —
         son calibración, no rutina.
+      </div>
+      </div>
+      <div class="note" id="par-lento" style="display:none">
+        El carbonato de calcio se disuelve en días, no en horas: el par a las 2 h no
+        mide nada. La respuesta se sigue con las lecturas del biofiltro (alcalinidad
+        de entrada) contra las unidades de control.
       </div>
 
       <div style="margin-top:14px"><label>Observación</label>
@@ -132,7 +142,14 @@
   var mode = document.getElementById('mode');
   var note = document.getElementById('par-note');
   var title = document.getElementById('par-title');
+  var product = document.getElementById('product');
+  var block = document.getElementById('par-block');
+  var lento = document.getElementById('par-lento');
   function sync() {
+    // Carbonato de calcio: disolución lenta, el par a 2 h no aplica.
+    var lentoSel = product.value === 'carbonato de calcio';
+    block.style.display = lentoSel ? 'none' : '';
+    lento.style.display = lentoSel ? '' : 'none';
     var opt = unit.options[unit.selectedIndex];
     var reg = opt ? opt.getAttribute('data-regimen') : 'basal';
     var pide = (mode.value === 'choque') || (reg === 'choque');
@@ -142,6 +159,7 @@
   }
   unit.addEventListener('change', sync);
   mode.addEventListener('change', sync);
+  product.addEventListener('change', sync);
   sync();
 })();
 </script>

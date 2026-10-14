@@ -41,7 +41,7 @@
     .pill-ok { background: #ecfdf5; color: #065f46; }
     .est { font-size: .68rem; color: #9ca3af; }
 
-    .turno { display: grid; grid-template-columns: 26px 78px 1fr 1fr 82px; gap: 8px;
+    .turno { display: grid; grid-template-columns: 26px 78px 78px 1fr 1fr 82px; gap: 8px;
              align-items: center; padding: 7px 0; border-bottom: 1px dashed #eef0f3; font-size: .84rem; }
     .turno:last-child { border-bottom: none; }
     .turno .n { width: 22px; height: 22px; border-radius: 50%; background: #eef2ff; color: #3730a3;
@@ -167,13 +167,19 @@
         de mantención. Se carga en el muestreo de biofiltro de Central.</div>
       {% else %}
       <table>
-        <thead><tr><th>Objetivo</th><th class="num">Choque</th><th class="num">Mantención</th></tr></thead>
+        <thead>
+          <tr><th rowspan="2">Objetivo</th><th class="num" colspan="2">Choque (kg)</th><th class="num" colspan="2">Mantención (kg/día)</th></tr>
+          <tr><th class="num">Bicarbonato</th><th class="num">Caliza {{ '%.0f'|format(caliza_pureza * 100) }}%</th>
+              <th class="num">Bicarbonato</th><th class="num">Caliza {{ '%.0f'|format(caliza_pureza * 100) }}%</th></tr>
+        </thead>
         <tbody>
           {% for s in sensibilidad %}
           <tr{% if s.objetivo == objetivo %} style="background:#f5f8ff;font-weight:700"{% endif %}>
             <td>{{ '%.0f'|format(s.objetivo) }} mg/L</td>
-            <td class="num">{{ '%.0f'|format(s.choque) if s.choque else '—' }} kg</td>
-            <td class="num">{{ '%.0f'|format(s.kg_dia) }} kg/día</td>
+            <td class="num">{{ '%.0f'|format(s.choque) if s.choque else '—' }}</td>
+            <td class="num">{{ '%.0f'|format(s.choque * caliza_f) if s.choque else '—' }}</td>
+            <td class="num">{{ '%.0f'|format(s.kg_dia) }}</td>
+            <td class="num">{{ '%.0f'|format(s.kg_dia * caliza_f) }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -192,10 +198,14 @@
         Choque{% if alk_actual %} · {{ '%.0f'|format(alk_actual) }} → {{ '%.0f'|format(objetivo) }} mg/L{% endif %}
       </div>
       {% if choque and choque.turnos %}
+        <div class="turno est" style="padding-top:0">
+          <div></div><div>Bicarbonato</div><div>Caliza {{ '%.0f'|format(caliza_pureza * 100) }}%</div><div></div><div></div><div></div>
+        </div>
         {% for t in choque.turnos %}
         <div class="turno">
           <div class="n">{{ loop.index }}</div>
           <div class="kg">{{ '%.0f'|format(t.kg) }} kg</div>
+          <div class="kg">{{ '%.0f'|format(t.kg * caliza_f) }} kg</div>
           <div class="mv">alc {{ '%.0f'|format(t.alk_desde) }} → {{ '%.0f'|format(t.alk_hasta) }}</div>
           <div class="mv">{% if t.ph_hasta %}pH {{ '%.2f'|format(t.ph_desde)|replace('.', ',') }} → {{ '%.2f'|format(t.ph_hasta)|replace('.', ',') }}{% endif %}</div>
           <div>{% if t.topado_por == 'nh3' %}<span class="pill pill-warn">NH₃</span>
@@ -204,9 +214,12 @@
         {% endfor %}
         <div class="note {{ 'warnbox' if not choque.completo }}">
           {% if choque.completo %}
-            <strong>{{ '%.0f'|format(choque.kg_total) }} kg</strong> de bicarbonato en
+            <strong>{{ '%.0f'|format(choque.kg_total) }} kg</strong> de bicarbonato
+            (o {{ '%.0f'|format(choque.kg_total * caliza_f) }} kg de caliza) en
             {{ choque.turnos|length }} turno{{ 's' if choque.turnos|length > 1 }}.
-            El tope por turno son {{ '%.0f'|format(max_kg_turno) }} kg de reparto parejo.
+            El tope por turno son {{ '%.0f'|format(max_kg_turno) }} kg de bicarbonato de reparto parejo.
+            La caliza aporta la misma alcalinidad pero se disuelve en días, no en horas:
+            no sirve para un choque rápido.
           {% else %}
             El plan se detiene en <strong>{{ '%.0f'|format(choque.kg_total) }} kg</strong> de los
             {{ '%.0f'|format(choque.kg_teorico) }} teóricos: el <strong>NH₃ no ionizado</strong> toca
@@ -233,8 +246,10 @@
           <tr><td>Consume la nitrificación</td><td class="num">{{ '%.1f'|format(mantencion.consumo_nitrificacion)|replace('.', ',') }} kg</td></tr>
           <tr><td>Aporta el agua fresca</td><td class="num">−{{ '%.1f'|format(mantencion.aporte_agua_fresca)|replace('.', ',') }} kg</td></tr>
           <tr><td>Se lleva la purga</td><td class="num">+{{ '%.1f'|format(mantencion.salida_por_purga)|replace('.', ',') }} kg</td></tr>
-          <tr><td><strong>NaHCO₃ por día</strong></td>
+          <tr><td><strong>Bicarbonato (NaHCO₃) por día</strong></td>
             <td class="num"><strong>{{ '%.0f'|format(mantencion.kg_nahco3_dia) }} kg</strong></td></tr>
+          <tr><td><strong>o Caliza {{ '%.0f'|format(caliza_pureza * 100) }}% por día</strong></td>
+            <td class="num"><strong>{{ '%.0f'|format(mantencion.kg_nahco3_dia * caliza_f) }} kg</strong></td></tr>
         </tbody>
       </table>
       {% endif %}

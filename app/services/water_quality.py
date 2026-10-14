@@ -1786,6 +1786,10 @@ def feed_capacity(eta, q_rec, q_fresh, ph, temp_c, thresholds=None,
 # a las 4 PM no lo es. El tope sale de ahi.
 # ---------------------------------------------------------------------------
 NAHCO3_AS_CACO3 = 0.595     # g CaCO3-equiv por g de NaHCO3 (50,04/84,01)
+CALIZA_PUREZA = 0.90        # g CaCO3 por g de caliza comercial
+# kg de caliza que aportan la misma alcalinidad que 1 kg de bicarbonato. La
+# equivalencia es de alcalinidad, no de tiempo: la caliza se disuelve en dias.
+CALIZA_POR_NAHCO3 = NAHCO3_AS_CACO3 / CALIZA_PUREZA
 NACL_CL_FRACTION = 0.6066   # g Cl- por g de NaCl (35,45/58,44)
 CL_NO2_RATIO = 20.0         # Cl-:NO2-N en masa; 6:1 es el minimo, 20:1 es
                             # el que se usa con especies sensibles

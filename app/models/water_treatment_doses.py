@@ -25,7 +25,7 @@ class WaterTreatmentDose(Base):
     operator_id = Column(BigInteger, ForeignKey("users.id"))
     applied_at = Column(TIMESTAMP, nullable=False)
 
-    product = Column(String(30), nullable=False)      # bicarbonato | sal
+    product = Column(String(30), nullable=False)      # carbonato de calcio | bicarbonato | sal
     kg = Column(Numeric(10, 2), nullable=False)
     mode = Column(String(20), nullable=False, default="mantencion")  # choque | mantencion
     application_point = Column(String(120))

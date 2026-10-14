@@ -1734,6 +1734,8 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
             "regimen": regimen, "regimenes": wq.REGIMES,
             "doses": doses, "photo": photo,
             "max_kg_turno": MAX_KG_TURNO_DEFAULT,
+            "caliza_f": wq.CALIZA_POR_NAHCO3,
+            "caliza_pureza": wq.CALIZA_PUREZA,
         }
         html = jinja_env.get_template("calidad_agua_biofiltro_unidad.html").render(context)
         return HTMLResponse(content=html)
@@ -1809,7 +1811,7 @@ def carga_form(request: Request, unit_id: Optional[int] = None,
                        "regimen": regimenes.get(u.id, "basal")} for u in units],
             "users": _active_users(db),
             "selected_unit": (editing.cultivation_unit_id if editing else unit_id),
-            "product": product or "bicarbonato",
+            "product": product or "carbonato de calcio",
             "editing": editing,
             "now": datetime.now().strftime("%Y-%m-%dT%H:%M"),
             "regimenes": wq.REGIMES,
@@ -1860,7 +1862,10 @@ def carga_create(
         # El par dosis-respuesta es lo unico que calibra el consumo real. Si
         # la carga es de choque y no trae la alcalinidad previa, se avisa:
         # despues no hay forma de reconstruirla.
-        if mode == "choque" and d.alk_before is None:
+        # El carbonato de calcio se disuelve en dias: el par a 2 h no aplica.
+        if product == "carbonato de calcio":
+            pass
+        elif mode == "choque" and d.alk_before is None:
             msg += " Falta la alcalinidad ANTES: sin ella la dosis no calibra nada."
         elif d.alk_before is not None and d.alk_after_2h is None:
             msg += " Recordar la alcalinidad a las 2 h."
