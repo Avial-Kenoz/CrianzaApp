@@ -90,8 +90,8 @@
             <option value="choque" {{ 'selected' if editing and editing.mode == 'choque' }}>choque</option>
           </select></div>
         <div><label>Punto de aplicación</label>
-          <input type="text" name="application_point" placeholder="entrada del biofiltro"
-            value="{{ editing.application_point or '' if editing else '' }}" /></div>
+          <input type="text" name="application_point" placeholder="entrada de biofiltro"
+            value="{{ editing.application_point or '' if editing else 'entrada de biofiltro' }}" /></div>
       </div>
 
       <div id="par-block">
