@@ -22,7 +22,12 @@ Idempotente: borra y reconstruye cada (year, month, source).
 
 Uso:
     python -m scripts.build_feed_lot_monthly_allocations
+    python -m scripts.build_feed_lot_monthly_allocations --fuente app --desde 2026-05
+
+--fuente y --desde acotan lo que se rehace: el histórico (legacy) ya está
+cerrado y rehacerlo lo movería con los checkpoints que cambiaron después.
 """
+import argparse
 import sys
 import os
 import calendar
@@ -336,25 +341,35 @@ def _allocate_source(
     return inserted, without_ck, kg_total
 
 
-def run():
+def run(fuente: str = "todas", desde: tuple = None):
     db = SessionLocal()
     try:
         children = _child_ponds(db)
         print(f"Ponds padre: {len(children)} ({sum(len(v) for v in children.values())} hijos)")
 
-        periods_legacy = set(db.execute(text("""
-            SELECT DISTINCT year, month FROM feed_monthly_consumption_legacy
-            WHERE pond_id IS NOT NULL
-        """)).fetchall())
+        periods_legacy = set()
+        if fuente in ("todas", "legacy"):
+            periods_legacy = set(db.execute(text("""
+                SELECT DISTINCT year, month FROM feed_monthly_consumption_legacy
+                WHERE pond_id IS NOT NULL
+            """)).fetchall())
 
-        periods_app = set(db.execute(text("""
-            SELECT DISTINCT EXTRACT(year FROM confirmed_at)::int,
-                            EXTRACT(month FROM confirmed_at)::int
-            FROM feed_execution_events
-            WHERE confirmed_at IS NOT NULL AND pond_id IS NOT NULL
-        """)).fetchall())
+        periods_app = set()
+        if fuente in ("todas", "app"):
+            periods_app = set(db.execute(text("""
+                SELECT DISTINCT EXTRACT(year FROM confirmed_at)::int,
+                                EXTRACT(month FROM confirmed_at)::int
+                FROM feed_execution_events
+                WHERE confirmed_at IS NOT NULL AND pond_id IS NOT NULL
+            """)).fetchall())
 
+        if desde:
+            periods_legacy = {p for p in periods_legacy if tuple(p) >= desde}
+            periods_app = {p for p in periods_app if tuple(p) >= desde}
         all_periods = sorted(periods_legacy | periods_app)
+        if not all_periods:
+            print("Sin periodos que rehacer.")
+            return
         print(f"Periodos: {len(all_periods)} ({all_periods[0]} a {all_periods[-1]})")
 
         now = datetime.now()
@@ -395,4 +410,9 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    ap = argparse.ArgumentParser(description="Asignaciones mensuales de alimento por lote")
+    ap.add_argument("--fuente", choices=["todas", "legacy", "app"], default="todas")
+    ap.add_argument("--desde", help="AAAA-MM: rehacer solo desde ese mes")
+    args = ap.parse_args()
+    desde = tuple(int(x) for x in args.desde.split("-")) if args.desde else None
+    run(args.fuente, desde)
