@@ -654,6 +654,68 @@ def _recent_etas(db: Session, unit_id: int, n: int = 8) -> Optional[dict]:
     return {"eta": mediana, "n": len(etas)}
 
 
+def _unit_feed_cap(u, bf, eta, th_u, no2_fit, alk_cap) -> Optional[dict]:
+    """Techos de alimentacion de una unidad y cual manda (wq.feed_capacity).
+
+    El amonio se evalua con el pH de la tarde (peor del dia), no con el del
+    muestreo. Es la misma cuenta del panel y de la racion diaria.
+    """
+    ph_tarde = wq.ph_worst_of_day(
+        float(bf.in_ph) if (bf is not None and bf.in_ph) else None,
+        u.ph_afternoon_rise)
+    return wq.feed_capacity(
+        eta,
+        float(u.recirculation_l_s) if u.recirculation_l_s else None,
+        float(u.freshwater_l_s) if u.freshwater_l_s else None,
+        ph_tarde["ph"] if ph_tarde else None,
+        float(bf.in_temp_c) if (bf is not None and bf.in_temp_c) else None,
+        th_u, no2_fit, 48.0,
+        alk_cap=alk_cap,
+        superficie=wq.media_surface_m2(u.media_volume_m3, u.media_ssa_m2_m3),
+        ph_bio=float(bf.in_ph) if (bf is not None and bf.in_ph) else None,
+        tan_now=float(bf.in_nh4_n) if (bf is not None and bf.in_nh4_n) else None)
+
+
+def feed_limits_by_unit(db: Session, now: Optional[datetime] = None) -> dict:
+    """{unit_id: {"feed_cap", "photo", "photo_evaluable"}} para la racion diaria.
+
+    Mismos insumos que arma el panel para cada unidad, sin el resto de la
+    tarjeta: el techo por biofiltro (y cual manda) y el estado de fotosintesis.
+    """
+    now = now or datetime.now()
+    thresholds = load_thresholds(db)
+    photo = _photosynthesis_by_unit(db, thresholds, now)
+    photo_eval = _photosynthesis_evaluable(db, now)
+    bf_latest = _latest_bf_by_unit(db)
+    alk_caps = _alkalinity_cap_by_unit(db)
+    no2_fits = _nitrite_fits(db)
+    salt_by_unit: dict = {}
+    for d in (db.query(WaterTreatmentDose)
+              .filter(WaterTreatmentDose.product == "sal",
+                      WaterTreatmentDose.applied_at >= now - timedelta(days=60))
+              .all()):
+        salt_by_unit.setdefault(d.cultivation_unit_id, []).append(d)
+
+    out = {}
+    for u in db.query(CultivationUnit).all():
+        bf = bf_latest.get(u.id)
+        eta = None
+        if bf is not None:
+            etas = _recent_etas(db, u.id)
+            if etas:
+                eta = etas["eta"]
+        th_u = _unit_thresholds(db, u, thresholds, now,
+                                salt_doses=salt_by_unit.get(u.id, []))
+        out[u.id] = {
+            "feed_cap": _unit_feed_cap(u, bf, eta, th_u,
+                                       no2_fits.get(u.id, no2_fits[None]),
+                                       alk_caps.get(u.id)),
+            "photo": photo.get(u.id),
+            "photo_evaluable": u.id in photo_eval,
+        }
+    return out
+
+
 def _reactor_m3(u) -> Optional[float]:
     """Volumen para el tiempo de contacto.
 
@@ -1007,20 +1069,9 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 eta, float(u.recirculation_l_s) if u.recirculation_l_s else None,
                 _reactor_m3(u))
             # Capacidad de alimentacion y cual de los techos manda.
-            ph_tarde = wq.ph_worst_of_day(
-                float(bf.in_ph) if (bf is not None and bf.in_ph) else None,
-                u.ph_afternoon_rise)
-            feed_cap = wq.feed_capacity(
-                eta,
-                float(u.recirculation_l_s) if u.recirculation_l_s else None,
-                float(u.freshwater_l_s) if u.freshwater_l_s else None,
-                ph_tarde["ph"] if ph_tarde else None,
-                float(bf.in_temp_c) if (bf is not None and bf.in_temp_c) else None,
-                th_u, no2_fits.get(u.id, no2_fits[None]), 48.0,
-                alk_cap=alk_caps.get(u.id),
-                superficie=wq.media_surface_m2(u.media_volume_m3, u.media_ssa_m2_m3),
-                ph_bio=float(bf.in_ph) if (bf is not None and bf.in_ph) else None,
-                tan_now=float(bf.in_nh4_n) if (bf is not None and bf.in_nh4_n) else None)
+            feed_cap = _unit_feed_cap(u, bf, eta, th_u,
+                                      no2_fits.get(u.id, no2_fits[None]),
+                                      alk_caps.get(u.id))
 
             # Qué hace falta para llegar al techo de amonio: caliza, sal, medio.
             # La sal se dimensiona contra el umbral BASE de nitrito (el cloruro
