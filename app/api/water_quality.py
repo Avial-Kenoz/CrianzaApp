@@ -177,6 +177,7 @@ BF_COMMON_MIN_UNITS = 3         # con menos unidades no se distingue causa comú
 BF_COMMON_SHARE = 0.75          # fracción de unidades caídas a la vez
 
 
+PROTEIN_DEFAULT_PCT = 48.0     # Progress EX: unidad sin alimento registrado
 FEED_MIN_WINDOW_DAYS = 28       # el alimento se confirma por lotes, no a diario:
                                 # ventanas cortas dan kg/día muy ruidosos
 
@@ -232,11 +233,13 @@ def _bf_trend_by_unit(db: Session, n: int = BF_TREND_N) -> dict:
     return out
 
 
-def _unit_feed_n_kg_day(db: Session, unit_id: int, since: date, until: date) -> Optional[float]:
-    """N amoniacal producido por el alimento de una unidad, en kg N/día.
+def _unit_feed(db: Session, unit_id: int, since: date, until: date) -> Optional[dict]:
+    """Alimento de una unidad en la ventana: kg/día, N amoniacal y proteína.
 
-    Usa proteína y kilos por saco de feed_types (datos de etiqueta). Devuelve
-    None si la unidad no tiene alimento registrado o falta la config.
+    Usa proteína y kilos por saco de feed_types (fichas Aller y guías). La
+    proteína es el promedio ponderado por kilos de la mezcla que se dio:
+    Reproductor (52 %) y Progress (48 %) no cargan lo mismo por kilo.
+    Devuelve None si la unidad no tiene alimento registrado o falta la config.
 
     La ventana se ensancha hacia atrás hasta FEED_MIN_WINDOW_DAYS: los eventos de
     alimento se confirman en tandas, así que un rango corto puede caer entre dos
@@ -249,7 +252,8 @@ def _unit_feed_n_kg_day(db: Session, unit_id: int, since: date, until: date) -> 
         since = until - timedelta(days=FEED_MIN_WINDOW_DAYS - 1)
         days = FEED_MIN_WINDOW_DAYS
     row = db.execute(sa_text("""
-        SELECT SUM(e.confirmed_bags * ft.bag_kg * ft.protein_pct / 100.0) AS prot_kg
+        SELECT SUM(e.confirmed_bags * ft.bag_kg) AS feed_kg,
+               SUM(e.confirmed_bags * ft.bag_kg * ft.protein_pct / 100.0) AS prot_kg
           FROM feed_execution_events e
           JOIN ponds p ON p.id = e.pond_id
           JOIN feed_types ft ON ft.id = e.feed_type_id
@@ -257,10 +261,30 @@ def _unit_feed_n_kg_day(db: Session, unit_id: int, since: date, until: date) -> 
            AND e.confirmed_at::date BETWEEN :since AND :until
            AND ft.bag_kg IS NOT NULL AND ft.protein_pct IS NOT NULL
     """), {"uid": unit_id, "since": since, "until": until}).first()
-    if not row or row.prot_kg is None:
+    if not row or row.prot_kg is None or not row.feed_kg:
         return None
     # prot_kg ya trae alimento x fracción proteica; solo falta el factor TAN
-    return float(row.prot_kg) * wq.TAN_PER_FEED_N / days
+    return {"kg_day": float(row.feed_kg) / days,
+            "n_kg_day": float(row.prot_kg) * wq.TAN_PER_FEED_N / days,
+            "protein_pct": float(row.prot_kg) / float(row.feed_kg) * 100.0}
+
+
+def _unit_feed_n_kg_day(db: Session, unit_id: int, since: date, until: date) -> Optional[float]:
+    """N amoniacal producido por el alimento de una unidad, en kg N/día."""
+    f = _unit_feed(db, unit_id, since, until)
+    return f["n_kg_day"] if f else None
+
+
+def _unit_protein_pct(db: Session, unit_id: int, today: Optional[date] = None) -> float:
+    """Proteína de la mezcla que come la unidad (últimos FEED_MIN_WINDOW_DAYS).
+
+    Es la que convierte kilos de alimento en nitrógeno en los techos y en la
+    mantención. Sin alimento registrado se usa la de Progress (48 %), que es
+    la que se suponía para todas antes de cargar las fichas.
+    """
+    today = today or date.today()
+    f = _unit_feed(db, unit_id, today - timedelta(days=FEED_MIN_WINDOW_DAYS - 1), today)
+    return f["protein_pct"] if f else PROTEIN_DEFAULT_PCT
 
 
 def _window_k(db: Session, unit, rows) -> Optional[float]:
@@ -374,8 +398,8 @@ def _alkalinity_cap_by_unit(db: Session) -> dict:
             hasta = last_feed[uid]
         if desde > hasta:
             return None
-        n_kg = _unit_feed_n_kg_day(db, uid, desde, hasta)
-        return n_kg / wq.TAN_PER_FEED_N / 0.48 if n_kg else None
+        f = _unit_feed(db, uid, desde, hasta)
+        return f["kg_day"] if f else None
 
     out = {}
     for uid, por_fecha in lag_by_unit.items():
@@ -430,7 +454,8 @@ def _alkalinity_cap_by_unit(db: Session) -> dict:
             cal_pendiente = listo
 
         cap = wq.alkalinity_feed_ceiling(feed0, [p[1] for p in natural], src_now,
-                                         dose_now, cal)
+                                         dose_now, cal,
+                                         protein_pct=_unit_protein_pct(db, uid, today))
         if cap is not None:
             cap.update(desde=natural[-1][0], hasta=natural[0][0])
             if fechas_dosis and not cap.get("calibrado"):
@@ -654,7 +679,8 @@ def _recent_etas(db: Session, unit_id: int, n: int = 8) -> Optional[dict]:
     return {"eta": mediana, "n": len(etas)}
 
 
-def _unit_feed_cap(u, bf, eta, th_u, no2_fit, alk_cap) -> Optional[dict]:
+def _unit_feed_cap(u, bf, eta, th_u, no2_fit, alk_cap,
+                   protein_pct: float = PROTEIN_DEFAULT_PCT) -> Optional[dict]:
     """Techos de alimentacion de una unidad y cual manda (wq.feed_capacity).
 
     El amonio se evalua con el pH de la tarde (peor del dia), no con el del
@@ -669,7 +695,7 @@ def _unit_feed_cap(u, bf, eta, th_u, no2_fit, alk_cap) -> Optional[dict]:
         float(u.freshwater_l_s) if u.freshwater_l_s else None,
         ph_tarde["ph"] if ph_tarde else None,
         float(bf.in_temp_c) if (bf is not None and bf.in_temp_c) else None,
-        th_u, no2_fit, 48.0,
+        th_u, no2_fit, protein_pct,
         alk_cap=alk_cap,
         superficie=wq.media_surface_m2(u.media_volume_m3, u.media_ssa_m2_m3),
         ph_bio=float(bf.in_ph) if (bf is not None and bf.in_ph) else None,
@@ -709,7 +735,8 @@ def feed_limits_by_unit(db: Session, now: Optional[datetime] = None) -> dict:
         out[u.id] = {
             "feed_cap": _unit_feed_cap(u, bf, eta, th_u,
                                        no2_fits.get(u.id, no2_fits[None]),
-                                       alk_caps.get(u.id)),
+                                       alk_caps.get(u.id),
+                                       _unit_protein_pct(db, u.id, now.date())),
             "photo": photo.get(u.id),
             "photo_evaluable": u.id in photo_eval,
         }
@@ -1071,7 +1098,8 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
             # Capacidad de alimentacion y cual de los techos manda.
             feed_cap = _unit_feed_cap(u, bf, eta, th_u,
                                       no2_fits.get(u.id, no2_fits[None]),
-                                      alk_caps.get(u.id))
+                                      alk_caps.get(u.id),
+                                      _unit_protein_pct(db, u.id, now.date()))
 
             # Qué hace falta para llegar al techo de amonio: caliza, sal, medio.
             # La sal se dimensiona contra el umbral BASE de nitrito (el cloruro
@@ -2020,8 +2048,10 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
         # --- alcalinidad: medida, o de equilibrio ---------------------------
         alk_medida = (float(bf.in_alkalinity)
                       if (bf is not None and bf.in_alkalinity is not None) else None)
-        feed_kg = (n_kg / wq.TAN_PER_FEED_N / 0.48) if n_kg else None
-        equilibrio = wq.steady_state_alkalinity(alk_origen, feed_kg, 48.0, q_fresh)
+        feed_u = _unit_feed(db, unit_id, date.today() - timedelta(days=27), date.today())
+        feed_kg = feed_u["kg_day"] if feed_u else None
+        protein = feed_u["protein_pct"] if feed_u else PROTEIN_DEFAULT_PCT
+        equilibrio = wq.steady_state_alkalinity(alk_origen, feed_kg, protein, q_fresh)
         # Lo medido manda; si no hay medición se usa el equilibrio y se dice.
         alk_actual = alk_medida if alk_medida is not None else (
             equilibrio["alk_equilibrio"] if equilibrio else None)
@@ -2030,7 +2060,7 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
         # Dosis = consumo del alimento, con la ración planificada si está
         # cargada. La laguna tiende a la fuente y no depende del caudal.
         feed_plan = float(u.feed_plan_kg_day) if u.feed_plan_kg_day else None
-        mant_alim = wq.maintenance_by_feed(feed_plan or feed_kg, 48.0)
+        mant_alim = wq.maintenance_by_feed(feed_plan or feed_kg, protein)
         mant_fuente = "plan" if feed_plan else ("ejecutado" if feed_kg else None)
         alk_alarma = alk_medida is not None and alk_medida < wq.ALK_ALARMA
 
@@ -2042,7 +2072,7 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
                                           alk_actual, alk_origen)
         feed_cap_con = wq.feed_capacity(eta, q_rec, q_fresh,
                                         ph_tarde_con["ph"] if ph_tarde_con else None,
-                                        temp, th, no2_fit, 48.0, alk_cap=None)
+                                        temp, th, no2_fit, protein, alk_cap=None)
         sal_obj = wq.salt_target(feed_cap_con, no2_fit, th["nitrite_n"]["alert"])
         cl_mod = wq.modeled_chloride(doses, vol, q_fresh,
                                      u.chloride_base_mg_l, now)
