@@ -59,5 +59,22 @@ class RacionTeorica(unittest.TestCase):
         self.assertIsNone(fr.theoretical_kg_day(0, 5000, 18, "progress"))
 
 
+class Reparto(unittest.TestCase):
+    C = [{"pond_id": 1, "biomass_kg": 3000}, {"pond_id": 2, "biomass_kg": 1000}]
+
+    def test_por_biomasa(self):
+        self.assertEqual(fr.split_kg(40, self.C, "biomasa"), {1: 30.0, 2: 10.0})
+
+    def test_todos_iguales(self):
+        self.assertEqual(fr.split_kg(40, self.C, "iguales"), {1: 20.0, 2: 20.0})
+
+    def test_sin_biomasa_reparte_igual(self):
+        c = [{"pond_id": 1, "biomass_kg": 0}, {"pond_id": 2, "biomass_kg": 0}]
+        self.assertEqual(fr.split_kg(10, c, "biomasa"), {1: 5.0, 2: 5.0})
+
+    def test_cero_es_ayuno(self):
+        self.assertEqual(fr.split_kg(0, self.C, "biomasa"), {1: 0.0, 2: 0.0})
+
+
 if __name__ == "__main__":
     unittest.main()

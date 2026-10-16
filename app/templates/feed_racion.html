@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alimentación — Ración diaria</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    header { background: #111827; color: #fff; padding: 16px 22px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    header h1 { font-size: 1.1rem; font-weight: 700; }
+    header a { color: #9ca3af; font-size: .82rem; text-decoration: none; }
+    header a:hover { color: #fff; }
+    .who { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: .82rem; color: #d1d5db; }
+    .who select { padding: 6px 8px; border-radius: 7px; border: 1px solid #374151; background: #1f2937; color: #fff; font-size: .82rem; }
+    .container { padding: 14px 14px 32px; max-width: 1280px; }
+    .flash { border-radius: 10px; padding: 10px 12px; font-size: .88rem; margin-bottom: 12px; font-weight: 600; }
+    .flash.error { color: #991b1b; background: #fff1f2; border: 1px solid #fca5a5; }
+    .flash.warn { color: #9a3412; background: #fff7ed; border: 1px solid #fdba74; }
+    .flash.info { color: #1e3a8a; background: #eef6ff; border: 1px solid #bfdbfe; }
+
+    .days { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+    .day { padding: 7px 12px; border-radius: 18px; background: #fff; border: 1px solid #d1d5db; font-size: .82rem; color: #374151; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+    .day:hover { border-color: #0f766e; }
+    .day.active { background: #0f766e; color: #fff; border-color: #0f766e; }
+    .day.pend { border-color: #dc2626; color: #b91c1c; }
+    .day.pend.active { background: #dc2626; color: #fff; }
+    .day .dot { width: 7px; height: 7px; border-radius: 50%; background: #0f766e; }
+    .day.active .dot { background: #fff; }
+    .day.pend .dot { background: #dc2626; }
+    .day-actions { margin-left: auto; display: flex; gap: 8px; }
+
+    .unit { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); margin-bottom: 12px; overflow: hidden; border-left: 4px solid #cbd5e1; }
+    .unit.is-programado { border-left-color: #0f766e; }
+    .unit.is-ayuno { border-left-color: #9ca3af; }
+    .unit-head { padding: 12px 16px 10px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .unit-name { font-size: 1rem; font-weight: 700; }
+    .unit-state { font-size: .76rem; font-weight: 700; padding: 2px 9px; border-radius: 10px; background: #e5e7eb; color: #374151; }
+    .unit-state.ok { background: #ccfbf1; color: #115e59; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 10px; }
+    .chip { font-size: .76rem; background: #f3f4f6; border-radius: 8px; padding: 5px 9px; color: #374151; line-height: 1.25; }
+    .chip b { color: #111827; font-size: .84rem; }
+    .chip small { color: #6b7280; }
+    .chip.teo { background: #ecfdf5; }
+    .chip.techo { background: #eff6ff; }
+    .chip.foto-detectada { background: #fef3c7; }
+    .chip.warn { background: #fff7ed; color: #9a3412; }
+    .controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px 12px; border-top: 1px solid #f0f2f5; background: #fafafa; }
+    .controls label { font-size: .8rem; color: #4b5563; font-weight: 600; }
+    .kg-input { width: 90px; padding: 7px 9px; border: 1px solid #d1d5db; border-radius: 8px; font-size: .95rem; font-weight: 700; text-align: right; }
+    .kg-input:focus { outline: none; border-color: #0f766e; box-shadow: 0 0 0 2px rgba(15,118,110,.15); }
+    select.split { padding: 7px 8px; border: 1px solid #d1d5db; border-radius: 8px; font-size: .82rem; background: #fff; }
+    .hint { font-size: .74rem; color: #6b7280; }
+    .hint.over { color: #b45309; font-weight: 700; }
+    .spacer { flex: 1; }
+    .btn { border: none; border-radius: 8px; font-size: .84rem; font-weight: 700; padding: 8px 14px; cursor: pointer; }
+    .btn:disabled { background: #9ca3af !important; cursor: not-allowed; }
+    .btn-feed { background: #0f766e; color: #fff; }
+    .btn-feed:hover { background: #0b5f59; }
+    .btn-fast { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+    .btn-fast:hover { background: #f3f4f6; }
+    .btn-link { background: none; color: #1d4ed8; padding: 6px 4px; font-weight: 600; }
+    .btn-primary { background: #1d4ed8; color: #fff; padding: 10px 20px; font-size: .9rem; }
+    .btn-print { background: #fff; color: #0369a1; border: 1px solid #bae6fd; text-decoration: none; }
+    .unit.expanded .collapsed-only { display: none; }
+    .unit:not(.expanded) .expanded-only { display: none; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead th { background: #f8fafc; color: #475569; font-size: .7rem; text-transform: uppercase; letter-spacing: .4px; font-weight: 700; text-align: right; padding: 7px 10px; border-top: 1px solid #e5e7eb; white-space: nowrap; }
+    thead th.l, tbody td.l { text-align: left; }
+    tbody td { font-size: .84rem; padding: 7px 10px; border-top: 1px solid #f1f5f9; text-align: right; white-space: nowrap; }
+    tbody tr.off td { color: #9ca3af; }
+    td.kg-out { font-weight: 700; color: #0f766e; }
+    tr.off td.kg-out { color: #9ca3af; }
+    .av { color: #b45309; font-size: .7rem; }
+    .neg { color: #b91c1c; }
+    .muted { color: #9ca3af; }
+
+    .confirm-bar { position: sticky; bottom: 0; background: #fff; border-top: 1px solid #e5e7eb; padding: 12px 16px; display: flex; align-items: center; gap: 12px; box-shadow: 0 -2px 8px rgba(0,0,0,.06); border-radius: 12px 12px 0 0; }
+    .kg-real { width: 80px; padding: 5px 7px; border: 1px solid #d1d5db; border-radius: 7px; text-align: right; font-weight: 700; }
+    .kg-real:disabled { background: #f3f4f6; color: #9ca3af; }
+    .badge { font-size: .72rem; font-weight: 700; padding: 2px 8px; border-radius: 9px; }
+    .badge.alimentado { background: #dcfce7; color: #166534; }
+    .badge.no_alimentado { background: #f3f4f6; color: #4b5563; }
+    .empty { background: #fff; border-radius: 12px; padding: 28px; text-align: center; color: #6b7280; }
+
+    .toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 18px; border-radius: 10px; font-size: .87rem; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.18); z-index: 9999; display: none; color: #fff; }
+    .toast.ok { background: #0f766e; } .toast.err { background: #b91c1c; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+{% macro n(v, d=0) %}{% if v is none %}—{% else %}{{ ("{:,.%df}" % d).format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}{% endif %}{% endmacro %}
+
+<header>
+  <h1>Alimentación — Ración diaria</h1>
+  <a href="/views/ui/feed">← Bodega y programa</a>
+  <div class="who">
+    <label for="who">Registra</label>
+    <select id="who">
+      <option value="">— elegir —</option>
+      {% for u in users %}<option value="{{ u.id }}">{{ u.label }}</option>{% endfor %}
+    </select>
+  </div>
+</header>
+
+<div class="container">
+  {% if msg %}<div class="flash info">{{ msg }}</div>{% endif %}
+
+  <div class="days">
+    {% for d in dias %}
+    <a class="day{% if d.pendiente %} pend{% endif %}{% if d.fecha == fecha %} active{% endif %}" href="?fecha={{ d.iso }}">
+      {% if d.programado %}<span class="dot"></span>{% endif %}{{ d.label }}{% if d.pendiente %} · confirmar{% endif %}
+    </a>
+    {% endfor %}
+    <div class="day-actions">
+      {% if modo == 'programar' %}<a class="btn btn-print" href="/views/ui/feed/racion/imprimir?fecha={{ fecha_iso }}" target="_blank">Imprimir {{ fecha_label }}</a>{% endif %}
+    </div>
+  </div>
+
+  {% if modo == 'confirmar' %}
+  {# ====================== CONFIRMAR UN DÍA PASADO ====================== #}
+    {% set hay = namespace(n=0, pend=0) %}
+    {% for u in unidades %}{% for c in u.carriles %}{% if c.racion %}{% set hay.n = hay.n + 1 %}{% if c.racion.status == 'programado' %}{% set hay.pend = hay.pend + 1 %}{% endif %}{% endif %}{% endfor %}{% endfor %}
+    {% if hay.n == 0 %}
+      <div class="empty">No hubo raciones programadas para {{ fecha_label }}.</div>
+    {% else %}
+      <div class="flash {{ 'warn' if hay.pend else 'info' }}">
+        {% if hay.pend %}Confirma lo que se dio el <strong>{{ fecha_label }}</strong>: marca cada carril alimentado (y corrige los kg si se dio otra cantidad) o desmárcalo si no se alimentó.
+        {% else %}{{ fecha_label }} ya está confirmado.{% endif %}
+      </div>
+      {% for u in unidades %}
+        {% set rows = u.carriles|selectattr('racion')|list %}
+        {% if rows %}
+        <div class="unit expanded">
+          <div class="unit-head"><span class="unit-name">{{ u.name }}</span>
+            <span class="hint">programado {{ n(rows|map(attribute='racion.kg_planned')|sum, 1) }} kg</span></div>
+          <table>
+            <thead><tr><th class="l">Alimentado</th><th class="l">Carril</th><th class="l">Alimento</th><th>Programado kg</th><th>Se dio kg</th></tr></thead>
+            <tbody>
+            {% for c in rows %}
+              {% set r = c.racion %}
+              <tr class="conf-row" data-pond="{{ c.pond_id }}">
+                {% if r.status == 'programado' %}
+                <td class="l"><input type="checkbox" class="fed" {% if r.kg_planned > 0 %}checked{% endif %} onchange="toggleFed(this)"></td>
+                <td class="l">{{ c.name }}</td><td class="l">{{ c.feed_name or '—' }}</td>
+                <td>{{ n(r.kg_planned, 1) if r.kg_planned > 0 else 'ayuno' }}</td>
+                <td><input class="kg-real" type="number" min="0" step="0.1" value="{{ '%.1f'|format(r.kg_planned) }}" {% if r.kg_planned <= 0 %}disabled{% endif %}></td>
+                {% else %}
+                <td class="l"><span class="badge {{ r.status }}">{{ 'alimentado' if r.status == 'alimentado' else 'no alimentado' }}</span></td>
+                <td class="l">{{ c.name }}</td><td class="l">{{ c.feed_name or '—' }}</td>
+                <td>{{ n(r.kg_planned, 1) }}</td><td>{{ n(r.kg_fed, 1) }}</td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      {% endfor %}
+      {% if hay.pend %}
+      <div class="confirm-bar">
+        <span class="hint">Se registra a nombre de quien aparece en <strong>Registra</strong>.</span>
+        <span class="spacer"></span>
+        <button class="btn btn-primary" onclick="confirmarDia(this)">Confirmar {{ fecha_label }}</button>
+      </div>
+      {% endif %}
+    {% endif %}
+
+  {% else %}
+  {# ====================== PROGRAMAR ====================== #}
+    {% if bloqueado %}
+      <div class="flash error">Hay {{ pendientes|length }} día{{ 's' if pendientes|length > 1 else '' }} sin confirmar
+        ({% for d in pendientes %}<a href="?fecha={{ d.isoformat() }}">{{ d.strftime('%d-%m') }}</a>{{ ', ' if not loop.last }}{% endfor %}).
+        Confírmalos antes de programar.</div>
+    {% else %}
+      <div class="flash info">Programando <strong>{{ fecha_label }}</strong>. El kg/día parte de la dosis del programa de bodega (sacos ÷ 7);
+        ajústalo con la dieta teórica y el techo del biofiltro.{% if terreno_desde %} En terreno = sacado de bodega − alimentado desde el {{ terreno_desde.strftime("%d-%m") }}.{% else %} En terreno se empieza a contar con la próxima salida de bodega.{% endif %}</div>
+    {% endif %}
+
+    {% for u in unidades %}
+    {% set prog = u.racion_kg %}
+    <div class="unit{% if prog is not none %}{{ ' is-programado' if prog > 0 else ' is-ayuno' }}{% endif %}" data-unit="{{ u.unit_id }}" data-techo="{{ u.techo_kg or '' }}">
+      <div class="unit-head">
+        <span class="unit-name">{{ u.name }}</span>
+        {% if prog is not none %}<span class="unit-state ok">{{ 'programado ' ~ n(prog, 1) ~ ' kg' if prog > 0 else 'ayuno programado' }}</span>{% endif %}
+        <span class="hint">{{ u.carriles|length }} carril{{ 'es' if u.carriles|length != 1 else '' }}</span>
+      </div>
+      <div class="chips">
+        <span class="chip">Biomasa <b>{{ n(u.biomass_kg) }}</b> kg</span>
+        <span class="chip">Agua <b>{{ n(u.temp_c, 1) }}</b> °C {% if u.temp_fuente %}<small>{{ u.temp_fuente }}</small>{% endif %}</span>
+        <span class="chip teo">Dieta Aller <b>{{ n(u.teorica_kg) }}</b> kg/d{% if u.teorica_avisos %} <small>· {{ u.teorica_avisos }} extrapolado{{ 's' if u.teorica_avisos > 1 else '' }}</small>{% endif %}</span>
+        <span class="chip techo">Techo biofiltro <b>{{ n(u.techo_kg) }}</b>{% if u.techo_kg is not none %} kg/d <small>· manda {{ u.techo_manda }}</small>{% endif %}</span>
+        <span class="chip foto-{{ u.fotosintesis }}">Fotosíntesis <b>{{ {'detectada': 'detectada', 'no_detectada': 'no detectada', 'sin_dato': 'sin dato'}[u.fotosintesis] }}</b></span>
+        <span class="chip{% if u.terreno_kg is not none and u.terreno_kg < 0 %} warn{% endif %}">En terreno <b>{{ n(u.terreno_kg) }}</b>{% if u.terreno_kg is not none %} kg{% endif %}</span>
+        <span class="chip">Programa bodega <b>{{ n(u.programado_kg, 1) }}</b>{% if u.programado_kg %} kg/d{% endif %}</span>
+      </div>
+
+      <div class="controls">
+        <label>kg/día</label>
+        <input class="kg-input" type="number" min="0" step="0.5"
+               value="{{ '%.1f'|format(prog if (prog is not none and prog > 0) else (u.programado_kg or 0)) }}"
+               oninput="recalc(this)" {% if bloqueado %}disabled{% endif %}>
+        <select class="split" onchange="recalc(this)" {% if bloqueado %}disabled{% endif %}>
+          <option value="biomasa" {% if (u.split_mode or ('biomasa' if u.has_biomass else 'iguales')) == 'biomasa' %}selected{% endif %}>% a biomasa</option>
+          <option value="iguales" {% if (u.split_mode or ('biomasa' if u.has_biomass else 'iguales')) == 'iguales' %}selected{% endif %}>Todos iguales</option>
+        </select>
+        <span class="hint over-techo"></span>
+        <span class="spacer"></span>
+        <button class="btn btn-link" onclick="toggleCarriles(this)"><span class="collapsed-only">Ver carriles ▸</span><span class="expanded-only">Ocultar carriles ▾</span></button>
+        <span class="collapsed-only">
+          <button class="btn btn-fast" onclick="programar(this, false)" {% if bloqueado %}disabled{% endif %}>No alimentar</button>
+          <button class="btn btn-feed" onclick="programar(this, true)" {% if bloqueado %}disabled{% endif %}>Alimentar</button>
+        </span>
+        <span class="expanded-only">
+          <button class="btn btn-feed" onclick="programar(this, true)" {% if bloqueado %}disabled{% endif %}>Confirmar lo seleccionado</button>
+        </span>
+      </div>
+
+      <div class="expanded-only">
+        <table>
+          <thead><tr>
+            <th class="l"></th><th class="l">Carril</th><th class="l">Alimento</th><th>Biomasa kg</th><th>Peso medio g</th>
+            <th>Aller kg/d</th><th>Bodega kg/d</th><th>En terreno kg</th><th>Ración kg</th>
+          </tr></thead>
+          <tbody>
+          {% for c in u.carriles %}
+            {% set sel = (c.racion.kg_planned > 0) if c.racion else true %}
+            <tr class="carril{% if not sel %} off{% endif %}" data-pond="{{ c.pond_id }}" data-bio="{{ c.biomass_kg }}">
+              <td class="l"><input type="checkbox" class="sel" {% if sel %}checked{% endif %} onchange="recalc(this)" {% if bloqueado %}disabled{% endif %}></td>
+              <td class="l">{{ c.name }}</td>
+              <td class="l">{{ c.feed_name or '—' }}</td>
+              <td>{{ n(c.biomass_kg) }}</td>
+              <td>{{ n(c.weight_g) }}</td>
+              <td title="{{ c.teorica_avisos|join(' · ') }}">{{ n(c.teorica_kg, 1) }}{% if c.teorica_avisos %} <span class="av">*</span>{% endif %}</td>
+              <td>{{ n(c.programado_kg, 1) }}</td>
+              <td{% if c.terreno_kg is not none and c.terreno_kg < 0 %} class="neg"{% endif %}>{{ n(c.terreno_kg) }}</td>
+              <td class="kg-out">—</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+      <div class="empty">No hay carriles con peces.</div>
+    {% endfor %}
+  {% endif %}
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const FECHA = "{{ fecha_iso }}";
+  const who = document.getElementById('who');
+  try { const v = localStorage.getItem('racion_who'); if (v && [...who.options].some(o => o.value === v)) who.value = v; } catch (e) {}
+  who.addEventListener('change', () => { try { localStorage.setItem('racion_who', who.value); } catch (e) {} });
+
+  function toast(msg, ok) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'toast ' + (ok ? 'ok' : 'err'); t.style.display = 'block';
+    setTimeout(() => { t.style.display = 'none'; }, 3500);
+  }
+  function fmt(v) { return v.toLocaleString('es-CL', {minimumFractionDigits: 1, maximumFractionDigits: 1}); }
+  function needWho() {
+    if (!who.value) { toast('Elige quién registra (arriba a la derecha)', false); who.focus(); return null; }
+    return who.value;
+  }
+
+  // Reparte el kg/día de la unidad entre los carriles marcados.
+  function split(unit) {
+    const total = parseFloat(unit.querySelector('.kg-input').value) || 0;
+    const mode = unit.querySelector('.split').value;
+    const rows = [...unit.querySelectorAll('tr.carril')];
+    const sel = rows.filter(r => r.querySelector('.sel').checked);
+    const bio = sel.reduce((s, r) => s + Math.max(0, parseFloat(r.dataset.bio) || 0), 0);
+    const out = {};
+    rows.forEach(r => {
+      let kg = 0;
+      if (total > 0 && r.querySelector('.sel').checked) {
+        kg = (mode === 'biomasa' && bio > 0) ? total * Math.max(0, parseFloat(r.dataset.bio) || 0) / bio
+                                             : total / sel.length;
+      }
+      out[r.dataset.pond] = Math.round(kg * 10) / 10;
+    });
+    return out;
+  }
+  function recalc(el) {
+    const unit = el.closest('.unit');
+    const kgs = split(unit);
+    unit.querySelectorAll('tr.carril').forEach(r => {
+      const on = r.querySelector('.sel').checked;
+      r.classList.toggle('off', !on);
+      r.querySelector('.kg-out').textContent = on ? fmt(kgs[r.dataset.pond]) : '—';
+    });
+    const techo = parseFloat(unit.dataset.techo);
+    const total = parseFloat(unit.querySelector('.kg-input').value) || 0;
+    const h = unit.querySelector('.over-techo');
+    if (techo && total > techo) { h.textContent = 'sobre el techo del biofiltro (' + Math.round(techo) + ' kg/d)'; h.className = 'hint over over-techo'; }
+    else { h.textContent = ''; h.className = 'hint over-techo'; }
+  }
+  function toggleCarriles(btn) { btn.closest('.unit').classList.toggle('expanded'); }
+
+  async function post(url, body) {
+    const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    let j = {}; try { j = await r.json(); } catch (e) {}
+    if (!r.ok || !j.ok) throw new Error(j.error || ('Error ' + r.status));
+    return j;
+  }
+
+  async function programar(btn, alimentar) {
+    const uid = needWho(); if (!uid) return;
+    const unit = btn.closest('.unit');
+    const kgs = alimentar ? split(unit) : {};
+    const items = [...unit.querySelectorAll('tr.carril')].map(r => ({pond_id: r.dataset.pond, kg: alimentar ? kgs[r.dataset.pond] : 0}));
+    if (alimentar && !items.some(i => i.kg > 0)) { toast('No hay kg que repartir: escribe el kg/día o usa "No alimentar"', false); return; }
+    btn.disabled = true;
+    try {
+      await post('/views/ui/feed/racion/programar', {fecha: FECHA, user_id: uid, split_mode: unit.querySelector('.split').value, items});
+      location.reload();
+    } catch (e) { toast(e.message, false); btn.disabled = false; }
+  }
+
+  function toggleFed(cb) {
+    const inp = cb.closest('tr').querySelector('.kg-real');
+    inp.disabled = !cb.checked;
+    if (cb.checked && !(parseFloat(inp.value) > 0)) inp.focus();
+  }
+  async function confirmarDia(btn) {
+    const uid = needWho(); if (!uid) return;
+    const items = [...document.querySelectorAll('tr.conf-row')].filter(r => r.querySelector('.fed')).map(r => ({
+      pond_id: r.dataset.pond, fed: r.querySelector('.fed').checked,
+      kg: parseFloat(r.querySelector('.kg-real').value) || 0,
+    }));
+    const malo = items.find(i => i.fed && !(i.kg > 0));
+    if (malo) { toast('Hay un carril marcado como alimentado sin kg', false); return; }
+    btn.disabled = true;
+    try {
+      const j = await post('/views/ui/feed/racion/confirmar', {fecha: FECHA, user_id: uid, items});
+      location.href = j.pendientes.length ? ('?fecha=' + j.pendientes[0]) : '?';
+    } catch (e) { toast(e.message, false); btn.disabled = false; }
+  }
+
+  document.querySelectorAll('.unit[data-unit]').forEach(u => recalc(u.querySelector('.kg-input')));
+</script>
+</body>
+</html>

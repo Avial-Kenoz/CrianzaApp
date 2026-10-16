@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Integer, Numeric, Float, TIMESTAMP, ForeignKey, DateTime, Text, Enum as SQLEnum, UniqueConstraint
+from sqlalchemy import Column, BigInteger, String, Integer, Numeric, Float, TIMESTAMP, ForeignKey, DateTime, Text, Enum as SQLEnum, UniqueConstraint, Date
 from app.db.session import Base
 import enum
 
@@ -237,3 +237,31 @@ class FeedMonthlyStockLegacy(Base):
         UniqueConstraint("year", "month", "feed_type_key",
                          name="uq_feed_monthly_stock_legacy"),
     )
+
+
+class FeedRation(Base):
+    """Ración diaria por carril: lo que se programa echar al agua y lo que se dio.
+
+    Capa aparte de la bodega: las salidas de bodega (FeedExecutionEvent) dejan
+    el alimento en terreno; aquí se programa por día (hasta 4 días adelante) y
+    al volver se confirma. kg_planned = 0 es un ayuno programado.
+
+    status: programado -> alimentado (kg_fed) | no_alimentado
+    """
+    __tablename__ = "feed_rations"
+    __table_args__ = (UniqueConstraint("ration_date", "pond_id", name="uq_feed_rations_date_pond"),)
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    ration_date = Column(Date, nullable=False, index=True)
+    pond_id = Column(BigInteger, ForeignKey("ponds.id"), nullable=False, index=True)
+    cultivation_unit_id = Column(BigInteger, ForeignKey("cultivation_units.id"), nullable=True)
+    feed_type_id = Column(BigInteger, ForeignKey("feed_types.id"), nullable=True)
+    kg_planned = Column(Numeric(10, 2), nullable=False, default=0)
+    split_mode = Column(String(20), nullable=True)          # biomasa | iguales
+    status = Column(String(20), nullable=False, default="programado")
+    kg_fed = Column(Numeric(10, 2), nullable=True)
+    planned_by = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    planned_at = Column(TIMESTAMP, nullable=True)
+    confirmed_by = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    confirmed_at = Column(TIMESTAMP, nullable=True)
+    note = Column(Text, nullable=True)

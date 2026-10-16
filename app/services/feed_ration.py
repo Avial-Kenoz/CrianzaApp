@@ -22,7 +22,7 @@ para el mismo pez Reproductor recomienda la mitad que Progress.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import func
@@ -262,3 +262,83 @@ def theoretical_by_carril(db: Session, now: Optional[datetime] = None) -> dict:
                                           c["temp_c"], c["tabla"])
         out[pid] = c
     return out
+
+
+# =============================================================================
+# RACIÓN DIARIA: programado, terreno y pendientes
+# =============================================================================
+HORIZON_DAYS = 4            # programar hasta 4 días adelante (fin de semana / feriado)
+PROGRAM_DAYS = 7            # el programa de bodega se piensa por semana
+
+
+def programmed_daily_kg(db: Session) -> dict:
+    """{pond_id: kg/día} del programa de bodega vigente: sacos × kg/saco ÷ 7."""
+    from app.models.feed import FeedProgram, FeedProgramLine
+    rows = (db.query(FeedProgramLine.pond_id,
+                     func.sum(FeedProgramLine.planned_bags * FeedType.bag_kg))
+            .join(FeedProgram, FeedProgram.id == FeedProgramLine.feed_program_id)
+            .join(FeedType, FeedType.id == FeedProgramLine.feed_type_id)
+            .filter(FeedProgram.status == "open", FeedProgramLine.planned_bags > 0)
+            .group_by(FeedProgramLine.pond_id)
+            .all())
+    return {pid: float(kg or 0) / PROGRAM_DAYS for pid, kg in rows}
+
+
+def terreno_since(db: Session) -> Optional[date]:
+    """Desde cuándo se cuenta el alimento en terreno.
+
+    Antes de la ración diaria no hay registro de lo que se echó al agua, así
+    que no se puede saber cuánto quedó de las salidas de bodega anteriores.
+    El conteo parte con la primera salida de bodega desde el primer día de
+    ración: hasta entonces no hay terreno que mostrar (None), en vez de un
+    negativo que solo diría que el sistema empezó a mitad de una tanda.
+    """
+    from app.models.feed import FeedRation
+    inicio = db.query(func.min(FeedRation.ration_date)).scalar()
+    if inicio is None:
+        return None
+    return (db.query(func.min(func.date(FeedExecutionEvent.confirmed_at)))
+            .filter(func.date(FeedExecutionEvent.confirmed_at) >= inicio)
+            .scalar())
+
+
+def terreno_kg(db: Session, since: Optional[date]) -> dict:
+    """{pond_id: kg} en terreno = sacado de bodega − alimentado, desde `since`."""
+    from app.models.feed import FeedRation
+    if since is None:
+        return {}
+    out: dict = {}
+    for pid, kg in (db.query(FeedExecutionEvent.pond_id, func.sum(FeedExecutionEvent.confirmed_kg))
+                    .filter(func.date(FeedExecutionEvent.confirmed_at) >= since)
+                    .group_by(FeedExecutionEvent.pond_id).all()):
+        out[pid] = out.get(pid, 0.0) + float(kg or 0)
+    for pid, kg in (db.query(FeedRation.pond_id, func.sum(FeedRation.kg_fed))
+                    .filter(FeedRation.ration_date >= since,
+                            FeedRation.status == "alimentado")
+                    .group_by(FeedRation.pond_id).all()):
+        out[pid] = out.get(pid, 0.0) - float(kg or 0)
+    return out
+
+
+def pending_dates(db: Session, today: date) -> list:
+    """Días ya pasados con raciones programadas sin confirmar (más antiguo primero)."""
+    from app.models.feed import FeedRation
+    return [d for (d,) in (db.query(FeedRation.ration_date)
+                           .filter(FeedRation.ration_date < today,
+                                   FeedRation.status == "programado")
+                           .distinct().order_by(FeedRation.ration_date).all())]
+
+
+def split_kg(total_kg: float, carriles: list, mode: str) -> dict:
+    """Reparte el total de la unidad entre los carriles seleccionados.
+
+    mode "biomasa": proporcional a la biomasa; "iguales": lo mismo a cada uno.
+    Si ninguno tiene biomasa, se reparte por igual. Redondeo a 0,1 kg.
+    """
+    if not carriles or total_kg <= 0:
+        return {c["pond_id"]: 0.0 for c in carriles}
+    bio = sum(max(0.0, c.get("biomass_kg") or 0.0) for c in carriles)
+    if mode == "biomasa" and bio > 0:
+        return {c["pond_id"]: round(total_kg * max(0.0, c.get("biomass_kg") or 0.0) / bio, 1)
+                for c in carriles}
+    return {c["pond_id"]: round(total_kg / len(carriles), 1) for c in carriles}

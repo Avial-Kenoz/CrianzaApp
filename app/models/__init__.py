@@ -33,6 +33,7 @@ from .feed import (
     FeedProgram,
     FeedProgramLine,
     FeedExecutionLotAllocations,
+    FeedRation,
     AccountingOutboxEvent,
 )
 # Reproducción (Proceso 1: selección · 2: desove · 3: incubadoras)
