@@ -74,6 +74,16 @@
     details > summary::-webkit-details-marker { display: none; }
     details > summary::before { content: "▸ "; }
     details[open] > summary::before { content: "▾ "; }
+    textarea, input[type=datetime-local] {
+      width: 100%; border: 1px solid #d7dbe0; border-radius: 8px; padding: 7px 9px;
+      font-size: .86rem; font-family: inherit; outline: none; }
+    textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+    .today { display: flex; flex-wrap: wrap; gap: 10px 28px; background: #fff; border: 1px solid #e5e7eb;
+             border-radius: 14px; padding: 13px 18px; font-size: .92rem; }
+    .today .est { display: block; font-size: .7rem; margin-bottom: 2px; }
+    tr.hoy td { background: #f5f8ff; }
+    details.analisis { margin-top: 30px; }
+    details.analisis > summary { padding: 12px 0; border-top: 1px solid #e5e7eb; }
   </style>
 </head>
 <body>
@@ -88,6 +98,165 @@
   </div>
   {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
 
+  <!-- ================= HOY ================= -->
+  <div class="today">
+    <div><span class="est">Mantención sugerida por día</span>
+      {% if mant_alim %}
+        <b>{{ '%.0f'|format(mant_alim.kg_caliza_dia) }} kg</b> carbonato de calcio
+        <span class="est">o {{ '%.0f'|format(mant_alim.kg_nahco3_dia) }} kg bicarbonato ·
+          por {{ '%.0f'|format(mant_alim.feed_kg_dia) }} kg/día de alimento
+          {{ '(plan)' if mant_fuente == 'plan' else '(ejecutado, últimos 28 días)' }}</span>
+      {% else %}<span class="est">sin ración: cárgala en Configuración</span>{% endif %}
+    </div>
+    {% if no2_fit is defined %}
+    <div><span class="est">Sal sugerida por día</span>
+      {% if sal and sal.kg_dia is not none and sal_obj %}
+        <b>{{ '%.0f'|format(sal.kg_dia) }} kg</b> sal
+        <span class="est">para {{ ('%.1f'|format(sal_obj.cloruro_objetivo))|replace('.', ',') }} mg/L de cloruro{{ ' · cota alta' if u.chloride_base_mg_l is none }}</span>
+      {% elif sal_obj and sal_obj.razon %}<span class="est">no hace falta: {{ sal_obj.razon }}</span>
+      {% else %}<span class="est">sin datos</span>{% endif %}
+    </div>
+    {% endif %}
+    <div><span class="est">Alcalinidad medida</span>
+      {% if alk_medida is not none %}
+        <b>{{ '%.0f'|format(alk_medida) }} mg/L</b>
+        {% if alk_alarma %}<span class="pill pill-bad">bajo {{ '%.0f'|format(alk_alarma_mg_l) }}</span>{% endif %}
+        <span class="est">{{ bf_fecha.strftime('%d/%m') if bf_fecha }}{{ ' · fuente %.0f'|format(alk_origen) if alk_origen }}</span>
+      {% else %}<span class="est">sin medición</span>{% endif %}
+    </div>
+    <div><span class="est">Cargado hoy</span>
+      {% if hoy_por_producto %}
+        {% for p, kg in hoy_por_producto|dictsort %}<b>{{ ('%g'|format(kg))|replace('.', ',') }} kg</b> {{ p }}{{ ' · ' if not loop.last }}{% endfor %}
+      {% else %}<span class="est">nada todavía</span>{% endif %}
+    </div>
+  </div>
+
+  <!-- ================= REGISTRAR CARGA ================= -->
+  <div class="section-title">Registrar carga</div>
+  <form method="post" action="/views/ui/calidad-agua/carga/nueva">
+    <input type="hidden" name="cultivation_unit_id" value="{{ u.id }}" />
+    <div class="card">
+      <div class="fields">
+        <div><label>Insumo</label>
+          <select name="product" id="product" required>
+            {# El valor "bicarbonato" se mantiene: las cargas ya registradas lo usan. #}
+            {% for p, label in [('carbonato de calcio', 'carbonato de calcio (cal agrícola)'),
+                                ('bicarbonato', 'bicarbonato de sodio'),
+                                ('sal', 'sal')] %}
+            <option value="{{ p }}">{{ label }}</option>
+            {% endfor %}
+          </select></div>
+        <div><label>Cantidad (kg)</label>
+          <input type="number" step="any" min="0" name="kg" required /></div>
+        <div><label>Fecha y hora</label>
+          <input type="datetime-local" name="applied_at" required value="{{ now_input or '' }}" /></div>
+        <div><label>Operador</label>
+          <select name="operator_id">
+            <option value="">—</option>
+            {% for o in (users or []) %}<option value="{{ o.id }}">{{ o.label }}</option>{% endfor %}
+          </select></div>
+        <div><label>Modo</label>
+          <select name="mode" id="mode">
+            <option value="mantencion" {{ 'selected' if regimen != 'choque' }}>mantención</option>
+            <option value="choque" {{ 'selected' if regimen == 'choque' }}>choque</option>
+          </select></div>
+        <div><label>Punto de aplicación</label>
+          <input type="text" name="application_point" value="entrada de biofiltro" /></div>
+      </div>
+      <div id="par-block" style="display:none">
+        <div class="fields" style="margin-top:11px">
+          <div><label>Alcalinidad antes (mg/L)</label><input type="number" step="any" name="alk_before" /></div>
+          <div><label>Alcalinidad +2 h (mg/L)</label><input type="number" step="any" name="alk_after_2h" /></div>
+          <div><label>pH antes</label><input type="number" step="any" name="ph_before" /></div>
+          <div><label>pH +2 h</label><input type="number" step="any" name="ph_after_2h" /></div>
+        </div>
+        <div class="est" style="margin-top:6px">En choque, la alcalinidad antes y a las 2 h calibra el consumo real.</div>
+      </div>
+      <div style="margin-top:11px"><label>Observación</label>
+        <textarea name="observation" rows="1" maxlength="255"></textarea></div>
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Registrar carga</button>
+      </div>
+    </div>
+  </form>
+
+  <!-- ================= CARGAS ================= -->
+  <div class="section-title">Cargas recientes</div>
+  <div class="card">
+    {% if doses %}
+    <table>
+      <thead><tr><th>Fecha</th><th>Producto</th><th class="num">kg</th><th>Modo</th><th>Operador</th>
+        <th class="num">Alc. antes</th><th class="num">+2 h</th><th class="num">Δ</th><th></th></tr></thead>
+      <tbody>
+        {% for d in doses[:15] %}
+        <tr{% if d.applied_at.date() == now.date() %} class="hoy"{% endif %}>
+          <td>{{ d.applied_at.strftime('%d/%m %H:%M') }}</td>
+          <td>{{ d.product }}</td>
+          <td class="num">{{ ('%g'|format(d.kg))|replace('.', ',') }}</td>
+          <td>{% if d.mode == 'choque' %}<span class="pill pill-warn">choque</span>{% else %}<span class="est">mantención</span>{% endif %}</td>
+          <td>{{ (operadores or {}).get(d.operator_id, '—') if d.operator_id else '—' }}</td>
+          <td class="num">{{ '%g'|format(d.alk_before) if d.alk_before is not none else '—' }}</td>
+          <td class="num">{{ '%g'|format(d.alk_after_2h) if d.alk_after_2h is not none else '—' }}</td>
+          <td class="num">{% if d.alk_before is not none and d.alk_after_2h is not none %}
+              +{{ '%.0f'|format(d.alk_after_2h - d.alk_before) }}{% else %}<span class="est">—</span>{% endif %}</td>
+          <td><a href="/views/ui/calidad-agua/carga/nueva?edit={{ d.id }}" style="font-size:.75rem;color:#2563eb;text-decoration:none">editar</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="note">Sin cargas registradas.</div>
+    {% endif %}
+  </div>
+
+  <!-- ================= CONFIGURACIÓN ================= -->
+  <div class="section-title">Configuración del biofiltro</div>
+  <form method="post" action="/views/ui/calidad-agua/biofiltro/unidad/{{ u.id }}/config">
+    <div class="card">
+      <div class="fields">
+        <div><label>Ración planificada (kg/día)</label>
+          <input type="number" step="any" min="0" name="feed_plan_kg_day" value="{{ '%g'|format(u.feed_plan_kg_day) if u.feed_plan_kg_day else '' }}" placeholder="{{ '%.0f'|format(feed_kg) if feed_kg else '' }}" />
+          <div class="est" style="margin-top:4px">fija la mantención; vacío = lo ejecutado</div></div>
+        <div><label>Tipo de medio</label>
+          <input type="text" name="media_type" value="{{ u.media_type or '' }}" placeholder="K1, K3, Bioflow…" /></div>
+        <div><label>Volumen de biomedio (m³)</label>
+          <input type="number" step="any" name="media_volume_m3" value="{{ '%g'|format(u.media_volume_m3) if u.media_volume_m3 is not none else '' }}" />
+          <div class="est" style="margin-top:4px">el plástico, como se vierte del saco</div></div>
+        <div><label>Superficie específica (m²/m³)</label>
+          <input type="number" step="any" name="media_ssa_m2_m3" value="{{ '%g'|format(u.media_ssa_m2_m3) if u.media_ssa_m2_m3 is not none else '' }}" placeholder="K1 ≈ 500" />
+          <div class="est" style="margin-top:4px">del catálogo del fabricante</div></div>
+        <div><label>Volumen del reactor (m³)</label>
+          <input type="number" step="any" name="reactor_volume_m3" value="{{ '%g'|format(u.reactor_volume_m3) if u.reactor_volume_m3 is not none else '' }}" />
+          <div class="est" style="margin-top:4px">la cámara: agua + medio</div></div>
+        <div><label>Llenado con biomedio</label>
+          <div style="padding:7px 0;font-size:.9rem;font-variant-numeric:tabular-nums">
+            {% if llenado %}{{ '%.0f'|format(llenado.pct) }}%
+              {% if llenado.empaquetado %}<span class="pill pill-warn">empaquetado</span>{% endif %}
+            {% else %}<span class="est">medio ÷ reactor</span>{% endif %}
+          </div></div>
+        <div><label>Volumen de agua de la unidad (m³)</label>
+          <input type="number" step="any" name="water_volume_m3" value="{{ '%g'|format(u.water_volume_m3) if u.water_volume_m3 is not none else '' }}" />
+          <label class="switch" style="margin-top:6px"><input type="checkbox" name="water_volume_is_estimated" {{ 'checked' if u.water_volume_is_estimated }} /> estimado</label></div>
+        <div><label>Cloruro basal (mg/L)</label>
+          <input type="number" step="any" name="chloride_base_mg_l" value="{{ '%g'|format(u.chloride_base_mg_l) if u.chloride_base_mg_l is not none else '' }}" />
+          <label class="switch" style="margin-top:6px"><input type="checkbox" name="chloride_is_measured" {{ 'checked' if u.chloride_is_measured }} /> medido</label></div>
+        <div><label>Alza de pH en la tarde</label>
+          <input type="number" step="0.05" min="0" name="ph_afternoon_rise" value="{{ '%g'|format(u.ph_afternoon_rise) if u.ph_afternoon_rise is not none else '' }}" placeholder="{{ '%g'|format(ph_alza_default) }}" />
+          <div class="est" style="margin-top:4px">sobre el pH del muestreo</div></div>
+      </div>
+      {% if u.water_volume_is_estimated %}
+      <div class="note warnbox">El volumen de agua está marcado como <strong>estimado</strong>
+        (suma de los estanques; puede no incluir el canal). De él sale la dosis de choque.</div>
+      {% endif %}
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Guardar configuración</button>
+      </div>
+    </div>
+  </form>
+
+  <!-- ================= ANÁLISIS (MODELO) ================= -->
+  <details class="analisis">
+    <summary>Análisis del biofiltro · modelo</summary>
   <!-- ================= DESEMPEÑO ================= -->
   <div class="section-title">Desempeño</div>
   <div class="card">
@@ -111,7 +280,7 @@
     <div class="note warnbox">Falta la <strong>superficie específica del medio</strong> (m²/m³, del catálogo
       del fabricante). Con eso y el volumen de medio ya cargado sale la carga superficial, que es el
       único número comparable con literatura (un MBBR a 15-20 °C trabaja entre 0,2 y 0,5 g TAN/m²·d)
-      y entre lagunas de distinto tamaño. Está en Configuración, abajo.</div>
+      y entre lagunas de distinto tamaño. Se carga en Configuración, más arriba.</div>
     {% elif carga_sup %}
     <div class="note">Referencia MBBR a esta temperatura: <strong>0,2–0,5 g TAN/m²·d</strong>.
       Bajo 0,1 el medio está sobrado o la biopelícula no colonizó; sobre 0,6 se empieza a perder η.</div>
@@ -129,261 +298,147 @@
     {% endif %}
   </div>
 
-  <!-- ================= ALCALINIDAD Y SUGERENCIA ================= -->
+  <!-- ================= ALCALINIDAD ================= -->
   <div class="section-title">Alcalinidad</div>
   <div class="grid2">
     <div class="card">
       <table>
         <tbody>
           <tr><td>Medida en esta unidad</td>
-            <td class="num">{% if alk_medida %}<strong>{{ '%.0f'|format(alk_medida) }}</strong> mg/L
+            <td class="num">{% if alk_medida is not none %}<strong>{{ '%.0f'|format(alk_medida) }}</strong> mg/L
+              {% if alk_alarma %}<span class="pill pill-bad">bajo {{ '%.0f'|format(alk_alarma_mg_l) }}</span>{% endif %}
               {% else %}<span class="est">sin medición</span>{% endif %}</td></tr>
-          <tr><td>Entrada (Central)</td>
+          <tr><td>Fuente (Central)</td>
             <td class="num">{{ '%.0f'|format(alk_origen) ~ ' mg/L' if alk_origen else '—' }}</td></tr>
-          {% if equilibrio %}
-          <tr><td>De equilibrio <span class="est">modelo</span></td>
-            <td class="num">{{ '%.1f'|format(equilibrio.alk_equilibrio)|replace('.', ',') }} mg/L</td></tr>
-          <tr><td>Consume la nitrificación</td>
-            <td class="num">{{ '%.1f'|format(equilibrio.consumo_kg_dia)|replace('.', ',') }} kg CaCO₃/d
-              <span class="est">= {{ '%.1f'|format(equilibrio.caida_mg_l)|replace('.', ',') }} mg/L</span></td></tr>
-          {% endif %}
-          <tr><td><strong>Objetivo</strong></td>
-            <td class="num"><strong>{{ '%.0f'|format(objetivo) }} mg/L</strong></td></tr>
+          <tr><td>Aviso bajo</td>
+            <td class="num">{{ '%.0f'|format(alk_alarma_mg_l) if alk_alarma_mg_l else '50' }} mg/L</td></tr>
         </tbody>
       </table>
-      {% if equilibrio %}
-      <div class="note">La purga se lleva agua a la concentración de <em>la laguna</em>, no a la de entrada.
-        Por eso el equilibrio es <strong>entrada − consumo/caudal</strong> y no “entrada menos consumo”:
-        con {{ '%.0f'|format(alk_origen) if alk_origen }} mg/L entrando, la laguna se estabiliza en
-        {{ '%.0f'|format(equilibrio.alk_equilibrio) }} sin dosificar nada.</div>
-      {% endif %}
-    </div>
-
-    <div class="card">
-      <div style="font-size:.8rem;font-weight:700;margin-bottom:8px">Costo del objetivo</div>
-      {% if not sensibilidad %}
-      <div class="note warnbox">Falta la <strong>alcalinidad de entrada</strong> (la de Central).
-        Sin ella el balance no se puede escribir: entra en el aporte, en el equilibrio y en la dosis
-        de mantención. Se carga en el muestreo de biofiltro de Central.</div>
-      {% else %}
-      <table>
-        <thead>
-          <tr><th rowspan="2">Objetivo</th><th class="num" colspan="2">Choque (kg)</th><th class="num" colspan="2">Mantención (kg/día)</th></tr>
-          <tr><th class="num">Bicarbonato</th><th class="num">Caliza {{ '%.0f'|format(caliza_pureza * 100) }}%</th>
-              <th class="num">Bicarbonato</th><th class="num">Caliza {{ '%.0f'|format(caliza_pureza * 100) }}%</th></tr>
-        </thead>
-        <tbody>
-          {% for s in sensibilidad %}
-          <tr{% if s.objetivo == objetivo %} style="background:#f5f8ff;font-weight:700"{% endif %}>
-            <td>{{ '%.0f'|format(s.objetivo) }} mg/L</td>
-            <td class="num">{{ '%.0f'|format(s.choque) if s.choque else '—' }}</td>
-            <td class="num">{{ '%.0f'|format(s.choque * caliza_f) if s.choque else '—' }}</td>
-            <td class="num">{{ '%.0f'|format(s.kg_dia) }}</td>
-            <td class="num">{{ '%.0f'|format(s.kg_dia * caliza_f) }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <div class="note">Cada mg/L por sobre los {{ '%.0f'|format(alk_origen) }} de
-        la fuente se paga <strong>todos los días</strong>: la purga lo arrastra al desagüe.</div>
-      {% endif %}
-    </div>
-  </div>
-
-  <!-- ================= SUGERENCIA ================= -->
-  <div class="section-title">Sugerencia</div>
-  <div class="grid2">
-    <div class="card">
-      <div style="font-size:.8rem;font-weight:700;margin-bottom:8px">
-        Choque{% if alk_actual %} · {{ '%.0f'|format(alk_actual) }} → {{ '%.0f'|format(objetivo) }} mg/L{% endif %}
-      </div>
-      {% if choque and choque.turnos %}
-        <div class="turno est" style="padding-top:0">
-          <div></div><div>Bicarbonato</div><div>Caliza {{ '%.0f'|format(caliza_pureza * 100) }}%</div><div></div><div></div><div></div>
-        </div>
-        {% for t in choque.turnos %}
-        <div class="turno">
-          <div class="n">{{ loop.index }}</div>
-          <div class="kg">{{ '%.0f'|format(t.kg) }} kg</div>
-          <div class="kg">{{ '%.0f'|format(t.kg * caliza_f) }} kg</div>
-          <div class="mv">alc {{ '%.0f'|format(t.alk_desde) }} → {{ '%.0f'|format(t.alk_hasta) }}</div>
-          <div class="mv">{% if t.ph_hasta %}pH {{ '%.2f'|format(t.ph_desde)|replace('.', ',') }} → {{ '%.2f'|format(t.ph_hasta)|replace('.', ',') }}{% endif %}</div>
-          <div>{% if t.topado_por == 'nh3' %}<span class="pill pill-warn">NH₃</span>
-               {% elif t.topado_por == 'operativo' %}<span class="est">turno lleno</span>{% endif %}</div>
-        </div>
-        {% endfor %}
-        <div class="note {{ 'warnbox' if not choque.completo }}">
-          {% if choque.completo %}
-            <strong>{{ '%.0f'|format(choque.kg_total) }} kg</strong> de bicarbonato
-            (o {{ '%.0f'|format(choque.kg_total * caliza_f) }} kg de caliza) en
-            {{ choque.turnos|length }} turno{{ 's' if choque.turnos|length > 1 }}.
-            El tope por turno son {{ '%.0f'|format(max_kg_turno) }} kg de bicarbonato de reparto parejo.
-            La caliza aporta la misma alcalinidad pero se disuelve en días, no en horas:
-            no sirve para un choque rápido.
-          {% else %}
-            El plan se detiene en <strong>{{ '%.0f'|format(choque.kg_total) }} kg</strong> de los
-            {{ '%.0f'|format(choque.kg_teorico) }} teóricos: el <strong>NH₃ no ionizado</strong> toca
-            el límite antes de llegar al objetivo. Subir la alcalinidad sube el pH, y el pH libera
-            amonio. Hay que esperar a que baje el pH o el TAN, no forzar la dosis.
-          {% endif %}
-        </div>
-      {% elif choque and choque.completo %}
-        <div class="note">La alcalinidad ya está en el objetivo. Nada que dosificar.</div>
-      {% else %}
-        <div class="note warnbox">Faltan datos para calcular el choque: se necesita el
-          <strong>volumen de agua</strong> de la unidad y una alcalinidad de partida.</div>
-      {% endif %}
+      <div class="note">Con la mantención igual al consumo del alimento, la laguna tiende a la
+        alcalinidad de la fuente. Si se mide bajo el aviso con la dosis al día, el consumo real es
+        mayor que el modelado o el carbonato no se está disolviendo.</div>
     </div>
 
     <div class="card">
       <div style="font-size:.8rem;font-weight:700;margin-bottom:8px">Mantención y sal</div>
-      {% if not mantencion %}
-      <div class="note warnbox">Sin la alcalinidad de entrada no hay dosis de mantención:
-        el aporte del agua fresca es el término más grande del balance.</div>
+      {% if not mant_alim %}
+      <div class="note warnbox">Sin ración planificada ni alimento ejecutado no hay dosis de mantención.</div>
       {% else %}
       <table>
         <tbody>
-          <tr><td>Consume la nitrificación</td><td class="num">{{ '%.1f'|format(mantencion.consumo_nitrificacion)|replace('.', ',') }} kg</td></tr>
-          <tr><td>Aporta el agua fresca</td><td class="num">−{{ '%.1f'|format(mantencion.aporte_agua_fresca)|replace('.', ',') }} kg</td></tr>
-          <tr><td>Se lleva la purga</td><td class="num">+{{ '%.1f'|format(mantencion.salida_por_purga)|replace('.', ',') }} kg</td></tr>
-          <tr><td><strong>Bicarbonato (NaHCO₃) por día</strong></td>
-            <td class="num"><strong>{{ '%.0f'|format(mantencion.kg_nahco3_dia) }} kg</strong></td></tr>
-          <tr><td><strong>o Caliza {{ '%.0f'|format(caliza_pureza * 100) }}% por día</strong></td>
-            <td class="num"><strong>{{ '%.0f'|format(mantencion.kg_nahco3_dia * caliza_f) }} kg</strong></td></tr>
+          <tr><td>Alimento {{ '(plan)' if mant_fuente == 'plan' else '(ejecutado)' }}</td><td class="num">{{ '%.0f'|format(mant_alim.feed_kg_dia) }} kg/día</td></tr>
+          <tr><td>Consume la nitrificación</td><td class="num">{{ '%.1f'|format(mant_alim.kg_caco3_dia)|replace('.', ',') }} kg CaCO₃</td></tr>
+          <tr><td><strong>Carbonato de calcio {{ '%.0f'|format(caliza_pureza * 100) }}% por día</strong></td>
+            <td class="num"><strong>{{ '%.0f'|format(mant_alim.kg_caliza_dia) }} kg</strong></td></tr>
+          <tr><td>o bicarbonato (NaHCO₃) por día</td>
+            <td class="num">{{ '%.0f'|format(mant_alim.kg_nahco3_dia) }} kg</td></tr>
+        </tbody>
+      </table>
+      <div class="note">La dosis repone lo que consume la nitrificación, así que la laguna tiende a
+        la alcalinidad de la fuente{{ ' (%.0f mg/L)'|format(alk_origen) if alk_origen }} sin depender del
+        caudal de agua fresca. Bajo {{ '%.0f'|format(alk_alarma_mg_l) }} mg/L medidos se avisa arriba.</div>
+      {% endif %}
+      <div style="margin-top:12px;font-size:.8rem;font-weight:700">Sal</div>
+      {% if no2_fit is not defined %}
+      <div class="note">El modelo de sal nuevo se verá al reiniciar la app.</div>
+      {% else %}
+      {% set tk = {} %}{% for t in (feed_cap_con.techos if feed_cap_con else []) %}{% set _ = tk.update({t.key: t}) %}{% endfor %}
+      {% if tk.amonio and tk.nitrito %}
+      <table style="margin-top:6px">
+        <thead><tr><th>Techo en TAN</th><th class="num">TAN máx.</th><th class="num">Alimento</th></tr></thead>
+        <tbody>
+          <tr{% if feed_cap_con.manda == 'amonio' %} style="font-weight:700"{% endif %}>
+            <td>Amonio (NH₃) <span class="est">pH {{ ('%.2f'|format(ph_tarde_con.ph))|replace('.', ',') if ph_tarde_con }} de tarde</span></td>
+            <td class="num">{{ ('%.2f'|format(tk.amonio.c_max))|replace('.', ',') }} mg/L</td>
+            <td class="num">{{ '%.0f'|format(tk.amonio.feed) }} kg/d</td></tr>
+          <tr{% if feed_cap_con.manda == 'nitrito' %} style="font-weight:700"{% endif %}>
+            <td>Nitrito sin sal <span class="est">{{ ('%.2f'|format(sal_obj.nitrito_lim_actual if sal_obj else 0.1))|replace('.', ',') }} mg/L NO₂-N</span></td>
+            <td class="num">{{ ('%.2f'|format(tk.nitrito.c_max))|replace('.', ',') }} mg/L</td>
+            <td class="num">{{ '%.0f'|format(tk.nitrito.feed) }} kg/d</td></tr>
         </tbody>
       </table>
       {% endif %}
-      <div style="margin-top:12px;font-size:.8rem;font-weight:700">Sal</div>
-      {% if sal_obj and sal and not sal_util %}
-        <div class="note warnbox">Hoy manda <strong>{{ sal_manda_hoy or 'otro techo' }}</strong>,
-          no el nitrito: la sal <strong>no compra nada todavía</strong>. Los números de abajo
-          son para <em>después</em> de sostener la alcalinidad, cuando el nitrito pase a ser
-          el techo que limita.</div>
+      {% if no2_fit %}
+      <div class="est" style="margin-top:6px">
+        NO₂ = {{ ('%.3f'|format(no2_fit.a))|replace('.', ',') }} · TAN<sup>{{ ('%.2f'|format(no2_fit.b))|replace('.', ',') }}</sup>
+        · {{ 'esta laguna, últimos %d pares'|format(no2_fit.n) if no2_fit.scope == 'laguna' else 'todas las lagunas (esta tiene pocos muestreos)' }}
+        · TAN observado {{ ('%.2f'|format(no2_fit.x_min))|replace('.', ',') }}–{{ ('%.2f'|format(no2_fit.x_max))|replace('.', ',') }}
+      </div>
       {% endif %}
-      {% if sal and sal_obj %}
-        <table style="margin-top:6px">
+
+      {% if no2_umbral is defined and no2_umbral.base %}
+      <div class="note">Umbral de alerta de nitrito hoy:
+        <strong>{{ ('%.3f'|format(no2_umbral.alert))|replace('.', ',') }} mg/L NO₂-N</strong>
+        {% if no2_umbral.cl is not none %}<span class="est">por Cl⁻ {{ ('%.1f'|format(no2_umbral.cl))|replace('.', ',') }} mg/L
+          {{ 'medido' if no2_umbral.cl_medido else 'modelado' }}, a {{ '%.0f'|format(sal_obj.ratio if sal_obj else 20) }}:1</span>{% endif %}.
+        Nunca baja de {{ ('%.2f'|format(no2_umbral.base))|replace('.', ',') }} (referencia sin cloruro conocido)
+        {%- if not no2_umbral.cl_medido %} y, mientras el cloruro sea modelado, no sube de
+        {{ ('%.2f'|format(no2_umbral.base * no2_tope_f))|replace('.', ',') }}{% endif %}.
+        La alarma ({{ ('%.2f'|format(no2_umbral.alarm))|replace('.', ',') }}) no se mueve.</div>
+      {% endif %}
+      {% if sal_obj and sal_obj.cloruro_objetivo %}
+        <table style="margin-top:10px">
           <tbody>
-            <tr><td>Cloruro objetivo</td><td class="num">{{ '%.1f'|format(sal_obj.cloruro_objetivo)|replace('.', ',') }} mg/L
-              <span class="est">{{ '%.0f'|format(sal_obj.ratio) }}:1 sobre NO₂-N</span></td></tr>
-            <tr><td>Carga inicial</td><td class="num">{{ '%.0f'|format(sal.kg_inicial) }} kg NaCl</td></tr>
-            <tr><td>Para sostenerlo</td><td class="num">{{ '%.0f'|format(sal.kg_dia) }} kg/día</td></tr>
+            <tr><td>Alinear hasta TAN</td><td class="num">{{ ('%.2f'|format(sal_obj.tan_objetivo))|replace('.', ',') }} mg/L
+              <span class="est">{{ 'tope por cloruro modelado' if sal_obj.limitado_por_tope else ('máximo observado' if sal_obj.limitado_por_datos else 'techo de amonio') }}</span></td></tr>
+            <tr><td>Nitrito tolerable</td><td class="num">{{ ('%.2f'|format(sal_obj.nitrito_lim_objetivo))|replace('.', ',') }} mg/L NO₂-N</td></tr>
+            <tr><td>Cloruro objetivo</td><td class="num">{{ ('%.1f'|format(sal_obj.cloruro_objetivo))|replace('.', ',') }} mg/L
+              <span class="est">{{ '%.0f'|format(sal_obj.ratio) }}:1</span></td></tr>
+            {% if sal and sal.kg_dia is not none %}
+            <tr><td><strong>Sal por día</strong></td><td class="num"><strong>{{ '%.0f'|format(sal.kg_dia) }} kg</strong></td></tr>
+            {% endif %}
+            {% if sal and sal.kg_inicial %}
+            <tr><td>Para llegar desde el cloruro actual</td><td class="num">{{ '%.0f'|format(sal.kg_inicial) }} kg, una vez</td></tr>
+            {% endif %}
           </tbody>
         </table>
+        {% if sal_obj.limitado_por_datos %}
+        <div class="note">El techo de amonio está en TAN {{ ('%.2f'|format(sal_obj.tan_amonio))|replace('.', ',') }},
+          pero esta laguna no se ha medido sobre {{ ('%.2f'|format(sal_obj.tan_max_obs))|replace('.', ',') }}:
+          la sal se dimensiona solo hasta ahí. El objetivo avanza cuando la laguna opere con más carga
+          y los muestreos lo incorporen.</div>
+        {% endif %}
+        {% if sal_obj.limitado_por_tope %}
+        <div class="note">La sal se detiene donde el umbral de nitrito llega a su tope con cloruro
+          modelado. Para ir más allá hace falta <strong>medir el cloruro</strong> de la laguna.</div>
+        {% endif %}
         {% if u.chloride_base_mg_l is none %}
         <div class="note warnbox">Falta el <strong>cloruro del agua de entrada</strong> (Cloruro basal,
-          en Configuración). Se asume 0, así que la sal diaria es una <strong>cota alta</strong>:
-          el agua fresca trae su propio cloruro y la sal solo paga la diferencia.</div>
+          en Configuración). Se asume 0, así que la sal diaria es una <strong>cota alta</strong>.</div>
         {% endif %}
-        {% set tc = {} %}{% for t in (feed_cap_con.techos if feed_cap_con else []) %}{% set _ = tc.update({t.key: t.feed}) %}{% endfor %}
-        {% if tc.nitrito and tc.amonio %}
-        <div class="note">La sal sube el techo de nitrito de <strong>{{ '%.0f'|format(tc.nitrito) }}</strong>
-          a <strong>{{ '%.0f'|format(tc.amonio) }} kg/día</strong> de alimento, donde lo alcanza el amonio.
-          Más sal no compra nada: pasado ese punto limita el NH₃.</div>
-        {% endif %}
-        {% if ph_tarde_con %}
-        <div class="note">Techo de amonio a <strong>pH {{ '%.2f'|format(ph_tarde_con.ph)|replace('.', ',') }}</strong>
-          = {{ '%.2f'|format(ph_tarde_con.ph_medido)|replace('.', ',') }} medido
-          {% if ph_tarde_con.ajuste_alk %}+ {{ '%.2f'|format(ph_tarde_con.ajuste_alk)|replace('.', ',') }} por la alcalinidad objetivo{% endif %}
-          + {{ '%.2f'|format(ph_tarde_con.alza_tarde)|replace('.', ',') }} de tarde
-          <span class="pill pill-warn">supuesto</span>. Sin pH por hora, el pico de la tarde se estima;
-          el alza se ajusta en Configuración.</div>
-        {% endif %}
-        <div class="note">El cloruro se lava con la purga (τ ≈ {{ '%.1f'|format(sal.tau_dias)|replace('.', ',') }} días),
-          así que la sal es un costo corriente y no una carga.
-          {% if cl_mod %}Cloruro actual <strong>{{ '%.1f'|format(cl_mod.cl_mg_l)|replace('.', ',') }} mg/L</strong>
-          — <span class="pill pill-warn">modelado</span>, no medido: sirve para dosificar, no para afirmar
-          una concentración.{% endif %}</div>
-      {% elif sal_obj and not sal_obj.get('cloruro_objetivo') %}
-        <div class="note">El nitrito no limita antes que el amonio: <strong>la sal no compra nada</strong>.</div>
+        <div class="note">El cloruro se lava con la purga{% if sal and sal.tau_dias %} (τ ≈ {{ ('%.1f'|format(sal.tau_dias))|replace('.', ',') }} días){% endif %}:
+          la sal es una dosis diaria, como el carbonato, y depende del caudal de agua fresca.
+          {% if cl_mod %}Cloruro actual <strong>{{ ('%.1f'|format(cl_mod.cl_mg_l))|replace('.', ',') }} mg/L</strong>
+          — <span class="pill pill-warn">modelado</span>, no medido.{% endif %}
+          El nitrito se sigue midiendo: ya no fija el techo, verifica que la relación siga en pie.</div>
+      {% elif sal_obj and sal_obj.razon %}
+        <div class="note">Sin sal: {{ sal_obj.razon }}.</div>
       {% else %}
         <div class="note">Sin datos suficientes para el objetivo de cloruro.</div>
       {% endif %}
+      {% endif %}
     </div>
   </div>
-
-  <!-- ================= CARGAS ================= -->
-  <div class="section-title">Cargas registradas</div>
-  <div class="card">
-    <div class="actions" style="margin:0 0 12px">
-      <a class="btn btn-primary" href="/views/ui/calidad-agua/carga/nueva?unit_id={{ u.id }}">+ Registrar carga</a>
-    </div>
-    {% if doses %}
-    <table>
-      <thead><tr><th>Fecha</th><th>Producto</th><th class="num">kg</th><th>Modo</th>
-        <th class="num">Alc. antes</th><th class="num">+2 h</th><th class="num">Δ</th><th></th></tr></thead>
-      <tbody>
-        {% for d in doses %}
-        <tr>
-          <td>{{ d.applied_at.strftime('%d/%m %H:%M') }}</td>
-          <td>{{ d.product }}</td>
-          <td class="num">{{ '%g'|format(d.kg) }}</td>
-          <td>{% if d.mode == 'choque' %}<span class="pill pill-warn">choque</span>{% else %}<span class="est">mantención</span>{% endif %}</td>
-          <td class="num">{{ '%g'|format(d.alk_before) if d.alk_before is not none else '—' }}</td>
-          <td class="num">{{ '%g'|format(d.alk_after_2h) if d.alk_after_2h is not none else '—' }}</td>
-          <td class="num">{% if d.alk_before is not none and d.alk_after_2h is not none %}
-              +{{ '%.0f'|format(d.alk_after_2h - d.alk_before) }}{% else %}<span class="est">—</span>{% endif %}</td>
-          <td><a href="/views/ui/calidad-agua/carga/nueva?edit={{ d.id }}" style="font-size:.75rem;color:#2563eb;text-decoration:none">editar</a></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <div class="note">El par <strong>antes → +2 h</strong> es lo que calibra el consumo real.
-      Se pide durante el choque y se deja de pedir cuando termina: es calibración, no rutina.</div>
-    {% else %}
-    <div class="note">Sin cargas registradas.</div>
-    {% endif %}
-  </div>
-
-  <!-- ================= CONFIGURACIÓN ================= -->
-  <div class="section-title" style="margin-top:28px">
-    <details>
-      <summary>Configuración del biofiltro</summary>
-      <form method="post" action="/views/ui/calidad-agua/biofiltro/unidad/{{ u.id }}/config"
-            style="margin-top:12px;text-transform:none;letter-spacing:normal">
-        <div class="card">
-          <div class="fields">
-            <div><label>Volumen del reactor (m³)</label>
-              <input type="number" step="any" name="reactor_volume_m3" value="{{ '%g'|format(u.reactor_volume_m3) if u.reactor_volume_m3 is not none else '' }}" />
-              <div class="est" style="margin-top:4px">la cámara: agua + medio. Da el tiempo de contacto</div></div>
-            <div><label>Llenado con biomedio</label>
-              <div style="padding:8px 0;font-size:.9rem;font-variant-numeric:tabular-nums">
-                {% if llenado %}{{ '%.0f'|format(llenado.pct) }}%
-                  {% if llenado.empaquetado %}<span class="pill pill-warn">empaquetado</span>{% endif %}
-                {% else %}<span class="est">medio ÷ reactor</span>{% endif %}
-              </div></div>
-            <div><label>Superficie específica (m²/m³)</label>
-              <input type="number" step="any" name="media_ssa_m2_m3" value="{{ '%g'|format(u.media_ssa_m2_m3) if u.media_ssa_m2_m3 is not none else '' }}" placeholder="K1 ≈ 500" />
-              <div class="est" style="margin-top:4px">por m³ de medio a granel, del catálogo</div></div>
-            <div><label>Tipo de medio</label>
-              <input type="text" name="media_type" value="{{ u.media_type or '' }}" placeholder="K1, K3, Bioflow…" /></div>
-            <div><label>Volumen de medio a granel (m³)</label>
-              <input type="number" step="any" name="media_volume_m3" value="{{ '%g'|format(u.media_volume_m3) if u.media_volume_m3 is not none else '' }}" />
-              <div class="est" style="margin-top:4px">el plástico, como se vierte del saco</div></div>
-            <div><label>Volumen de agua de la unidad (m³)</label>
-              <input type="number" step="any" name="water_volume_m3" value="{{ '%g'|format(u.water_volume_m3) if u.water_volume_m3 is not none else '' }}" />
-              <label class="switch" style="margin-top:6px"><input type="checkbox" name="water_volume_is_estimated" {{ 'checked' if u.water_volume_is_estimated }} /> estimado</label></div>
-            <div><label>Alcalinidad objetivo (mg/L)</label>
-              <input type="number" step="any" name="alk_target_mg_l" value="{{ '%g'|format(u.alk_target_mg_l) if u.alk_target_mg_l is not none else '' }}" placeholder="62" /></div>
-            <div><label>Cloruro basal (mg/L)</label>
-              <input type="number" step="any" name="chloride_base_mg_l" value="{{ '%g'|format(u.chloride_base_mg_l) if u.chloride_base_mg_l is not none else '' }}" />
-              <label class="switch" style="margin-top:6px"><input type="checkbox" name="chloride_is_measured" {{ 'checked' if u.chloride_is_measured }} /> medido</label></div>
-            <div><label>Alza de pH en la tarde</label>
-              <input type="number" step="0.05" min="0" name="ph_afternoon_rise" value="{{ '%g'|format(u.ph_afternoon_rise) if u.ph_afternoon_rise is not none else '' }}" placeholder="{{ '%g'|format(ph_alza_default) }}" />
-              <div class="est" style="margin-top:4px">sobre el pH del muestreo; fija el techo de amonio</div></div>
-          </div>
-          <div class="note">El volumen de agua viene de la suma de los estanques de la unidad
-            ({{ '%g'|format(u.water_volume_m3) if u.water_volume_m3 else '—' }} m³). No sabemos si incluye el
-            canal, así que queda marcado como estimado hasta que alguien lo confirme:
-            <strong>de ese número sale la dosis de choque</strong>.</div>
-          <div class="actions">
-            <button type="submit" class="btn btn-primary">Guardar configuración</button>
-            <a href="/views/ui/calidad-agua" class="btn btn-ghost">Volver al panel</a>
-          </div>
-        </div>
-      </form>
-    </details>
-  </div>
+  </details>
 </div>
+
+<script>
+// El par dosis-respuesta solo se muestra cuando mide algo: en choque y con un
+// producto que se disuelve en horas. Pedirlo siempre lo vuelve un campo que se
+// deja vacío por costumbre.
+(function () {
+  var product = document.getElementById('product');
+  var mode = document.getElementById('mode');
+  var block = document.getElementById('par-block');
+  function sync() {
+    var mide = mode.value === 'choque' && product.value !== 'carbonato de calcio';
+    block.style.display = mide ? '' : 'none';
+  }
+  product.addEventListener('change', sync);
+  mode.addEventListener('change', sync);
+  sync();
+})();
+</script>
 </div></div>
 </body>
 </html>

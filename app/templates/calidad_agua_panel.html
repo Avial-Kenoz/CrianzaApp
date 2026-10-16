@@ -526,6 +526,12 @@
               <td class="ct-nota">{{ t.nota }}</td>
             </tr>
             {% endfor %}
+            {% set ac = fc.alk_cap %}
+            {% if ac and ac.con_dosis %}
+            <tr><td>Alcalinidad</td><td>—</td><td class="ct-nota">sostenida con dosis; el techo lo pone cuánto se dosifica</td></tr>
+            {% elif ac and ac.no_limita %}
+            <tr><td>Alcalinidad</td><td>no limita</td><td class="ct-nota">{% if ac.caida > 0 %}baja {{ '%.0f'|format(ac.caida) }} mg/L{% else %}queda sobre la fuente{% endif %} con {{ '%.0f'|format(ac.feed_actual) }} kg/d · bajo el error de titulación</td></tr>
+            {% endif %}
           </table>
           {% endif %}
           {% if u.flow_nominal %}<div class="cap-foot">Calculado con caudal nominal de {{ '%.0f'|format(u.recirc_l_s) if u.recirc_l_s else '—' }} L/s — no se mide en continuo.</div>{% endif %}

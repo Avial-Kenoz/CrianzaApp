@@ -275,6 +275,15 @@
     // esto, esa ventana es un 500; con esto, el formulario sigue usable y solo
     // pierde la guía en vivo.
     var TH    = {{ bf_thresholds | default({}, true) | tojson }};
+    // El umbral de alerta de nitrito sube con el cloruro de cada laguna.
+    var NO2_ALERT_BY_UNIT = {{ (no2_alert_by_unit or {}) | tojson }};
+    function thNo2() {
+      var sel = document.getElementById("cultivation_unit_id");
+      var a = sel ? NO2_ALERT_BY_UNIT[sel.value] : null;
+      if (!TH.nitrite_n || !a) return TH.nitrite_n;
+      var t = {}; for (var k in TH.nitrite_n) t[k] = TH.nitrite_n[k];
+      t.alert = a; return t;
+    }
     var SPECS = {{ bf_test_specs | default({}, true) | tojson }};
     var PREV  = {{ prev_by_unit | default({}, true) | tojson }};
     var SELFTEST = {{ selftest_cases | default(none, true) | tojson }};
@@ -314,10 +323,13 @@
       if (el) el.addEventListener("input", chequearCeros);
     });
 
-    var NO2_FIT = {{ no2_fit | tojson if no2_fit else 'null' }};
+    // Relación nitrito-amonio de cada laguna (sus últimos muestreos).
+    var NO2_FITS = {{ (no2_fits or {}) | tojson }};
     function chequearNitrito() {
       var box = document.getElementById("no2_warn");
       if (!box) return;
+      var sel = document.getElementById("cultivation_unit_id");
+      var NO2_FIT = sel ? NO2_FITS[sel.value] : null;
       if (!NO2_FIT) { box.style.display = "none"; return; }
       var avisos = [];
       [["in_nh4_n", "in_no2_n", "entrada"], ["out_nh4_n", "out_no2_n", "salida"]]
@@ -340,6 +352,8 @@
       var el = document.getElementById(id);
       if (el) el.addEventListener("input", chequearNitrito);
     });
+    var selUnidad = document.getElementById("cultivation_unit_id");
+    if (selUnidad) selUnidad.addEventListener("change", chequearNitrito);
 
     var NUM_FIELDS = ["in_ph", "in_temp_c", "in_nh4_n", "in_no2_n", "in_no3_n",
                       "out_ph", "out_temp_c", "out_nh4_n", "out_no2_n", "out_no3_n"];
@@ -480,7 +494,7 @@
       ["in", "out"].forEach(function (p) {
         r.nh3[p] = nh3n(v[p + "_nh4_n"], v[p + "_ph"], v[p + "_temp_c"]);
         r.fieldLevel[p + "_nh4_n"] = evalThr(r.nh3[p], TH.nh3_n);
-        r.fieldLevel[p + "_no2_n"] = evalThr(v[p + "_no2_n"], TH.nitrite_n);
+        r.fieldLevel[p + "_no2_n"] = evalThr(v[p + "_no2_n"], thNo2());
       });
       r.bio = worst(r.fieldLevel.in_nh4_n, r.fieldLevel.out_nh4_n,
                     r.fieldLevel.in_no2_n, r.fieldLevel.out_no2_n);
@@ -587,7 +601,7 @@
           input.classList.add("sev-" + l2);
           fx.className = "fx " + l2;
           fx.textContent = (l2 === "alarma" ? "ALARMA sobre " + fmt(TH.nitrite_n.alarm, 2)
-                                            : "alerta sobre " + fmt(TH.nitrite_n.alert, 2)) + " mg/L";
+                                            : "alerta sobre " + fmt(thNo2().alert, 2)) + " mg/L";
           return;
         }
       }
@@ -837,7 +851,7 @@
           n_balance_flag: (b && b.ratio !== null) ? (b.ratio > b.k ? "sospechoso" : "ok") : "ok",
           alarm_level: worst(evalThr(nh3n(v.in_nh4_n, v.in_ph, v.in_temp_c), TH.nh3_n),
                              evalThr(nh3n(v.out_nh4_n, v.out_ph, v.out_temp_c), TH.nh3_n),
-                             evalThr(v.in_no2_n, TH.nitrite_n), evalThr(v.out_no2_n, TH.nitrite_n)),
+                             evalThr(v.in_no2_n, thNo2()), evalThr(v.out_no2_n, thNo2())),
           n_balance_uncertainty: b ? b.U : null
         };
         Object.keys(got).forEach(function (k) {

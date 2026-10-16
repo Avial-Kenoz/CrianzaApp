@@ -48,6 +48,9 @@ class CultivationUnit(Base):
     # Cuanto sube el pH en la tarde por fotosintesis (migracion 20261014_01).
     # Null = PH_ALZA_TARDE_DEFAULT. Fija el pH del techo de amonio.
     ph_afternoon_rise = Column(Numeric(4, 2))
+    # Ración planificada, kg alimento/día (migración 20261015_01). Fija la
+    # dosis de mantención de alcalinidad. Null = ejecutado de los últimos 7 días.
+    feed_plan_kg_day = Column(Numeric(8, 1))
 
     # Regimen de muestreo: basal | choque | floracion | post_choque. Define
     # cada cuanto vence la alcalinidad. Vuelve solo a basal.

@@ -173,6 +173,8 @@ BF_HEALTH_MIN_HISTORY = 24      # ~3 meses: bajo esto la "línea base" se solapa
                                 # con la ventana actual y el % no significaría nada
 BF_HEALTH_OK = 0.85             # fracción de la referencia
 BF_HEALTH_WARN = 0.70
+BF_COMMON_MIN_UNITS = 3         # con menos unidades no se distingue causa común
+BF_COMMON_SHARE = 0.75          # fracción de unidades caídas a la vez
 
 
 FEED_MIN_WINDOW_DAYS = 28       # el alimento se confirma por lotes, no a diario:
@@ -289,6 +291,154 @@ def _window_k(db: Session, unit, rows) -> Optional[float]:
     )
 
 
+def _last_feed_by_unit(db: Session) -> dict:
+    """{unit_id: fecha de la última confirmación de alimento}."""
+    return {uid: d for uid, d in db.execute(sa_text("""
+        SELECT p.cultivation_unit_id, MAX(e.confirmed_at)::date
+          FROM feed_execution_events e
+          JOIN ponds p ON p.id = e.pond_id
+         WHERE e.confirmed_at IS NOT NULL
+         GROUP BY p.cultivation_unit_id
+    """)).all()}
+
+
+ALK_CAP_SAMPLES = 6             # pares laguna/fuente promediados (~2 semanas)
+ALK_CAP_MIN_SAMPLES = 3
+ALK_SOURCE_NOW_SAMPLES = 3      # muestreos de la fuente que definen el margen de hoy
+ALK_DOSE_EFFECT_DAYS = 14       # un muestreo con dosis en los 14 días previos no
+                                # mide la caída natural: la tapa la dosis
+ALK_DOSE_RATE_DAYS = 7          # ventana de la dosis "actual"
+ALK_DOSE_GAP_DAYS = 3           # un hueco mayor corta la tanda de dosificación
+ALK_SETTLE_TAUS = 3.0           # renovaciones de agua hasta el nuevo equilibrio (95%)
+ALK_SETTLE_DEFAULT_DAYS = 9.0   # si la unidad no tiene volumen o caudal cargado
+# kg CaCO3-equivalente por kg de producto
+ALK_DOSE_CACO3 = {"carbonato de calcio": wq.CALIZA_PUREZA,
+                  "bicarbonato": wq.NAHCO3_AS_CACO3}
+
+
+def _alk_dose_rate(doses: list, desde: date, hasta: date) -> float:
+    """kg CaCO3-eq/día dosificados entre dos fechas, ambas incluidas."""
+    dias = (hasta - desde).days + 1
+    if dias <= 0:
+        return 0.0
+    return sum(kg for d, kg in doses if desde <= d <= hasta) / dias
+
+
+def _alkalinity_cap_by_unit(db: Session) -> dict:
+    """{unit_id: techo de alimento por alcalinidad} con lo observado en cada laguna.
+
+    Cada muestreo de la laguna se empareja con el de la fuente (la unidad de
+    flujo abierto) del MISMO día: la fuente se movió 53-75 mg/L en dos semanas
+    y comparar contra su último valor metería ese ruido entero en la caída.
+
+    Tres tramos de datos, ver wq.alkalinity_feed_ceiling:
+      natural      muestreos sin dosis en los 14 días previos -> caída por kg
+      dosis hoy    lo dosificado los últimos 7 días           -> lo que suma
+      calibración  muestreos con la laguna ya equilibrada bajo una tanda de
+                   dosis (3 renovaciones de agua)             -> cuánto rinde
+    """
+    src_by_date: dict = {}
+    lag_by_unit: dict = {}
+    rows = (db.query(BiofilterReading.cultivation_unit_id, BiofilterReading.reading_date,
+                     BiofilterReading.in_alkalinity, CultivationUnit.is_recirculating)
+            .join(CultivationUnit, CultivationUnit.id == BiofilterReading.cultivation_unit_id)
+            .filter(BiofilterReading.in_alkalinity.isnot(None),
+                    BiofilterReading.reading_date.isnot(None))
+            .order_by(BiofilterReading.reading_date.desc(), BiofilterReading.id.desc())
+            .all())
+    for uid, d, alk, recirc in rows:
+        # Dos filas el mismo día: gana la última digitada (misma regla de la tabla).
+        if recirc:
+            lag_by_unit.setdefault(uid, {}).setdefault(d, float(alk))
+        else:
+            src_by_date.setdefault(d, float(alk))
+    src_fechas = sorted(src_by_date, reverse=True)[:ALK_SOURCE_NOW_SAMPLES]
+    src_now = (sum(src_by_date[d] for d in src_fechas) / len(src_fechas)
+               if src_fechas else None)
+
+    doses_by_unit: dict = {}
+    for uid, at, product, kg in (db.query(WaterTreatmentDose.cultivation_unit_id,
+                                          WaterTreatmentDose.applied_at,
+                                          WaterTreatmentDose.product,
+                                          WaterTreatmentDose.kg).all()):
+        f = ALK_DOSE_CACO3.get((product or "").strip().lower())
+        if at is not None and f and kg:
+            doses_by_unit.setdefault(uid, []).append((at.date(), float(kg) * f))
+
+    units = {u.id: u for u in db.query(CultivationUnit).all()}
+    last_feed = _last_feed_by_unit(db)
+    today = date.today()
+
+    def feed_kg(uid, desde, hasta):
+        if last_feed.get(uid) and last_feed[uid] < hasta:
+            hasta = last_feed[uid]
+        if desde > hasta:
+            return None
+        n_kg = _unit_feed_n_kg_day(db, uid, desde, hasta)
+        return n_kg / wq.TAN_PER_FEED_N / 0.48 if n_kg else None
+
+    out = {}
+    for uid, por_fecha in lag_by_unit.items():
+        doses = doses_by_unit.get(uid, [])
+        fechas_dosis = sorted({d for d, _ in doses})
+        pares = [(d, src_by_date[d] - por_fecha[d])
+                 for d in sorted(por_fecha, reverse=True) if d in src_by_date]
+
+        natural = [p for p in pares
+                   if not any(0 <= (p[0] - x).days <= ALK_DOSE_EFFECT_DAYS
+                              for x in fechas_dosis)][:ALK_CAP_SAMPLES]
+        if len(natural) < ALK_CAP_MIN_SAMPLES:
+            out[uid] = {"con_dosis": True} if fechas_dosis else None
+            continue
+        feed0 = feed_kg(uid, natural[-1][0], natural[0][0])
+
+        # Dosis de hoy: desde el inicio de la ventana o de la tanda, lo que
+        # sea más reciente (una tanda de 3 días no se divide por 7).
+        # Si la tanda sigue viva, se cierra en la última carga: la de hoy
+        # puede no estar digitada todavía y no es un día sin dosis.
+        ini_ventana = today - timedelta(days=ALK_DOSE_RATE_DAYS - 1)
+        en_ventana = [d for d in fechas_dosis if d >= ini_ventana]
+        dose_now = 0.0
+        if en_ventana:
+            fin_dosis = (en_ventana[-1] if (today - en_ventana[-1]).days <= ALK_DOSE_GAP_DAYS
+                         else today)
+            dose_now = _alk_dose_rate(doses, en_ventana[0], fin_dosis)
+
+        # Calibración: la última tanda continua de dosis, y los muestreos
+        # tomados ya equilibrados dentro de ella.
+        cal = None
+        if fechas_dosis:
+            ini, fin = fechas_dosis[-1], fechas_dosis[-1]
+            for d in reversed(fechas_dosis[:-1]):
+                if (ini - d).days > ALK_DOSE_GAP_DAYS:
+                    break
+                ini = d
+            u = units.get(uid)
+            q = float(u.freshwater_l_s) if (u and u.freshwater_l_s) else None
+            vol = float(u.water_volume_m3) if (u and u.water_volume_m3) else None
+            settle = (ALK_SETTLE_TAUS * vol / (q * 86.4)) if (q and vol) else ALK_SETTLE_DEFAULT_DAYS
+            listo = ini + timedelta(days=settle)
+            en_cal = [p for p in pares
+                      if listo <= p[0] <= fin + timedelta(days=ALK_DOSE_GAP_DAYS)][:ALK_CAP_SAMPLES]
+            if len(en_cal) >= ALK_CAP_MIN_SAMPLES:
+                c_desde, c_hasta = en_cal[-1][0], en_cal[0][0]
+                cal = {"caida": sum(p[1] for p in en_cal) / len(en_cal),
+                       "feed": feed_kg(uid, c_desde, c_hasta),
+                       "dose": _alk_dose_rate(
+                           doses, c_desde - timedelta(days=ALK_DOSE_RATE_DAYS - 1), c_hasta),
+                       "n": len(en_cal)}
+            cal_pendiente = listo
+
+        cap = wq.alkalinity_feed_ceiling(feed0, [p[1] for p in natural], src_now,
+                                         dose_now, cal)
+        if cap is not None:
+            cap.update(desde=natural[-1][0], hasta=natural[0][0])
+            if fechas_dosis and not cap.get("calibrado"):
+                cap["calibra_desde"] = cal_pendiente
+        out[uid] = cap
+    return out
+
+
 def _biofilter_health_by_unit(db: Session) -> dict:
     """{unit_id: {...}} con salud (k) y balance de nitrito por unidad.
 
@@ -300,6 +450,11 @@ def _biofilter_health_by_unit(db: Session) -> dict:
     """
     out = {}
     units = db.query(CultivationUnit).all()
+    # El alimento se confirma en tandas, días después de darse. Un muestreo
+    # posterior a la última confirmación trae el amonio de una ración que k
+    # todavía no ve: el numerador queda corto y el biofiltro parece enfermo
+    # (oct-2026: tres alarmas que desaparecían al cortar la ventana acá).
+    last_feed = _last_feed_by_unit(db)
     for u in units:
         if not u.is_recirculating:
             # Flujo abierto (Central): el nitrógeno sale con el agua, no por el
@@ -316,6 +471,11 @@ def _biofilter_health_by_unit(db: Session) -> dict:
             # Unidad sin biofiltro (hatchery, jaula): no hay nada que evaluar y
             # el panel ya lo muestra como "biofiltro —".
             continue
+        feed_until = last_feed.get(u.id)
+        n_pending = 0
+        if feed_until is not None:
+            n_pending = sum(1 for r in rows if r.reading_date and r.reading_date > feed_until)
+            rows = rows[n_pending:]
         window, history = rows[:BF_HEALTH_WINDOW], rows[BF_HEALTH_WINDOW:]
 
         k_now = _window_k(db, u, window)
@@ -342,6 +502,8 @@ def _biofilter_health_by_unit(db: Session) -> dict:
                               "al_dia" if balance >= 1.0 else
                               "justo" if balance >= 0.95 else "rezagado"),
             "n_samples": len(window),
+            "feed_until": feed_until,
+            "n_pending_feed": n_pending,
         }
 
     # Referencia entre unidades: mediana de las demás con k calculable.
@@ -358,8 +520,12 @@ def _biofilter_health_by_unit(db: Session) -> dict:
 
         if d["k"] is None:
             d["state"] = "sin_dato"
-            d["reason"] = ("Falta volumen de medio filtrante" if d["no_config"]
-                           else "Sin alimento registrado o muestreos insuficientes")
+            if d["no_config"]:
+                d["reason"] = "Falta volumen de medio filtrante"
+            elif d["n_pending_feed"] and d["feed_until"]:
+                d["reason"] = "Alimento sin confirmar desde el {:%d-%m}".format(d["feed_until"])
+            else:
+                d["reason"] = "Sin alimento registrado o muestreos insuficientes"
         elif base is None:
             d["state"], d["reason"] = "sin_base", "Sin referencia para comparar"
         elif d["k"] >= BF_HEALTH_OK * base:
@@ -373,6 +539,20 @@ def _biofilter_health_by_unit(db: Session) -> dict:
         d["ref"] = base
         d["ref_kind"] = base_kind
         d["pct"] = (d["k"] / base * 100.0) if (d["k"] and base) else None
+
+    # Caída común: el ensuciamiento es de cada medio y no llega a todos a la vez.
+    # Si casi todas las unidades caen juntas contra su propia historia, la causa
+    # es compartida (pH/alcalinidad del agua, alimento mal registrado) y el
+    # medio no es lo primero que hay que revisar. Se baja a "atención".
+    propias = [d for d in out.values()
+               if d.get("applies") and d.get("ref_kind") == "su línea base"
+               and d.get("state") in ("ok", "atencion", "bajo")]
+    caidas = [d for d in propias if d["state"] in ("atencion", "bajo")]
+    if len(propias) >= BF_COMMON_MIN_UNITS and len(caidas) >= BF_COMMON_SHARE * len(propias):
+        for d in caidas:
+            d["state"] = "atencion"
+            d["common"] = True
+            d["reason"] = "Caída común a {} de {} unidades".format(len(caidas), len(propias))
     return out
 
 
@@ -639,6 +819,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
         # "no detectada" y "no pude evaluar" se ven igual, y no son lo mismo.
         photo_eval = _photosynthesis_evaluable(db, now)
         alk_origen = _source_alkalinity(db)
+        alk_caps = _alkalinity_cap_by_unit(db)
         no3_trend = _no3_trend_by_unit(db, now)
         carga_sup = _surface_load_by_unit(db, now)
         # Pronostico de manana: una consulta para todo el panel.
@@ -648,7 +829,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                       .filter(SolarDaily.day >= now.date(),
                               SolarDaily.day <= now.date() + timedelta(days=2))
                       .order_by(SolarDaily.day).all())
-        no2_fit = wq.fit_nitrite_relation(_nitrite_pairs(db))
+        no2_fits = _nitrite_fits(db)
         # Cloruro modelado: mientras no se pueda medir con precision es la
         # brujula de la sal. Con tau ~3 dias, 60 dias de cargas sobran.
         salt_by_unit: dict = {}
@@ -735,18 +916,16 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
 
             bf = bf_latest.get(u.id)
             has_bf = bf is not None
+            # Umbral de nitrito de ESTA unidad: se mueve con su cloruro.
+            th_u = _unit_thresholds(db, u, thresholds, now,
+                                    salt_doses=salt_by_unit.get(u.id, []))
+            bf_level = None
             bf_levels = {}
             bf_conf = None
             bf_issues = []
             if bf is None:
                 n_nodata += 1
             else:
-                if bf.alarm_level:
-                    levels.append(bf.alarm_level)
-                    if bf.alarm_level == "alarma":
-                        n_alarm += 1
-                    elif bf.alarm_level == "alerta":
-                        n_alert += 1
                 bf_vals = {
                     "in_ph": bf.in_ph, "in_temp_c": bf.in_temp_c,
                     "in_nh4_n": bf.in_nh4_n, "in_no2_n": bf.in_no2_n, "in_no3_n": bf.in_no3_n,
@@ -757,10 +936,22 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                     "ph_delta_flag": bf.ph_delta_flag,
                     "temp_delta_flag": bf.temp_delta_flag,
                 }
-                bf_reasons = wq.biofilter_reasons(bf_vals, thresholds)
+                # El nivel se reevalua con el umbral de hoy (el persistido usa
+                # el cloruro del dia en que se guardo).
+                bf_level = wq.evaluate_biofilter(
+                    {k: (float(v) if v is not None and not isinstance(v, str) else v)
+                     for k, v in bf_vals.items()},
+                    thresholds=th_u).alarm_level
+                if bf_level:
+                    levels.append(bf_level)
+                    if bf_level == "alarma":
+                        n_alarm += 1
+                    elif bf_level == "alerta":
+                        n_alert += 1
+                bf_reasons = wq.biofilter_reasons(bf_vals, th_u)
                 for rs in bf_reasons:
                     unit_reasons.append((rs, "Biofiltro"))
-                bf_levels = wq.biofilter_field_levels(bf_vals, thresholds)
+                bf_levels = wq.biofilter_field_levels(bf_vals, th_u)
                 # Compuerta: si una alarma biologica se apoya en una lectura
                 # marcada, la accion es remuestrear, no dosificar.
                 bf_conf = wq.sampling_confidence(bf_vals, bf_reasons)
@@ -803,7 +994,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
             stale_o2 = wq.o2_stale_thresholds(o2_at, thresholds)
             dims = wq.build_dimensions(o2_min, o2_pond, o2_hours, o2_state,
                                        eta, eta_n or 0, eta_hours, eta_state,
-                                       (bf.alarm_level if bf is not None else None),
+                                       bf_level,
                                        photo.get(u.id), photo_hours, marks,
                                        has_bf=tiene_bf,
                                        photo_evaluable=(u.id in photo_eval),
@@ -825,12 +1016,13 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 float(u.freshwater_l_s) if u.freshwater_l_s else None,
                 ph_tarde["ph"] if ph_tarde else None,
                 float(bf.in_temp_c) if (bf is not None and bf.in_temp_c) else None,
-                thresholds, no2_fit, 48.0, alk_source=alk_origen)
+                th_u, no2_fits.get(u.id, no2_fits[None]), 48.0,
+                alk_cap=alk_caps.get(u.id))
 
             # Diagnostico: responde a la dimension encendida, no es lista fija.
             no2_check = None
             if bf is not None and bf.out_nh4_n and bf.out_no2_n:
-                fit_u = no2_fit
+                fit_u = no2_fits.get(u.id, no2_fits[None])
                 no2_check = wq.nitrite_outlier(float(bf.out_nh4_n),
                                                float(bf.out_no2_n), fit_u)
                 if no2_check and no2_check["flag"] != "sospechoso":
@@ -923,6 +1115,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 "capacidad": capacidad,
                 "feed_cap": feed_cap,
                 "alk_origen": alk_origen,
+                "no2_umbral": th_u["nitrite_n"],
                 "cl_mod": wq.modeled_chloride(
                     salt_by_unit.get(u.id, []), u.water_volume_m3,
                     u.freshwater_l_s, u.chloride_base_mg_l, now),
@@ -1165,10 +1358,16 @@ def biofiltro_form(request: Request, unit_id: Optional[int] = None,
             "selected_unit": (editing.cultivation_unit_id if editing else unit_id),
             "today": date.today().strftime("%Y-%m-%d"),
             "editing": editing,
-            "no2_fit": wq.fit_nitrite_relation(_nitrite_pairs(db)),
+            # Por unidad: el JS elige el de la unidad seleccionada.
+            "no2_fits": {str(k): v for k, v in _nitrite_fits(db).items()
+                         if k is not None and v},
             # Umbrales y specs para evaluar en vivo del lado cliente (espejo del
             # motor). Los NÚMEROS siguen viniendo de la BD; el JS solo repite las
             # fórmulas (NH3 no ionizado y suma en cuadratura de la incertidumbre).
+            # Umbral de alerta de nitrito por unidad (sigue al cloruro).
+            "no2_alert_by_unit": {
+                str(u.id): _unit_thresholds(db, u, th, datetime.now())["nitrite_n"]["alert"]
+                for u in units if u.is_recirculating},
             "bf_thresholds": {
                 "nh3_n": th["nh3_n"],
                 "nitrite_n": th["nitrite_n"],
@@ -1212,6 +1411,63 @@ def _nitrite_pairs(db: Session, unit_id: Optional[int] = None) -> list:
             if nh4 and no2:
                 pairs.append((float(nh4), float(no2)))
     return pairs
+
+
+def _unit_thresholds(db: Session, u, thresholds: dict, now: datetime,
+                     salt_doses: Optional[list] = None) -> dict:
+    """Umbrales de la unidad: el de nitrito se mueve con su cloruro modelado.
+
+    `salt_doses` evita la consulta cuando el llamador ya trae las cargas.
+    """
+    if u is None or not u.is_recirculating:
+        return thresholds
+    if salt_doses is None:
+        salt_doses = (db.query(WaterTreatmentDose)
+                      .filter(WaterTreatmentDose.cultivation_unit_id == u.id,
+                              WaterTreatmentDose.product == "sal",
+                              WaterTreatmentDose.applied_at >= now - timedelta(days=60))
+                      .all())
+    cl = wq.modeled_chloride(salt_doses, u.water_volume_m3, u.freshwater_l_s,
+                             u.chloride_base_mg_l, now)
+    # No hay medicion de cloruro en la laguna: siempre es modelado.
+    return wq.thresholds_for_chloride(thresholds, (cl or {}).get("cl_mg_l"),
+                                      cl_medido=False)
+
+
+def _nitrite_fits(db: Session) -> dict:
+    """Relacion NO2 = a*TAN^b por unidad: unit_id -> fit (con `scope`).
+
+    Cada laguna con sus ultimos NO2_FIT_UNIT_SAMPLES muestreos; si no alcanza,
+    el ajuste conjunto de todas. La clave None trae el conjunto.
+    """
+    conjunto = wq.fit_nitrite_relation(_nitrite_pairs(db))
+    if conjunto:
+        conjunto = dict(conjunto, scope="conjunto")
+    out = {None: conjunto}
+    por_unidad: dict = {}
+    for r in (db.query(BiofilterReading)
+              .join(CultivationUnit, CultivationUnit.id == BiofilterReading.cultivation_unit_id)
+              .filter(CultivationUnit.is_recirculating.is_(True))
+              .order_by(BiofilterReading.reading_date.desc(), BiofilterReading.id.desc())
+              .limit(400).all()):
+        muestreos = por_unidad.setdefault(r.cultivation_unit_id, [])
+        if len(muestreos) >= wq.NO2_FIT_UNIT_SAMPLES:
+            continue
+        ps = [(float(a), float(b)) for a, b in ((r.in_nh4_n, r.in_no2_n),
+                                                (r.out_nh4_n, r.out_no2_n)) if a and b]
+        if ps:
+            muestreos.append(ps)
+    for uid, muestreos in por_unidad.items():
+        fit = None
+        if len(muestreos) >= wq.NO2_FIT_UNIT_SAMPLES:
+            fit = wq.fit_nitrite_relation([p for ps in muestreos for p in ps],
+                                          window=10 ** 6,
+                                          min_pairs=wq.NO2_FIT_UNIT_MIN_PAIRS)
+        # b <= 0 no tiene sentido fisico (mas amonio, menos nitrito) y rompe
+        # la inversion del techo: es ruido de una ventana chata, no un dato.
+        out[uid] = (dict(fit, scope="laguna") if fit and fit["b"] > 0.05
+                    else conjunto)
+    return out
 
 
 @router.post("/biofiltro")
@@ -1275,15 +1531,17 @@ def biofiltro_create(
                           ("in_no3_n", "in_no3_n_2"), ("out_no3_n", "out_no3_n_2")):
             eval_vals[base] = wq.mean_of_replicates(reading_vals[base], extra_vals[dup])
 
-        thresholds = load_thresholds(db)
+        unidad = db.query(CultivationUnit).get(cultivation_unit_id)
+        # El umbral de nitrito sigue al cloruro de la unidad al momento de guardar.
+        thresholds = _unit_thresholds(db, unidad, load_thresholds(db), datetime.now())
         test_specs = load_test_specs(db)
         res = wq.evaluate_biofilter(eval_vals, thresholds=thresholds, test_specs=test_specs)
 
         # Detector de outlier de nitrito: reajusta al vuelo sobre las ultimas
         # lecturas. No persiste coeficientes — son funcion de datos ya guardados.
-        unidad = db.query(CultivationUnit).get(cultivation_unit_id)
         recircula = bool(unidad and unidad.is_recirculating)
-        fit = wq.fit_nitrite_relation(_nitrite_pairs(db)) if recircula else None
+        fits = _nitrite_fits(db) if recircula else {}
+        fit = fits.get(cultivation_unit_id, fits.get(None)) if recircula else None
         no2_checks = [wq.nitrite_outlier(eval_vals["in_nh4_n"], eval_vals["in_no2_n"], fit),
                       wq.nitrite_outlier(eval_vals["out_nh4_n"], eval_vals["out_no2_n"], fit)]
         no2_checks = [c for c in no2_checks if c]
@@ -1649,7 +1907,8 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
             return RedirectResponse(url="/views/ui/calidad-agua", status_code=303)
         now = datetime.now()
         th = load_thresholds(db)
-        no2_fit = wq.fit_nitrite_relation(_nitrite_pairs(db))
+        _fits = _nitrite_fits(db)
+        no2_fit = _fits.get(unit_id, _fits[None])
         alk_origen = _source_alkalinity(db)
         doses = _unit_doses(db, unit_id)
         photo = _photosynthesis_by_unit(db, th, now).get(unit_id)
@@ -1691,44 +1950,24 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
         alk_actual = alk_medida if alk_medida is not None else (
             equilibrio["alk_equilibrio"] if equilibrio else None)
 
-        objetivo = float(u.alk_target_mg_l) if u.alk_target_mg_l else ALK_TARGET_DEFAULT
+        # --- mantención de alcalinidad -------------------------------------
+        # Dosis = consumo del alimento, con la ración planificada si está
+        # cargada. La laguna tiende a la fuente y no depende del caudal.
+        feed_plan = float(u.feed_plan_kg_day) if u.feed_plan_kg_day else None
+        mant_alim = wq.maintenance_by_feed(feed_plan or feed_kg, 48.0)
+        mant_fuente = "plan" if feed_plan else ("ejecutado" if feed_kg else None)
+        alk_alarma = alk_medida is not None and alk_medida < wq.ALK_ALARMA
 
-        # --- sugerencia -----------------------------------------------------
-        choque = wq.shock_plan(vol, alk_actual, objetivo, ph, temp, tan,
-                               th["nh3_n"]["alert"],
-                               max_kg_turno=MAX_KG_TURNO_DEFAULT)
-        mantencion = wq.maintenance_kg_day(feed_kg, 48.0, q_fresh, alk_origen,
-                                           objetivo)
-        # Sensibilidad del objetivo: cada mg/L sobre la fuente cuesta todos los
-        # días, así que conviene verlo antes de fijarlo.
-        sensibilidad = []
-        for t in (60.0, 65.0, 70.0, 80.0):
-            m = wq.maintenance_kg_day(feed_kg, 48.0, q_fresh, alk_origen, t)
-            if m:
-                sensibilidad.append({"objetivo": t, "kg_dia": m["kg_nahco3_dia"],
-                                     "choque": wq.bicarbonate_kg(vol, alk_actual, t)})
-
-        # El amonio se evalúa con el pH de la tarde, no con el del muestreo:
-        # de ese techo depende cuánta sal compra algo.
-        ph_tarde = wq.ph_worst_of_day(ph, u.ph_afternoon_rise)
-        feed_cap = wq.feed_capacity(eta, q_rec, q_fresh,
-                                    ph_tarde["ph"] if ph_tarde else None,
-                                    temp, th, no2_fit, 48.0, alk_source=alk_origen)
-        # Con la alcalinidad sostenida deja de ser techo: ahí recién la sal
-        # compra algo, y por eso se calcula sobre el escenario CON terapia,
-        # que además sube el pH.
+        # --- sal ------------------------------------------------------------
+        # El amonio se evalúa con el pH de la tarde, no con el del muestreo.
+        # Escenario CON mantención: la alcalinidad sostenida en la de la fuente
+        # deja de ser techo y sube algo el pH; ahí se comparan amonio y nitrito.
         ph_tarde_con = wq.ph_worst_of_day(ph, u.ph_afternoon_rise,
-                                          alk_actual, objetivo)
+                                          alk_actual, alk_origen)
         feed_cap_con = wq.feed_capacity(eta, q_rec, q_fresh,
                                         ph_tarde_con["ph"] if ph_tarde_con else None,
-                                        temp, th, no2_fit, 48.0, alk_source=None)
-        # El OBJETIVO de cloruro se calcula sobre el escenario con la
-        # alcalinidad ya sostenida —ahi el nitrito pasa a mandar—, pero si HOY
-        # manda la alcalinidad la sal no compra nada todavia. Son dos
-        # preguntas distintas y mezclarlas haria comprar sal antes de tiempo.
+                                        temp, th, no2_fit, 48.0, alk_cap=None)
         sal_obj = wq.salt_target(feed_cap_con, no2_fit, th["nitrite_n"]["alert"])
-        sal_util = bool(feed_cap and feed_cap.get("manda") == "nitrito")
-        sal_manda_hoy = (feed_cap or {}).get("manda")
         cl_mod = wq.modeled_chloride(doses, vol, q_fresh,
                                      u.chloride_base_mg_l, now)
         sal = (wq.salt_plan(sal_obj["cloruro_objetivo"],
@@ -1739,6 +1978,17 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
         # --- régimen de muestreo -------------------------------------------
         regimen = wq.regime_for(_last_shock_at(doses), bool(photo), now)
 
+        # --- registro de cargas en la misma vista --------------------------
+        # El total de hoy por producto va junto al formulario: así un ingreso
+        # repetido por dos personas se ve antes de guardarlo.
+        users = _active_users(db)
+        operadores = {o["id"]: o["label"] for o in users}
+        hoy_por_producto = {}
+        for d in doses:
+            if d.applied_at and d.applied_at.date() == now.date():
+                hoy_por_producto[d.product] = (hoy_por_producto.get(d.product, 0.0)
+                                               + float(d.kg or 0))
+
         context = {
             "request": request, "msg": msg, "u": u, "now": now,
             "eta": eta, "eta_n": (etas or {}).get("n"),
@@ -1748,19 +1998,23 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
             "tan_removido": tan_removido, "n_kg": n_kg, "feed_kg": feed_kg,
             "bf": bf, "ph": ph, "temp": temp, "tan": tan,
             "alk_medida": alk_medida, "alk_origen": alk_origen,
-            "equilibrio": equilibrio, "alk_actual": alk_actual,
-            "objetivo": objetivo, "choque": choque, "mantencion": mantencion,
-            "sensibilidad": sensibilidad,
-            "feed_cap": feed_cap, "feed_cap_con": feed_cap_con,
+            "alk_actual": alk_actual,
+            "feed_cap_con": feed_cap_con, "no2_fit": no2_fit,
             "sal_obj": sal_obj, "sal": sal, "cl_mod": cl_mod,
-            "sal_util": sal_util, "sal_manda_hoy": sal_manda_hoy,
+            "no2_umbral": _unit_thresholds(db, u, th, now)["nitrite_n"],
+            "no2_tope_f": wq.NO2_TOPE_MODELADO,
             "regimen": regimen, "regimenes": wq.REGIMES,
             "doses": doses, "photo": photo,
-            "max_kg_turno": MAX_KG_TURNO_DEFAULT,
-            "ph_tarde": ph_tarde, "ph_tarde_con": ph_tarde_con,
+            "ph_tarde_con": ph_tarde_con,
             "ph_alza_default": wq.PH_ALZA_TARDE_DEFAULT,
             "caliza_f": wq.CALIZA_POR_NAHCO3,
             "caliza_pureza": wq.CALIZA_PUREZA,
+            "users": users, "operadores": operadores,
+            "hoy_por_producto": hoy_por_producto,
+            "mant_alim": mant_alim, "mant_fuente": mant_fuente,
+            "alk_alarma": alk_alarma, "alk_alarma_mg_l": wq.ALK_ALARMA,
+            "bf_fecha": bf.reading_date if bf is not None else None,
+            "now_input": now.strftime("%Y-%m-%dT%H:%M"),
         }
         html = jinja_env.get_template("calidad_agua_biofiltro_unidad.html").render(context)
         return HTMLResponse(content=html)
@@ -1781,6 +2035,7 @@ def biofiltro_unidad_config(
     chloride_base_mg_l: Optional[str] = Form(None),
     chloride_is_measured: Optional[str] = Form(None),
     ph_afternoon_rise: Optional[str] = Form(None),
+    feed_plan_kg_day: Optional[str] = Form(None),
 ):
     db = SessionLocal()
     try:
@@ -1793,7 +2048,8 @@ def biofiltro_unidad_config(
                              ("water_volume_m3", water_volume_m3),
                              ("alk_target_mg_l", alk_target_mg_l),
                              ("chloride_base_mg_l", chloride_base_mg_l),
-                             ("ph_afternoon_rise", ph_afternoon_rise)):
+                             ("ph_afternoon_rise", ph_afternoon_rise),
+                             ("feed_plan_kg_day", feed_plan_kg_day)):
             setattr(u, campo, _num(valor))
         u.media_type = (media_type or None)
         u.water_volume_is_estimated = bool(water_volume_is_estimated)

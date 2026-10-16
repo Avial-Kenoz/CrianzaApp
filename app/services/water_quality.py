@@ -91,6 +91,16 @@ DEFAULT_THRESHOLDS: dict[str, dict] = {
     # O2. Dispara con valores MAYORES al umbral (comparator 'gt'). Editable.
     "water_temp":         {"alert": 23.0,   "alarm": 25.0,   "comparator": "gt"},
     "nh3_n":              {"alert": 0.0125, "alarm": 0.025,  "comparator": "gt"},
+    # Nitrito como N (mg NO2-N/L). Respaldo de la alerta 0,10: Shakhanazarova,
+    # Cherkesova & Isuev (2010), J. Ichthyol. 50(2):216-218, larvas de esturión
+    # ruso a 20-25 °C. El paper reporta mg NO2/L (ion): x 0,304 para pasar a N.
+    #   - 2 mg NO2/L (0,61 NO2-N): sin mortalidad en 10 d, pero -59 % actividad
+    #     antioxidante y -45 % catalasa al 3er día. Es lo más bajo ensayado.
+    #   - 8 mg NO2/L (2,4 NO2-N): 100 % de mortalidad pasado el 3er día.
+    # 0,10 queda ~1/6 bajo el efecto subletal y ~1/24 bajo el letal. Prudente
+    # para juveniles/adultos a ~15 °C (las larvas a 20-25 °C son más sensibles).
+    # El ensayo NO reporta cloruro: por eso 0,10 es un PISO y no un valor
+    # anclado a un cloruro (ver nitrite_spec_for_chloride).
     "nitrite_n":          {"alert": 0.10,   "alarm": 0.50,   "comparator": "gt"},
     # Balance de N: factor de cobertura k. Se marca desbalance si
     # |N_ent - N_sal| > k · U, con U la incertidumbre combinada (ver abajo).
@@ -780,8 +790,15 @@ def photosynthesis_signal(day_sats: list, night_sats: list,
 # porque entrada y salida se miden en la misma sesion). Por eso duplicar la
 # lectura rinde mas que acortar el intervalo de muestreo.
 # ---------------------------------------------------------------------------
-NO2_FIT_MIN_PAIRS = 40      # bajo esto el detector no se activa
-NO2_FIT_WINDOW = 60         # pares usados para reajustar (~2 meses de rotacion)
+NO2_FIT_MIN_PAIRS = 40      # ajuste CONJUNTO (respaldo): minimo de pares
+NO2_FIT_WINDOW = 60         # ajuste CONJUNTO: pares usados
+# Ajuste POR LAGUNA, el que se usa: a y b cambian en el tiempo y entre lagunas
+# (b de 0,23 a 0,54 por laguna contra 1,08 conjunto, que mezcla niveles). Se
+# eligio N con validacion hacia adelante sobre jul-oct 2026: el error de
+# prediccion baja hasta 8 muestreos (RMSE 0,027 mg/L) y despues no mejora;
+# una ventana mas larga solo agrega inercia ante cambios del biofiltro.
+NO2_FIT_UNIT_SAMPLES = 8    # muestreos (cada uno da 2 pares: entrada y salida)
+NO2_FIT_UNIT_MIN_PAIRS = 10
 NO2_FLAG_SIGMAS = 2.0       # marca fuera de +-2 sd del residuo
 
 
@@ -796,7 +813,8 @@ def mean_of_replicates(*values) -> Optional[float]:
     return sum(vals) / len(vals) if vals else None
 
 
-def fit_nitrite_relation(pairs: list) -> Optional[dict]:
+def fit_nitrite_relation(pairs: list, window: int = NO2_FIT_WINDOW,
+                         min_pairs: int = NO2_FIT_MIN_PAIRS) -> Optional[dict]:
     """Ajusta NO2 = a * NH4^b por minimos cuadrados en log-log.
 
     `pairs` es una lista de (nh4_n, no2_n) con ambos > 0, mas reciente primero.
@@ -807,8 +825,8 @@ def fit_nitrite_relation(pairs: list) -> Optional[dict]:
     sobre la ventana que quiera. Guardarlos congelaria una decision que no
     hace falta tomar hoy.
     """
-    pts = [(x, y) for x, y in pairs if x and y and x > 0 and y > 0][:NO2_FIT_WINDOW]
-    if len(pts) < NO2_FIT_MIN_PAIRS:
+    pts = [(x, y) for x, y in pairs if x and y and x > 0 and y > 0][:window]
+    if len(pts) < min_pairs:
         return None
     xs = [math.log(x) for x, _ in pts]
     ys = [math.log(y) for _, y in pts]
@@ -822,7 +840,10 @@ def fit_nitrite_relation(pairs: list) -> Optional[dict]:
     residuos = [y - a * x ** b for x, y in pts]
     med = sum(residuos) / n
     sd = math.sqrt(sum((r - med) ** 2 for r in residuos) / n)
-    return {"a": a, "b": b, "sd": sd, "n": n}
+    # El rango de amonio observado acota lo que el ajuste puede afirmar: fuera
+    # de el la curva es extrapolacion y la sal no se dimensiona con ella.
+    return {"a": a, "b": b, "sd": sd, "n": n,
+            "x_min": min(x for x, _ in pts), "x_max": max(x for x, _ in pts)}
 
 
 def nitrite_outlier(nh4_n: Optional[float], no2_n: Optional[float],
@@ -1493,12 +1514,24 @@ def _dg_nitrificacion(health, capacity, aireado=True):
     if not health or health.get("state") not in ("bajo", "atencion"):
         return []
     pct = health.get("pct")
+    if health.get("common"):
+        # Todas las unidades cayeron juntas: no es el medio de esta.
+        txt = ("{:.0f}% de su línea base, igual que el resto de las unidades · "
+               "causa común, no ensuciamiento.".format(pct) if pct
+               else "Caída común a casi todas las unidades · causa común, no ensuciamiento.")
+        return [_dg("estructura", "alerta", "Nitrificación baja en todas las unidades", txt,
+                    "pH y alcalinidad de entrada; alimento confirmado al día.",
+                    "Si el pH está bajo 7,0 o falta confirmar alimento, el k "
+                    "baja en todas a la vez sin que el medio cambie.")]
     txt = ("{:.0f}% de {} · probable ensuciamiento del medio.".format(
         pct, health.get("ref_kind", "la referencia")) if pct
         else "Bajo la referencia · probable ensuciamiento del medio.")
     if capacity and capacity["uso_del_techo"] > 0.85:
         txt += " Medio al {:.0%} del techo: más caudal no lo arregla.".format(
             capacity["uso_del_techo"])
+    if health.get("n_pending_feed") and health.get("feed_until"):
+        txt += " Calculado hasta el {:%d-%m} (último alimento confirmado).".format(
+            health["feed_until"])
     if aireado:
         # Con aire en el reactor el ΔOD no dice nada de la respiracion. Lo que
         # el OD de salida si contesta es si al medio le falta oxigeno.
@@ -1727,8 +1760,80 @@ def ph_worst_of_day(ph_measured, alza_tarde=None, alk_now=None, alk_target=None)
             "ajuste_alk": ajuste, "alza_tarde": alza}
 
 
+ALK_DROP_MIN = 4.0              # mg/L: bajo esto la caida no se distingue del
+                                # error de la titulacion (+-3-5) -> "no limita"
+
+
+def alkalinity_feed_ceiling(feed_kg_day, drops, alk_source_now,
+                            dose_caco3_kg_day=0.0, cal=None, protein_pct=48.0):
+    """Techo de alimento por alcalinidad con lo que la laguna YA mostro.
+
+    Parte natural: si con `feed_kg_day` la laguna se sostiene `caida` mg/L
+    bajo la fuente (`drops`: caidas por muestreo SIN dosis), el consumo escala
+    con el alimento y el umbral de alerta (ALK_WARN, 50) se toca en
+        natural = feed * (fuente_hoy - 50) / caida
+    No usa el caudal de agua fresca: se cancela (el mismo q diluye la caida de
+    hoy y la del techo). La version anterior lo necesitaba y, con 12 L/s de
+    marcador para todas, daba el mismo techo en todas las lagunas y 2-3 veces
+    bajo lo que ya comian sin tocar el piso. El margen va con la fuente de
+    HOY: el techo es hacia adelante; la caida si se promedia (es ruidosa).
+
+    Parte por dosis: cada kg de CaCO3 dosificado sostiene `por_kg` kg de
+    alimento. Sin calibrar es la estequiometria (1 / (7,14 * TAN por kg)),
+    que es el valor bajo: la laguna consume 2-3 veces menos que la teoria, y
+    no se sabe si es porque entra mas agua (la dosis se diluye: vale la
+    teoria) o porque se nitrifica menos (cada kg rinde mas). La respuesta a
+    la dosis lo separa. Con `cal` = {"feed", "caida", "dose"} medidos con la
+    laguna ya equilibrada bajo dosis:
+        lo que la laguna sostendria sin dosis a esa caida = caida_cal * feed / caida
+        por_kg = (feed_cal - eso) / dose_cal
+    Incluye cuanto de la caliza se disuelve de verdad, que es lo otro que no
+    se sabe.
+
+    Devuelve None si falta un dato; {"no_limita": True, ...} si la caida es
+    menor que el error de la titulacion.
+    """
+    if not feed_kg_day or not drops or alk_source_now is None:
+        return None
+    n = len(drops)
+    caida = sum(drops) / n
+    se = ((sum((d - caida) ** 2 for d in drops) / (n - 1)) ** 0.5 / n ** 0.5
+          if n > 1 else 0.0)
+    feed = float(feed_kg_day)
+    out = {"caida": caida, "caida_se": se, "feed_actual": feed, "n": n,
+           "alk_fuente": float(alk_source_now)}
+    if caida < ALK_DROP_MIN:
+        return dict(out, no_limita=True, feed=None)
+
+    # Objetivo = el umbral de alerta (50), no el piso critico (40): quien
+    # alimente lo que dice el techo deja la laguna estable sin alerta; el
+    # tramo 50-40 queda como colchon, no como capacidad a usar.
+    margen = max(0.0, float(alk_source_now) - ALK_WARN)
+    natural = feed * margen / caida
+    natural_lo = feed * margen / (caida + se)
+    natural_hi = feed * margen / (caida - se) if caida - se > 0 else None
+
+    por_kg_teo = 1.0 / (ALK_PER_N * (protein_pct or 48.0) / 100.0 * FEED_N_FACTOR)
+    por_kg, calibrado, dosis_no_se_ve = por_kg_teo, False, False
+    if cal and cal.get("dose") and cal.get("feed") and cal.get("caida") is not None:
+        sin_dosis = cal["caida"] * feed / caida
+        por_kg = (cal["feed"] - sin_dosis) / cal["dose"]
+        calibrado = True
+        if por_kg <= 0:
+            por_kg, dosis_no_se_ve = 0.0, True
+    dosis = float(dose_caco3_kg_day or 0.0)
+    extra = dosis * por_kg
+    return dict(out, no_limita=False, margen=margen,
+                natural=natural, natural_lo=natural_lo, natural_hi=natural_hi,
+                dosis=dosis, por_kg=por_kg, por_kg_teo=por_kg_teo,
+                calibrado=calibrado, dosis_no_se_ve=dosis_no_se_ve, extra=extra,
+                feed=natural + extra,
+                feed_lo=natural_lo + extra,
+                feed_hi=(natural_hi + extra) if natural_hi is not None else None)
+
+
 def feed_capacity(eta, q_rec, q_fresh, ph, temp_c, thresholds=None,
-                  no2_fit=None, protein_pct=48.0, alk_source=None):
+                  no2_fit=None, protein_pct=48.0, alk_cap=None):
     """Techos de alimentacion y cual manda.
 
     Devuelve None si falta lo indispensable. Cada techo trae el supuesto del
@@ -1736,6 +1841,9 @@ def feed_capacity(eta, q_rec, q_fresh, ph, temp_c, thresholds=None,
 
     `ph` es el pH con que se evalua el amonio: el peor del dia
     (`ph_worst_of_day`), no el del muestreo de la manana.
+
+    `alk_cap` es el resultado de `alkalinity_feed_ceiling` (con lo observado
+    en la laguna), o None para el escenario con alcalinidad sostenida.
     """
     if not eta or not q_rec or eta <= 0 or eta >= 1:
         return None
@@ -1772,22 +1880,29 @@ def feed_capacity(eta, q_rec, q_fresh, ph, temp_c, thresholds=None,
         except (ValueError, ZeroDivisionError, OverflowError):
             pass
 
-    # --- por alcalinidad: la trae el agua fresca, la consume la nitrificacion
-    # `alk_source` es la alcalinidad del agua de entrada. En esta planta toda
-    # el agua pasa por la unidad de flujo abierto antes de recircular, asi que
-    # la medicion de esa unidad ES la del origen.
-    if alk_source and q_fresh and alk_source > ALK_FLOOR:
-        neto = (alk_source - ALK_FLOOR) * q_fresh * 0.0864     # kg CaCO3/dia
+    # --- por alcalinidad: escalado de lo que la laguna ya mostro -----------
+    # Ver alkalinity_feed_ceiling. Va en kg de alimento real, no a 48%.
+    if alk_cap and alk_cap.get("feed") is not None:
+        a = alk_cap
+        banda = ("{:.0f}–{:.0f} · ".format(a["feed_lo"], a["feed_hi"])
+                 if a.get("feed_hi") is not None else "")
+        nota = "{}baja {:.0f} mg/L con {:.0f} kg/d".format(
+            banda, a["caida"], a["feed_actual"])
+        if a.get("dosis"):
+            nota += " · {:.0f} natural + {:.0f} por dosis ({:.0f} kg CaCO₃/d{})".format(
+                a["natural"], a["extra"], a["dosis"],
+                "" if a["calibrado"] else ", por calibrar")
+            if a.get("dosis_no_se_ve"):
+                nota += " · la dosis no se ve en la laguna"
         techos.append({"key": "alcalinidad", "label": "Alcalinidad",
-                       "c_max": None,
-                       "feed": neto / ALK_PER_N / k_tan,
-                       "nota": "la trae el agua fresca; el bicarbonato la desplaza"})
+                       "c_max": None, "feed": a["feed"], "nota": nota})
 
     if not techos:
         return None
     techos.sort(key=lambda t: t["feed"])
     manda = techos[0]
     return {
+        "alk_cap": alk_cap,
         "clearance": clearance,
         "cde": q_rec * eta,
         "aporte_purga": (q_fresh or 0.0) * (1.0 - eta),
@@ -1821,6 +1936,18 @@ CALIZA_POR_NAHCO3 = NAHCO3_AS_CACO3 / CALIZA_PUREZA
 NACL_CL_FRACTION = 0.6066   # g Cl- por g de NaCl (35,45/58,44)
 CL_NO2_RATIO = 20.0         # Cl-:NO2-N en masa; 6:1 es el minimo, 20:1 es
                             # el que se usa con especies sensibles
+# Respaldo en esturiones (revisado 15-10-2026): la razon NO esta validada para
+# gueldenstaedtii, Huso ni stellatus a cloruros de 2-5 mg/L.
+#   - A. oxyrinchus (Matsche et al. 2012, J. Fish Dis. 35:873): 1 mg/L de
+#     nitrito 96 h; con Cl 5 mg/L (5:1) el nitrito plasmatico sube >40x y hay
+#     metahemoglobinemia severa; con Cl 55 mg/L (55:1) no se acumula.
+#   - A. stellatus (juveniles 15 g, J. Aquat. Physiol. Biotech., Guilan):
+#     LC50 96 h ~75 mg/L en agua dulce, ~94 a 4 g/L de sal (Cl ~2.200 mg/L),
+#     ~242 a 8 g/L y ~353 a 12 g/L. Protege, pero mucho menos por mg de
+#     cloruro de lo que supone una razon lineal.
+# Por eso el alza del umbral de alerta se topa en NO2_TOPE_MODELADO x base
+# (0,20): aun sin creerle al cloruro queda ~1/3 bajo el efecto subletal en
+# larvas (0,61 NO2-N, ver DEFAULT_THRESHOLDS["nitrite_n"]).
 
 
 def media_surface_m2(media_m3, ssa_m2_m3):
@@ -1993,6 +2120,31 @@ def maintenance_kg_day(feed_kg_day, protein_pct, q_fresh_l_s, alk_source,
     }
 
 
+ALK_ALARMA = 50.0   # mg/L: bajo esto la laguna avisa, aunque se dosifique
+
+
+def maintenance_by_feed(feed_kg_day, protein_pct):
+    """Dosis de mantención = lo que consume la nitrificación del alimento.
+
+    Con la dosis igual al consumo, el equilibrio  alk_in + (dosis-consumo)/q
+    queda en la alcalinidad de la FUENTE, sea cual sea el caudal de agua
+    fresca. Por eso se prefiere a apuntar a un objetivo propio: el caudal es
+    el dato menos confiable de la unidad y aquí no entra. Apuntar sobre la
+    fuente se paga todos los días por la purga; apuntar bajo ella exige
+    confiar en el caudal.
+    """
+    n_kg = feed_nitrogen_kg_day(feed_kg_day, protein_pct)
+    if not n_kg:
+        return None
+    caco3 = n_kg * ALK_PER_N                                  # kg CaCO3/dia
+    return {
+        "feed_kg_dia": float(feed_kg_day),
+        "kg_caco3_dia": caco3,
+        "kg_caliza_dia": caco3 / CALIZA_PUREZA,
+        "kg_nahco3_dia": caco3 / NAHCO3_AS_CACO3,
+    }
+
+
 def steady_state_alkalinity(alk_source, feed_kg_day, protein_pct, q_fresh_l_s,
                             dose_kg_day=0.0):
     """Alcalinidad de equilibrio de la laguna, sin medirla.
@@ -2023,41 +2175,98 @@ def steady_state_alkalinity(alk_source, feed_kg_day, protein_pct, q_fresh_l_s,
     }
 
 
-def salt_target(feed_cap, no2_fit, nitrite_alert):
-    """Cloruro objetivo: el que alinea el techo de nitrito con el que le sigue.
+NO2_TOPE_MODELADO = 2.0     # con cloruro MODELADO el umbral sube como mucho 2x
 
-    El criterio no es una concentracion de tabla, es de sistema: subir cloruro
-    solo hasta que el nitrito deje de ser el que manda. Mas alla de eso la sal
-    no compra nada porque otro techo pasa a limitar.
 
-    Y si hoy manda la alcalinidad, la sal no compra nada TODAVIA: primero hay
-    que levantar ese techo. Eso se devuelve como `util=False`.
+def nitrite_spec_for_chloride(spec, cl_mg_l, cl_medido=False):
+    """Umbral de nitrito segun el cloruro: lo que protege es la razon Cl:NO2-N.
+
+    La base (0,10) no tiene cloruro asociado: sale de un ensayo con larvas
+    que no reporta cloruro (ver DEFAULT_THRESHOLDS["nitrite_n"]). Por eso es
+    un PISO: el umbral es el mayor entre la base y Cl/CL_NO2_RATIO, y solo
+    sube con la sal.
+
+    Con cloruro modelado (sin medir) el alza se topa en NO2_TOPE_MODELADO x
+    base: si el modelo sobrestima, una alerta real no queda callada. La
+    alarma no se mueve nunca: es el limite duro, y el umbral no la cruza.
+    """
+    spec = dict(spec or DEFAULT_THRESHOLDS["nitrite_n"])
+    base = spec.get("alert")
+    spec.update({"base": base, "cl": cl_mg_l, "cl_medido": bool(cl_medido),
+                 "ajustado": False, "topado": False})
+    if not base or cl_mg_l is None:
+        return spec
+    alert = max(float(base), float(cl_mg_l) / CL_NO2_RATIO)
+    if not cl_medido and alert > base * NO2_TOPE_MODELADO:
+        alert = base * NO2_TOPE_MODELADO
+        spec["topado"] = True
+    if spec.get("alarm") and alert >= spec["alarm"]:
+        alert = spec["alarm"]
+        spec["topado"] = True
+    spec["alert"] = alert
+    spec["ajustado"] = alert > base
+    return spec
+
+
+def thresholds_for_chloride(thresholds, cl_mg_l, cl_medido=False):
+    """Copia de los umbrales con el de nitrito ajustado al cloruro."""
+    th = dict(thresholds or DEFAULT_THRESHOLDS)
+    th["nitrite_n"] = nitrite_spec_for_chloride(th.get("nitrite_n"), cl_mg_l,
+                                                cl_medido)
+    return th
+
+
+def salt_target(feed_cap, no2_fit, nitrite_alert, cl_medido=False):
+    """Cloruro objetivo: el que alinea el techo de nitrito con el de amonio.
+
+    Los dos techos se escriben en TAN: el de amonio por pH y temperatura, el
+    de nitrito por la relacion NO2 = a*TAN^b de la laguna. El menor manda. La
+    sal sube el nitrito tolerable (Cl:NO2-N = CL_NO2_RATIO) y con el el techo
+    de nitrito, solo hasta alcanzar al de amonio: mas alla no compra nada.
+
+    Sin extrapolar: el alineamiento se calcula como mucho hasta el TAN maximo
+    observado en la ventana del ajuste. Si el techo de amonio queda mas alla,
+    se dice (`limitado_por_datos`) y el objetivo avanza solo cuando la laguna
+    opere con mas carga y la ventana lo incorpore.
     """
     if not feed_cap or not no2_fit or not no2_fit.get("b") or not nitrite_alert:
         return None
-    techos = {t["key"]: t["feed"] for t in feed_cap["techos"]}
-    if "nitrito" not in techos:
+    techos = {t["key"]: t for t in feed_cap["techos"]}
+    if "nitrito" not in techos or "amonio" not in techos:
         return None
-    otros = [v for k, v in techos.items() if k != "nitrito"]
-    if not otros:
-        return None
-    objetivo = min(otros)                    # hasta alcanzar al siguiente techo
-    util = feed_cap["manda"] == "nitrito"
-    factor = objetivo / techos["nitrito"]
-    if factor <= 1.0:
-        return {"util": False, "manda": feed_cap["manda"], "factor": factor,
-                "razon": "el nitrito no es el techo que manda"}
-    # feed ∝ c_max ∝ (lim/a)^(1/b)  =>  lim sube con factor^b
-    lim_nuevo = float(nitrite_alert) * (factor ** no2_fit["b"])
-    return {
-        "util": util,
-        "manda": feed_cap["manda"],
-        "factor": factor,
-        "nitrito_lim_actual": float(nitrite_alert),
-        "nitrito_lim_objetivo": lim_nuevo,
-        "cloruro_objetivo": CL_NO2_RATIO * lim_nuevo,
-        "ratio": CL_NO2_RATIO,
-    }
+    c_no2 = techos["nitrito"]["c_max"]
+    c_nh3 = techos["amonio"]["c_max"]
+    base = {"util": feed_cap["manda"] == "nitrito", "manda": feed_cap["manda"],
+            "tan_nitrito": c_no2, "tan_amonio": c_nh3,
+            "tan_max_obs": no2_fit.get("x_max"), "ratio": CL_NO2_RATIO,
+            "nitrito_lim_actual": float(nitrite_alert)}
+    if c_no2 >= c_nh3:
+        return dict(base, util=False,
+                    razon="el nitrito no limita antes que el amonio")
+    x_max = no2_fit.get("x_max") or c_nh3
+    tan_obj = min(c_nh3, x_max)
+    por_datos = x_max < c_nh3
+    if tan_obj <= c_no2:
+        return dict(base, limitado_por_datos=True,
+                    razon="no hay mediciones de amonio sobre el techo de nitrito")
+    lim_nuevo = no2_fit["a"] * tan_obj ** no2_fit["b"]
+    # Mismo tope que la alerta (nitrite_spec_for_chloride): con cloruro
+    # modelado no se planifica un nitrito que la alerta no toleraria.
+    por_tope = False
+    tope = float(nitrite_alert) * NO2_TOPE_MODELADO
+    if not cl_medido and lim_nuevo > tope:
+        lim_nuevo = tope
+        tan_obj = (tope / no2_fit["a"]) ** (1.0 / no2_fit["b"])
+        por_datos, por_tope = False, True
+    # El alimento escala con el TAN tolerable (mismo clearance).
+    feed_obj = techos["nitrito"]["feed"] * tan_obj / c_no2
+    return dict(base,
+                tan_objetivo=tan_obj, limitado_por_datos=por_datos,
+                limitado_por_tope=por_tope,
+                feed_nitrito=techos["nitrito"]["feed"], feed_objetivo=feed_obj,
+                feed_amonio=techos["amonio"]["feed"],
+                nitrito_lim_objetivo=lim_nuevo,
+                cloruro_objetivo=CL_NO2_RATIO * lim_nuevo)
 
 
 def salt_plan(cl_target, cl_base, volume_m3, q_fresh_l_s, cl_source=None):
