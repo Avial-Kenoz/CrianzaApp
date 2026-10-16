@@ -21,7 +21,8 @@ from jinja2 import Environment, FileSystemLoader
 from app.api.water_quality import feed_limits_by_unit
 from app.db.session import SessionLocal
 from app.models.cultivation_units import CultivationUnit
-from app.models.feed import FeedRation
+from app.models.feed import FeedRation, FeedType
+from app.models.ponds import Pond
 from app.models.users import User
 from app.services import feed_ration as fr
 
@@ -287,5 +288,46 @@ async def racion_confirmar(request: Request):
     except Exception as e:
         db.rollback()
         return JSONResponse({"ok": False, "error": "Error: {}".format(e)}, status_code=500)
+    finally:
+        db.close()
+
+
+@router.get("/ui/feed/racion/imprimir", response_class=HTMLResponse)
+def racion_imprimir(request: Request, fecha: Optional[str] = None):
+    """Hoja para el operario: solo lo que se echa al agua ese día."""
+    db = SessionLocal()
+    try:
+        today = date.today()
+        try:
+            f = date.fromisoformat(fecha) if fecha else today + timedelta(days=1)
+        except ValueError:
+            f = today + timedelta(days=1)
+        rows = (db.query(FeedRation, Pond.name, FeedType.name, FeedType.bag_kg)
+                .join(Pond, Pond.id == FeedRation.pond_id)
+                .outerjoin(FeedType, FeedType.id == FeedRation.feed_type_id)
+                .filter(FeedRation.ration_date == f)
+                .all())
+        units = {u.id: u.name for u in db.query(CultivationUnit).all()}
+        grupos: dict = {}
+        for r, pond_name, feed_name, bag_kg in rows:
+            g = grupos.setdefault(r.cultivation_unit_id, {
+                "name": units.get(r.cultivation_unit_id, "Sin unidad"),
+                "carriles": [], "por_alimento": {}})
+            kg = float(r.kg_planned or 0)
+            g["carriles"].append({"name": pond_name, "feed": feed_name, "kg": kg})
+            if kg > 0 and feed_name:
+                a = g["por_alimento"].setdefault(feed_name, {"kg": 0.0, "bag_kg": float(bag_kg or 0)})
+                a["kg"] += kg
+        for g in grupos.values():
+            g["carriles"].sort(key=lambda c: c["name"])
+            g["total"] = sum(c["kg"] for c in g["carriles"])
+            g["ayuno"] = g["total"] <= 0
+            # Lo que hay que llevar de terreno, por alimento y en sacos.
+            g["alimentos"] = [{"feed": k, "kg": v["kg"], "bag_kg": v["bag_kg"],
+                               "sacos": (v["kg"] / v["bag_kg"]) if v["bag_kg"] else None}
+                              for k, v in sorted(g["por_alimento"].items())]
+        context = {"request": request, "fecha": f, "dia": DIAS[f.weekday()],
+                   "grupos": sorted(grupos.values(), key=lambda g: g["name"])}
+        return HTMLResponse(jinja_env.get_template("feed_racion_print.html").render(context))
     finally:
         db.close()

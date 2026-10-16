@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Alimentación {{ fecha.strftime('%d-%m-%Y') }}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #000; background: #fff; padding: 18px 22px; font-size: 13pt; }
+    h1 { font-size: 18pt; margin-bottom: 2px; }
+    .sub { font-size: 10pt; color: #444; margin-bottom: 14px; }
+    .unit { break-inside: avoid; margin-bottom: 14px; border: 1.5px solid #000; border-radius: 6px; overflow: hidden; }
+    .unit h2 { font-size: 14pt; background: #e5e5e5; padding: 6px 10px; display: flex; justify-content: space-between; }
+    table { width: 100%; border-collapse: collapse; }
+    td, th { padding: 6px 10px; border-top: 1px solid #999; text-align: left; }
+    th { font-size: 9pt; text-transform: uppercase; color: #333; }
+    td.kg, th.kg { text-align: right; font-weight: 700; font-size: 15pt; width: 130px; }
+    td.ok, th.ok { width: 50px; text-align: center; }
+    .box { display: inline-block; width: 18px; height: 18px; border: 2px solid #000; }
+    tr.no td { color: #555; }
+    tr.no td.kg { font-size: 11pt; font-weight: 600; }
+    .llevar { font-size: 10.5pt; padding: 6px 10px; border-top: 1px solid #999; background: #f5f5f5; }
+    .ayuno { padding: 10px; font-size: 14pt; font-weight: 700; text-align: center; }
+    .firma { margin-top: 26px; display: flex; gap: 40px; font-size: 11pt; }
+    .firma div { flex: 1; border-top: 1px solid #000; padding-top: 4px; }
+    .noprint { margin-bottom: 12px; }
+    .noprint button { padding: 8px 16px; font-size: 11pt; cursor: pointer; }
+    @media print { .noprint { display: none; } body { padding: 0; } @page { margin: 12mm; } }
+  </style>
+</head>
+<body>
+{% macro kg(v) %}{{ ('%.1f'|format(v)).replace('.', ',') }}{% endmacro %}
+  <div class="noprint"><button onclick="window.print()">Imprimir</button></div>
+  <h1>Alimentación · {{ dia }} {{ fecha.strftime('%d-%m-%Y') }}</h1>
+  <div class="sub">Kilos a echar al agua por carril. Marcar la casilla al entregar.</div>
+
+  {% for g in grupos %}
+  <div class="unit">
+    <h2><span>{{ g.name }}</span><span>{% if g.ayuno %}NO ALIMENTAR{% else %}{{ kg(g.total) }} kg{% endif %}</span></h2>
+    {% if g.ayuno %}
+      <div class="ayuno">No alimentar esta unidad</div>
+    {% else %}
+      <table>
+        <thead><tr><th class="ok">✔</th><th>Carril</th><th>Alimento</th><th class="kg">kg</th></tr></thead>
+        <tbody>
+        {% for c in g.carriles %}
+          {% if c.kg > 0 %}
+          <tr><td class="ok"><span class="box"></span></td><td>{{ c.name }}</td><td>{{ c.feed or '—' }}</td><td class="kg">{{ kg(c.kg) }}</td></tr>
+          {% else %}
+          <tr class="no"><td class="ok">—</td><td>{{ c.name }}</td><td></td><td class="kg">no alimentar</td></tr>
+          {% endif %}
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="llevar">Llevar:
+        {% for a in g.alimentos %}<strong>{{ a.feed }}</strong> {{ kg(a.kg) }} kg{% if a.sacos %} (≈ {{ kg(a.sacos) }} sacos de {{ '%g'|format(a.bag_kg) }} kg){% endif %}{{ ' · ' if not loop.last }}{% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <p>No hay ración programada para este día.</p>
+  {% endfor %}
+
+  {% if grupos %}
+  <div class="firma"><div>Entregó</div><div>Hora</div><div>Observaciones</div></div>
+  {% endif %}
+</body>
+</html>
