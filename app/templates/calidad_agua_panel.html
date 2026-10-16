@@ -221,6 +221,12 @@
                                  white-space: nowrap; padding-left: 8px; }
     .cap-table td.ct-nota { display: none; }
     .cap-table tr.ct-manda td { color: #92400e; font-weight: 700; }
+    .cap-sol { margin-top: 9px; padding: 8px 10px; background: #f0f9ff; border-radius: 6px;
+               font-size: .72rem; color: #374151; line-height: 1.45; }
+    .cap-sol .cs-h { font-weight: 700; color: #075985; margin-bottom: 4px; }
+    .cap-sol ul { margin: 0; padding-left: 16px; }
+    .cap-sol li { margin: 2px 0; }
+    .cap-sol .cs-n { color: #6b7280; }
     .cap-foot { margin-top: 8px; font-size: .69rem; color: #b6bcc4; line-height: 1.4; }
     @media (max-width: 1100px) { .cols3 { grid-template-columns: 1fr; } }
     .section-title { font-size: .76rem; text-transform: uppercase; letter-spacing: .06em; color: #6b7280; font-weight: 750; margin: 22px 0 10px; }
@@ -521,18 +527,42 @@
           </div>
           <table class="cap-table">
             {% for t in fc.techos %}
-            <tr class="{{ 'ct-manda' if t.key == fc.manda else '' }}">
-              <td>{{ t.label }}</td><td>{{ '%.0f'|format(t.feed) }} kg/d</td>
+            <tr class="{{ 'ct-manda' if t.key == fc.manda else '' }}" title="{{ t.nota }}">
+              <td>{{ t.label }}</td><td>{{ '≥ ' if t.cota else '' }}{{ '%.0f'|format(t.feed) }} kg/d</td>
               <td class="ct-nota">{{ t.nota }}</td>
             </tr>
             {% endfor %}
             {% set ac = fc.alk_cap %}
             {% if ac and ac.con_dosis %}
             <tr><td>Alcalinidad</td><td>—</td><td class="ct-nota">sostenida con dosis; el techo lo pone cuánto se dosifica</td></tr>
-            {% elif ac and ac.no_limita %}
-            <tr><td>Alcalinidad</td><td>no limita</td><td class="ct-nota">{% if ac.caida > 0 %}baja {{ '%.0f'|format(ac.caida) }} mg/L{% else %}queda sobre la fuente{% endif %} con {{ '%.0f'|format(ac.feed_actual) }} kg/d · bajo el error de titulación</td></tr>
             {% endif %}
           </table>
+          {% set sol = u.solucion %}
+          {% if sol and sol['items'] %}
+          {% macro kg(v) %}{{ ('%.1f'|format(v))|replace('.', ',') if v < 10 else '%.0f'|format(v) }}{% endmacro %}
+          <div class="cap-sol">
+            <div class="cs-h">Para llegar al techo de amonio ({{ '%.0f'|format(sol.objetivo) }} kg/d):</div>
+            <ul>
+            {% for it in sol['items'] %}
+              {% if it.key == 'alcalinidad' %}
+              <li><b>{{ kg(it.caco3_kg_dia) }} kg CaCO₃/día</b> <span class="cs-n">({{ kg(it.caliza_kg_dia) }} kg de caliza{% if it.hoy_caco3 %}; hoy {{ kg(it.hoy_caco3) }}{% endif %}{% if not it.calibrado %} · rendimiento teórico, por calibrar{% endif %}{% if it.cota %} · techo actual es un mínimo: probablemente basta con menos{% endif %})</span></li>
+              {% elif it.key == 'sal' %}
+                {% if it.sin_calculo %}
+              <li>Sal: <span class="cs-n">no se puede calcular · {{ it.razon }}</span></li>
+                {% else %}
+              <li><b>{{ kg(it.kg_dia) }} kg de sal/día</b> <span class="cs-n">(carga inicial {{ kg(it.kg_inicial or 0) }} kg · Cl⁻ {{ kg(it.cl_objetivo) }} mg/L{% if it.parcial %} · llega a {{ '%.0f'|format(it.alcanza) }} kg/d: {% if it.por_datos %}no hay mediciones de amonio más arriba{% elif it.por_tope %}tope del cloruro modelado{% endif %}{% endif %})</span></li>
+                {% endif %}
+              {% elif it.key == 'medio' %}
+                {% if it.cabe %}
+              <li><b>Agregar {{ kg(it.agregar_m3) }} m³ de biomedio</b> <span class="cs-n">(llenado {{ '%.0f'|format(it.llenado_req_pct) if it.llenado_req_pct else '—' }}% · tasa por m² de literatura)</span></li>
+                {% else %}
+              <li><b>Agregar {{ kg(it.agregar_max_m3) }} m³ de biomedio</b> <span class="cs-n">(lo que cabe, llenado 67%) · llega a {{ '%.0f'|format(it.alcanza) }} kg/d; para el techo de amonio harían falta {{ kg(it.agregar_m3) }} m³ y no caben en el reactor</span></li>
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
           {% endif %}
           {% if u.flow_nominal %}<div class="cap-foot">Calculado con caudal nominal de {{ '%.0f'|format(u.recirc_l_s) if u.recirc_l_s else '—' }} L/s — no se mide en continuo.</div>{% endif %}
         </div>

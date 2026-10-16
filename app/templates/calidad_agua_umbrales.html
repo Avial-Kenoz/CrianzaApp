@@ -63,7 +63,7 @@
       {% endif %}
     </td>
     <td>
-      {% if r.is_validation and r.parameter == 'temp_delta_tol' %}
+      {% if (r.is_validation and r.parameter == 'temp_delta_tol') or r.parameter == 'bf_surface_rate' %}
         <span class="na">—</span>
       {% else %}
         <input type="number" step="any" name="alarm_{{ r.parameter }}" value="{{ '%g'|format(r.alarm_value) if r.alarm_value is not none else '' }}" />
@@ -118,6 +118,16 @@
       </div>
       {% endfor %}
     </div>
+
+    {% if cap_rows %}
+    <div class="section-title">Capacidad del biofiltro</div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Parámetro</th><th>Valor</th><th></th><th>Estado</th></tr></thead>
+        <tbody>{{ rows(cap_rows) }}</tbody>
+      </table>
+    </div>
+    {% endif %}
 
     <div class="note">
       <strong>Rondas:</strong> el par no es alerta/alarma — “vence” significa <em>se saltó una ronda</em>.

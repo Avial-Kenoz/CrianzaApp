@@ -114,6 +114,10 @@ DEFAULT_THRESHOLDS: dict[str, dict] = {
     "o2_day_window":      {"alert": 8.5,    "alarm": 16.0,   "comparator": "gt"},
     "temp_delta_tol":     {"alert": 1.0,    "alarm": None,   "comparator": "gt"},
     "o2_consistency_tol": {"alert": None,   "alarm": 10.0,   "comparator": "gt"},
+    # Remocion maxima de TAN por m2 de medio (g/m2/d) a 13,6 C y pH 7,5. Es el
+    # techo por superficie de la alimentacion. Literatura MBBR en agua fria
+    # (0,2-0,5); en el sitio nunca se ha cargado lo suficiente para medirlo.
+    "bf_surface_rate":    {"alert": 0.30,   "alarm": None,   "comparator": "gt"},
 }
 
 # --- Especificaciones de los tests de N (reactivos comerciales) ---
@@ -1790,8 +1794,13 @@ def alkalinity_feed_ceiling(feed_kg_day, drops, alk_source_now,
     Incluye cuanto de la caliza se disuelve de verdad, que es lo otro que no
     se sabe.
 
-    Devuelve None si falta un dato; {"no_limita": True, ...} si la caida es
-    menor que el error de la titulacion.
+    Si la caida no se distingue del error de la titulacion, NO es "no limita":
+    es que con la racion de hoy el consumo no se alcanza a medir. Se calcula
+    con la caida mas alta que el ruido permite (`cota`: el techo es un minimo
+    demostrado, no una capacidad). Extrapolar una caida de ~0 daba que la
+    laguna aguantaba cualquier racion.
+
+    Devuelve None si falta un dato.
     """
     if not feed_kg_day or not drops or alk_source_now is None:
         return None
@@ -1802,28 +1811,28 @@ def alkalinity_feed_ceiling(feed_kg_day, drops, alk_source_now,
     feed = float(feed_kg_day)
     out = {"caida": caida, "caida_se": se, "feed_actual": feed, "n": n,
            "alk_fuente": float(alk_source_now)}
-    if caida < ALK_DROP_MIN:
-        return dict(out, no_limita=True, feed=None)
+    cota = caida < ALK_DROP_MIN
+    caida_calc = max(caida + se, ALK_DROP_MIN) if cota else caida
 
     # Objetivo = el umbral de alerta (50), no el piso critico (40): quien
     # alimente lo que dice el techo deja la laguna estable sin alerta; el
     # tramo 50-40 queda como colchon, no como capacidad a usar.
     margen = max(0.0, float(alk_source_now) - ALK_WARN)
-    natural = feed * margen / caida
-    natural_lo = feed * margen / (caida + se)
-    natural_hi = feed * margen / (caida - se) if caida - se > 0 else None
+    natural = feed * margen / caida_calc
+    natural_lo = natural if cota else feed * margen / (caida + se)
+    natural_hi = None if cota else (feed * margen / (caida - se) if caida - se > 0 else None)
 
     por_kg_teo = 1.0 / (ALK_PER_N * (protein_pct or 48.0) / 100.0 * FEED_N_FACTOR)
     por_kg, calibrado, dosis_no_se_ve = por_kg_teo, False, False
     if cal and cal.get("dose") and cal.get("feed") and cal.get("caida") is not None:
-        sin_dosis = cal["caida"] * feed / caida
+        sin_dosis = cal["caida"] * feed / caida_calc
         por_kg = (cal["feed"] - sin_dosis) / cal["dose"]
         calibrado = True
         if por_kg <= 0:
             por_kg, dosis_no_se_ve = 0.0, True
     dosis = float(dose_caco3_kg_day or 0.0)
     extra = dosis * por_kg
-    return dict(out, no_limita=False, margen=margen,
+    return dict(out, cota=cota, margen=margen,
                 natural=natural, natural_lo=natural_lo, natural_hi=natural_hi,
                 dosis=dosis, por_kg=por_kg, por_kg_teo=por_kg_teo,
                 calibrado=calibrado, dosis_no_se_ve=dosis_no_se_ve, extra=extra,
@@ -1833,7 +1842,8 @@ def alkalinity_feed_ceiling(feed_kg_day, drops, alk_source_now,
 
 
 def feed_capacity(eta, q_rec, q_fresh, ph, temp_c, thresholds=None,
-                  no2_fit=None, protein_pct=48.0, alk_cap=None):
+                  no2_fit=None, protein_pct=48.0, alk_cap=None,
+                  superficie=None, ph_bio=None, tan_now=None):
     """Techos de alimentacion y cual manda.
 
     Devuelve None si falta lo indispensable. Cada techo trae el supuesto del
@@ -1844,6 +1854,9 @@ def feed_capacity(eta, q_rec, q_fresh, ph, temp_c, thresholds=None,
 
     `alk_cap` es el resultado de `alkalinity_feed_ceiling` (con lo observado
     en la laguna), o None para el escenario con alcalinidad sostenida.
+
+    `superficie` (m2 de medio), `ph_bio` (pH del muestreo, el que ve el
+    biofiltro, no el de la tarde) y `tan_now` arman el techo por superficie.
     """
     if not eta or not q_rec or eta <= 0 or eta >= 1:
         return None
@@ -1886,8 +1899,12 @@ def feed_capacity(eta, q_rec, q_fresh, ph, temp_c, thresholds=None,
         a = alk_cap
         banda = ("{:.0f}–{:.0f} · ".format(a["feed_lo"], a["feed_hi"])
                  if a.get("feed_hi") is not None else "")
-        nota = "{}baja {:.0f} mg/L con {:.0f} kg/d".format(
-            banda, a["caida"], a["feed_actual"])
+        if a.get("cota"):
+            nota = ("al menos · con {:.0f} kg/d la caída ({:.0f} mg/L) no se distingue "
+                    "del error; más arriba no hay datos".format(a["feed_actual"], a["caida"]))
+        else:
+            nota = "{}baja {:.0f} mg/L con {:.0f} kg/d".format(
+                banda, a["caida"], a["feed_actual"])
         if a.get("dosis"):
             nota += " · {:.0f} natural + {:.0f} por dosis ({:.0f} kg CaCO₃/d{})".format(
                 a["natural"], a["extra"], a["dosis"],
@@ -1895,13 +1912,34 @@ def feed_capacity(eta, q_rec, q_fresh, ph, temp_c, thresholds=None,
             if a.get("dosis_no_se_ve"):
                 nota += " · la dosis no se ve en la laguna"
         techos.append({"key": "alcalinidad", "label": "Alcalinidad",
-                       "c_max": None, "feed": a["feed"], "nota": nota})
+                       "c_max": None, "feed": a["feed"], "nota": nota,
+                       "cota": bool(a.get("cota"))})
+
+    # --- por superficie: lo que el medio puede remover por m2 -------------
+    # El techo de amonio supone eta constante: que si el TAN de la laguna se
+    # cuadruplica el filtro remueve cuatro veces mas. Vale con poca carga; con
+    # mas, la biopelicula se satura y manda la tasa por m2. La purga se toma
+    # al TAN de hoy (cota baja: con mas carga se llevaria algo mas).
+    j_ref = (th.get("bf_surface_rate") or {}).get("alert")
+    if superficie and j_ref and temp_c is not None:
+        f = nitrification_rate_factor(temp_c, ph_bio)
+        j = float(j_ref) * f
+        purga = purge_nitrogen_kg_day(q_fresh, tan_now)
+        removible = j * float(superficie) / 1000.0                  # kg N/dia
+        techos.append({"key": "superficie", "label": "Superficie (medio)",
+                       "c_max": None, "feed": (removible + purga) / k_tan,
+                       "j": j, "j_ref": float(j_ref), "factor": f,
+                       "superficie": float(superficie), "purga": purga,
+                       "nota": ("{} g/m²·d a {:.0f} °C{} · literatura, sin validar"
+                                .format(_n(j, 2), float(temp_c),
+                                        " y pH {}".format(_n(ph_bio, 1)) if ph_bio else ""))})
 
     if not techos:
         return None
     techos.sort(key=lambda t: t["feed"])
     manda = techos[0]
     return {
+        "k_tan": k_tan,
         "alk_cap": alk_cap,
         "clearance": clearance,
         "cde": q_rec * eta,
@@ -2294,6 +2332,74 @@ def salt_plan(cl_target, cl_base, volume_m3, q_fresh_l_s, cl_source=None):
                 if q_fresh_l_s else None)
     return {"kg_inicial": inicial, "kg_dia": diaria, "tau_dias": tau_dias,
             "cl_target": float(cl_target), "cl_base": base}
+
+
+def ammonia_solution(feed_cap, sal_obj=None, sal=None, media_m3=None,
+                     ssa_m2_m3=None, reactor_m3=None):
+    """Que hace falta para alimentar hasta el techo de amonio.
+
+    El amonio no ionizado es el limite que no se compra: depende del pH y la
+    temperatura. Los otros tres si tienen palanca, cada uno la suya:
+      alcalinidad  -> CaCO3/dia (con el rendimiento por kg de alkalinity_feed_ceiling)
+      nitrito      -> sal/dia   (salt_target + salt_plan)
+      superficie   -> m3 de biomedio (hasta el llenado maximo del reactor)
+    Solo se lista la palanca de los techos que quedan BAJO el de amonio.
+    """
+    if not feed_cap:
+        return None
+    techos = {t["key"]: t for t in feed_cap["techos"]}
+    amonio = techos.get("amonio")
+    if not amonio:
+        return None
+    objetivo = amonio["feed"]
+    k_tan = feed_cap.get("k_tan")
+    items = []
+
+    t = techos.get("alcalinidad")
+    a = feed_cap.get("alk_cap") or {}
+    if t and t["feed"] < objetivo and a.get("por_kg"):
+        caco3 = max(0.0, (objetivo - a["natural"]) / a["por_kg"])
+        items.append({"key": "alcalinidad", "caco3_kg_dia": caco3,
+                      "caliza_kg_dia": caco3 / CALIZA_PUREZA,
+                      "hoy_caco3": a.get("dosis") or 0.0,
+                      "calibrado": a.get("calibrado"), "cota": a.get("cota")})
+
+    t = techos.get("nitrito")
+    if t and t["feed"] < objetivo:
+        if sal_obj and sal_obj.get("cloruro_objetivo") and sal and sal.get("kg_dia") is not None:
+            alcanza = sal_obj.get("feed_objetivo") or objetivo
+            items.append({"key": "sal", "kg_dia": sal["kg_dia"],
+                          "kg_inicial": sal.get("kg_inicial"),
+                          "cl_objetivo": sal_obj["cloruro_objetivo"],
+                          "alcanza": min(alcanza, objetivo),
+                          "parcial": alcanza < objetivo * 0.98,
+                          "por_datos": sal_obj.get("limitado_por_datos"),
+                          "por_tope": sal_obj.get("limitado_por_tope")})
+        else:
+            items.append({"key": "sal", "sin_calculo": True,
+                          "razon": (sal_obj or {}).get("razon")
+                                   or "falta volumen, caudal o el ajuste nitrito-amonio"})
+
+    t = techos.get("superficie")
+    if t and t["feed"] < objetivo and k_tan and ssa_m2_m3 and media_m3:
+        remover = objetivo * k_tan - t["purga"]                     # kg N/dia
+        sup_req = remover * 1000.0 / t["j"]
+        media_req = sup_req / float(ssa_m2_m3)
+        agregar = max(0.0, media_req - float(media_m3))
+        item = {"key": "medio", "agregar_m3": agregar, "media_req_m3": media_req,
+                "superficie_req": sup_req, "cabe": True}
+        if reactor_m3:
+            tope = float(reactor_m3) * MEDIA_FILL_MAX_PCT / 100.0
+            item["llenado_req_pct"] = media_req / float(reactor_m3) * 100.0
+            if media_req > tope:
+                item["cabe"] = False
+                item["agregar_max_m3"] = max(0.0, tope - float(media_m3))
+                item["alcanza"] = ((t["j"] * tope * float(ssa_m2_m3) / 1000.0 + t["purga"])
+                                   / k_tan)
+        items.append(item)
+
+    return {"objetivo": objetivo, "actual_max": feed_cap["feed_max"],
+            "manda": feed_cap["manda"], "items": items}
 
 
 def modeled_chloride(doses, volume_m3, q_fresh_l_s, cl_base, now):

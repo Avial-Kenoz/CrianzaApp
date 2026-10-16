@@ -1017,7 +1017,27 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 ph_tarde["ph"] if ph_tarde else None,
                 float(bf.in_temp_c) if (bf is not None and bf.in_temp_c) else None,
                 th_u, no2_fits.get(u.id, no2_fits[None]), 48.0,
-                alk_cap=alk_caps.get(u.id))
+                alk_cap=alk_caps.get(u.id),
+                superficie=wq.media_surface_m2(u.media_volume_m3, u.media_ssa_m2_m3),
+                ph_bio=float(bf.in_ph) if (bf is not None and bf.in_ph) else None,
+                tan_now=float(bf.in_nh4_n) if (bf is not None and bf.in_nh4_n) else None)
+
+            # Qué hace falta para llegar al techo de amonio: caliza, sal, medio.
+            # La sal se dimensiona contra el umbral BASE de nitrito (el cloruro
+            # objetivo es absoluto) y desde el cloruro modelado de hoy.
+            solucion = None
+            if feed_cap:
+                no2_spec = th_u["nitrite_n"]
+                sal_obj = wq.salt_target(feed_cap, no2_fits.get(u.id, no2_fits[None]),
+                                         no2_spec.get("base", no2_spec.get("alert")))
+                sal_u = (wq.salt_plan(sal_obj["cloruro_objetivo"], no2_spec.get("cl"),
+                                      float(u.water_volume_m3) if u.water_volume_m3 else None,
+                                      float(u.freshwater_l_s) if u.freshwater_l_s else None,
+                                      cl_source=u.chloride_base_mg_l)
+                         if (sal_obj and sal_obj.get("cloruro_objetivo")) else None)
+                solucion = wq.ammonia_solution(feed_cap, sal_obj, sal_u,
+                                               u.media_volume_m3, u.media_ssa_m2_m3,
+                                               u.reactor_volume_m3)
 
             # Diagnostico: responde a la dimension encendida, no es lista fija.
             no2_check = None
@@ -1114,6 +1134,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 "accion": accion,
                 "capacidad": capacidad,
                 "feed_cap": feed_cap,
+                "solucion": solucion,
                 "alk_origen": alk_origen,
                 "no2_umbral": th_u["nitrite_n"],
                 "cl_mod": wq.modeled_chloride(
@@ -1651,11 +1672,12 @@ THRESHOLD_META = {
     "o2_round_day":       {"label": "Turno de día (lun-sáb)", "group": "ronda"},
     "o2_round_off":       {"label": "Noche y domingo completo", "group": "ronda"},
     "o2_day_window":      {"label": "Turno de día: inicio y término", "group": "ventana"},
+    "bf_surface_rate":    {"label": "Remoción máxima por m² de medio", "group": "cap"},
 }
 # n_balance_k se edita en la página de especificaciones de test, no aquí.
 THRESHOLD_ORDER = ["o2_do_mg_l", "o2_saturation", "water_temp", "nh3_n", "nitrite_n",
                    "ph_delta_tol", "temp_delta_tol", "o2_consistency_tol",
-                   "o2_round_day", "o2_round_off", "o2_day_window"]
+                   "o2_round_day", "o2_round_off", "o2_day_window", "bf_surface_rate"]
 _COMPARATOR_TEXT = {
     "lt": "dispara si es menor que",
     "gt": "dispara si es mayor que",
@@ -1687,7 +1709,9 @@ def thresholds_form(request: Request, msg: Optional[str] = None):
                 "comparator_text": (
                     "horas entre rondas" if meta["group"] == "ronda"
                     else ("horas del día (8,5 = 08:30)" if meta["group"] == "ventana"
-                          else _COMPARATOR_TEXT.get(r.comparator, r.comparator))),
+                          else ("TAN a 13,6 °C y pH 7,5 · literatura MBBR agua fría 0,2–0,5"
+                                if meta["group"] == "cap"
+                                else _COMPARATOR_TEXT.get(r.comparator, r.comparator)))),
                 "alert_value": _num(r.alert_value),
                 "alarm_value": _num(r.alarm_value),
                 "active": bool(r.active),
@@ -1699,6 +1723,7 @@ def thresholds_form(request: Request, msg: Optional[str] = None):
                    "val_rows": grupos.get("val", []),
                    "ronda_rows": grupos.get("ronda", []),
                    "ventana_rows": grupos.get("ventana", []),
+                   "cap_rows": grupos.get("cap", []),
                    "altitude_m": wq.SITE_ALTITUDE_M}
         html = jinja_env.get_template("calidad_agua_umbrales.html").render(context)
         return HTMLResponse(content=html)
