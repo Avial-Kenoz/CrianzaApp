@@ -102,6 +102,11 @@ DEFAULT_THRESHOLDS: dict[str, dict] = {
     # El ensayo NO reporta cloruro: por eso 0,10 es un PISO y no un valor
     # anclado a un cloruro (ver nitrite_spec_for_chloride).
     "nitrite_n":          {"alert": 0.10,   "alarm": 0.50,   "comparator": "gt"},
+    # CO2 libre (mg/L), estimado de pH + alcalinidad de la entrada del
+    # biofiltro (free_co2_mg_l). 20 es el criterio clasico de salmonidos, pero
+    # la fuente de este sitio ya trae 25-48 mg/L: con 30/45 solo marca lo
+    # excepcional (oct-2026). Muy sensible al pH: 0,1 de pH mueve ~25 %.
+    "co2_mg_l":           {"alert": 30.0,   "alarm": 45.0,   "comparator": "gt"},
     # Balance de N: factor de cobertura k. Se marca desbalance si
     # |N_ent - N_sal| > k · U, con U la incertidumbre combinada (ver abajo).
     "n_balance_k":        {"alert": None,   "alarm": 1.0,    "comparator": "gt"},
@@ -380,8 +385,60 @@ def evaluate_biofilter(reading: dict, thresholds: Optional[dict] = None,
         eval_threshold(reading.get("out_no2_n"), th["nitrite_n"]),
     )
 
-    r.alarm_level = worst_level(nh3_level, nitrite_level)
+    # --- CO2 libre (alarma biológica): solo hay alcalinidad de entrada ---
+    co2 = free_co2_mg_l(reading.get("in_alkalinity"), reading.get("in_ph"),
+                        reading.get("in_temp_c"))
+    co2_level = "ok"
+    if co2 is not None:
+        r.detail["co2_mg_l"] = round(co2, 1)
+        co2_level = eval_threshold(co2, th.get("co2_mg_l") or DEFAULT_THRESHOLDS["co2_mg_l"])
+
+    r.alarm_level = worst_level(nh3_level, nitrite_level, co2_level)
     return r
+
+
+def free_co2_mg_l(alk_mg_l_caco3, ph, temp_c) -> Optional[float]:
+    """CO2 libre (mg/L) desde la alcalinidad (mg CaCO3/L), el pH y la temperatura.
+
+    CO2 = 0,8794 · Alk / 10^(pH − pK1), con pK1 de Plummer & Busenberg (1982).
+    Vale para pH < 8,3 (todo el carbonato es bicarbonato), que es el rango de
+    las lagunas. Es un estimado: con el pH a un decimal, el error es ~25 %.
+    """
+    alk, ph = _to_float(alk_mg_l_caco3), _to_float(ph)
+    if alk is None or ph is None or alk <= 0:
+        return None
+    t = _to_float(temp_c)
+    T = (t if t is not None else 15.0) + 273.15
+    pk1 = (356.3094 + 0.06091964 * T - 21834.37 / T
+           - 126.8339 * math.log10(T) + 1684915.0 / T ** 2)
+    return 0.8794 * alk / 10 ** (ph - pk1)
+
+
+CHEM_LABELS = {"nh3_n": "Amonio alto", "nitrite_n": "NO₂ alto", "co2_mg_l": "CO₂ alto"}
+
+
+def biofilter_chem_status(reading: dict, thresholds: Optional[dict] = None) -> dict:
+    """Lo único que pinta la fila del biofiltro: ¿hay un umbral químico peligroso?
+
+    Amonio no ionizado y nitrito (peor de entrada y salida) y CO2 libre de la
+    entrada. Devuelve el peor nivel y las etiquetas cortas de lo que está fuera
+    ("NO₂ alto"), del más grave al menos. La capacidad del biofiltro (k, η,
+    techos) es material de análisis: va en los gráficos y el diagnóstico.
+    """
+    th = thresholds or DEFAULT_THRESHOLDS
+    niveles = {}
+    nh3 = [unionized_ammonia_n(_to_float(reading.get(f"{p}_nh4_n")),
+                               _to_float(reading.get(f"{p}_ph")),
+                               _to_float(reading.get(f"{p}_temp_c"))) for p in ("in", "out")]
+    niveles["nh3_n"] = worst_level(*(eval_threshold(v, th["nh3_n"]) for v in nh3))
+    niveles["nitrite_n"] = worst_level(*(eval_threshold(_to_float(reading.get(f"{p}_no2_n")),
+                                                        th["nitrite_n"]) for p in ("in", "out")))
+    co2 = free_co2_mg_l(reading.get("in_alkalinity"), reading.get("in_ph"), reading.get("in_temp_c"))
+    niveles["co2_mg_l"] = eval_threshold(co2, th.get("co2_mg_l") or DEFAULT_THRESHOLDS["co2_mg_l"])
+    rank = {"alarma": 2, "alerta": 1}
+    fuera = sorted((k for k, v in niveles.items() if v in rank), key=lambda k: -rank[niveles[k]])
+    return {"state": worst_level(*niveles.values()), "levels": niveles, "co2_mg_l": co2,
+            "labels": [CHEM_LABELS[k] for k in fuera]}
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +533,10 @@ def biofilter_reasons(reading: dict, thresholds: Optional[dict] = None) -> list[
         lvl = eval_threshold(_to_float(reading.get(f"{point}_no2_n")), th["nitrite_n"])
         if lvl != "ok":
             out.append(Reason("bio", lvl, "nitrite_n", f"Nitrito {pt_label} alto"))
+    co2 = free_co2_mg_l(reading.get("in_alkalinity"), reading.get("in_ph"), reading.get("in_temp_c"))
+    lvl = eval_threshold(co2, th.get("co2_mg_l") or DEFAULT_THRESHOLDS["co2_mg_l"])
+    if lvl != "ok":
+        out.append(Reason("bio", lvl, "co2_mg_l", f"CO₂ alto ({co2:.0f} mg/L)"))
     for flag, param, text in (
         ("n_balance_flag", "n_balance", "Balance N desbalanceado"),
         ("no2_flag", "no2_outlier", "Nitrito fuera de la curva"),
@@ -1169,7 +1230,8 @@ def build_dimensions(o2_min: Optional[float], o2_pond: Optional[str],
                      eta_state: str, bf_alarm: Optional[str], photo: Optional[dict],
                      photo_hours: Optional[float], marks: list,
                      has_bf: bool = True, photo_evaluable: bool = True,
-                     stale_o2: Optional[tuple] = None) -> dict:
+                     stale_o2: Optional[tuple] = None,
+                     bf_labels: Optional[list] = None) -> dict:
     """Arma las cuatro filas de la tarjeta.
 
     Cada fila lleva valor, detalle, estado biologico y estado de frescura. Una
@@ -1197,11 +1259,12 @@ def build_dimensions(o2_min: Optional[float], o2_pond: Optional[str],
         "o2": fila("Oxígeno",
                    (f"{o2_min:.0f}%" if o2_min is not None else "—"),
                    (o2_pond or ""), o2_state, o2_hours, "o2", stale_o2),
+        # El biofiltro se pinta SOLO por umbrales químicos (amonio, nitrito,
+        # CO2): verde si todo está en rango, o "NO₂ alto". Si procesa o no el
+        # alimento (k, η, techos) se ve en los gráficos y el diagnóstico.
         "bf": (fila("Biofiltro",
-                    # eta como porcentaje: se lee mas directo que 0,51. El
-                    # numero de muestreos no le dice nada a quien mira.
-                    (f"{eta * 100:.0f}%" if eta is not None else "—"), "",
-                    _worse(eta_state, bf_alarm or "ok"), eta_hours, "bf")
+                    (" · ".join(bf_labels) if bf_labels else "OK"), "",
+                    (bf_alarm or "ok"), eta_hours, "bf")
                if has_bf else
                {"label": "Biofiltro", "value": "no aplica", "detail": "",
                 "state": "no_aplica", "age_state": None, "age_text": None,

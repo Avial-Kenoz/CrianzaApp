@@ -184,7 +184,7 @@ FEED_MIN_WINDOW_DAYS = 28       # el alimento se confirma por lotes, no a diario
                                 # ventanas cortas dan kg/día muy ruidosos
 
 
-BF_TREND_N = 10                 # muestreos del grafico de tendencia del detalle
+BF_TREND_N = 24                 # muestreos del grafico de tendencia (~2 meses: que se lea la tendencia de k)
 
 
 def _bf_trend_by_unit(db: Session, n: int = BF_TREND_N) -> dict:
@@ -203,6 +203,26 @@ def _bf_trend_by_unit(db: Session, n: int = BF_TREND_N) -> dict:
 
     def f(v):
         return float(v) if v is not None else None
+
+    units = {u.id: u for u in db.query(CultivationUnit).all()}
+    last_feed = _last_feed_by_unit(db)
+    por_unidad: dict = {}
+    for r in rows:
+        if r.reading_date is not None:
+            por_unidad.setdefault(r.cultivation_unit_id, []).append(r)
+
+    def k_movil(uid, r):
+        """k (1/h, a 13,6 °C y pH 7,5) de los BF_HEALTH_WINDOW muestreos que
+        terminan en r. Uno suelto es puro ruido del kit; la ventana es la misma
+        del indicador de salud. Sin alimento confirmado hasta esa fecha, no hay k."""
+        u = units.get(uid)
+        if (u is None or not u.is_recirculating or not u.media_volume_m3
+                or last_feed.get(uid) is None or r.reading_date > last_feed[uid]):
+            return None
+        lista = por_unidad.get(uid, [])
+        i = lista.index(r)
+        ventana = lista[i:i + BF_HEALTH_WINDOW]
+        return _window_k(db, u, ventana) if len(ventana) >= 2 else None
 
     out: dict = {}
     seen: set = set()
@@ -225,6 +245,8 @@ def _bf_trend_by_unit(db: Session, n: int = BF_TREND_N) -> dict:
             "no3": [f(r.in_no3_n), f(r.out_no3_n)],
             "tn": [f(r.tn_in), f(r.tn_out)],
             "nh3": [f(r.nh3_n_in), f(r.nh3_n_out)],
+            "co2": [wq.free_co2_mg_l(r.in_alkalinity, r.in_ph, r.in_temp_c), None],
+            "k": [k_movil(uid, r), None],
             # Derivados: solo existen en el grafico. Son los que muestran un
             # filtro que no acompana la carga (remueve lo mismo con mas entrada).
             "eta": [(1.0 - nh4_out / nh4_in) * 100.0 if ok_nh4 else None, None],
@@ -1014,6 +1036,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
             th_u = _unit_thresholds(db, u, thresholds, now,
                                     salt_doses=salt_by_unit.get(u.id, []))
             bf_level = None
+            bf_labels = []
             bf_levels = {}
             bf_conf = None
             bf_issues = []
@@ -1021,7 +1044,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 n_nodata += 1
             else:
                 bf_vals = {
-                    "in_ph": bf.in_ph, "in_temp_c": bf.in_temp_c,
+                    "in_ph": bf.in_ph, "in_temp_c": bf.in_temp_c, "in_alkalinity": bf.in_alkalinity,
                     "in_nh4_n": bf.in_nh4_n, "in_no2_n": bf.in_no2_n, "in_no3_n": bf.in_no3_n,
                     "out_ph": bf.out_ph, "out_temp_c": bf.out_temp_c,
                     "out_nh4_n": bf.out_nh4_n, "out_no2_n": bf.out_no2_n, "out_no3_n": bf.out_no3_n,
@@ -1046,6 +1069,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 for rs in bf_reasons:
                     unit_reasons.append((rs, "Biofiltro"))
                 bf_levels = wq.biofilter_field_levels(bf_vals, th_u)
+                bf_labels = wq.biofilter_chem_status(bf_vals, th_u)["labels"]
                 # Compuerta: si una alarma biologica se apoya en una lectura
                 # marcada, la accion es remuestrear, no dosificar.
                 bf_conf = wq.sampling_confidence(bf_vals, bf_reasons)
@@ -1092,7 +1116,7 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                                        photo.get(u.id), photo_hours, marks,
                                        has_bf=tiene_bf,
                                        photo_evaluable=(u.id in photo_eval),
-                                       stale_o2=stale_o2)
+                                       stale_o2=stale_o2, bf_labels=bf_labels)
             accion = wq.suggest_action(dims, bool(bf_conf and bf_conf.get("gate")),
                                        photo.get(u.id), (h or {}).get("state"))
 
@@ -1254,6 +1278,8 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                         "alarm": thresholds["nitrite_n"].get("alarm")},
                 "nh3": {"alert": thresholds["nh3_n"].get("alert"),
                         "alarm": thresholds["nh3_n"].get("alarm")},
+                "co2": {"alert": thresholds["co2_mg_l"].get("alert"),
+                        "alarm": thresholds["co2_mg_l"].get("alarm")},
                 # Con aire en el reactor el OD de salida es la verificacion:
                 # bajo 4 mg/L la nitrificacion cede.
                 "do": {"alert": None, "alarm": wq.OD_REACTOR_MIN},
@@ -1750,6 +1776,7 @@ THRESHOLD_META = {
     "o2_saturation":      {"label": "Saturación de O₂", "group": "bio"},
     "nh3_n":              {"label": "Amonio no ionizado (NH₃-N)", "group": "bio"},
     "nitrite_n":          {"label": "Nitrito (NO₂-N)", "group": "bio"},
+    "co2_mg_l":           {"label": "CO₂ libre (estimado de pH y alcalinidad)", "group": "bio"},
     "water_temp":         {"label": "Temperatura del agua (alarma por alta)", "group": "bio"},
     "ph_delta_tol":       {"label": "ΔpH entrada→salida", "group": "val"},
     "temp_delta_tol":     {"label": "Δtemperatura entrada→salida", "group": "val"},
@@ -1762,7 +1789,7 @@ THRESHOLD_META = {
     "bf_surface_rate":    {"label": "Remoción máxima por m² de medio", "group": "cap"},
 }
 # n_balance_k se edita en la página de especificaciones de test, no aquí.
-THRESHOLD_ORDER = ["o2_do_mg_l", "o2_saturation", "water_temp", "nh3_n", "nitrite_n",
+THRESHOLD_ORDER = ["o2_do_mg_l", "o2_saturation", "water_temp", "nh3_n", "nitrite_n", "co2_mg_l",
                    "ph_delta_tol", "temp_delta_tol", "o2_consistency_tol",
                    "o2_round_day", "o2_round_off", "o2_day_window", "bf_surface_rate"]
 _COMPARATOR_TEXT = {

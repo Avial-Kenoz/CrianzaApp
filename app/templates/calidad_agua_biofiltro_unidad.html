@@ -267,8 +267,8 @@
         <span>Caudal depurado equiv.</span><i>Q nominal</i></div>
       <div class="kpi"><b>{{ '%.0f'|format(capacidad.uso_del_techo * 100) if capacidad else '—' }}%</b>
         <span>Uso del techo</span><i>{{ '%.0f L/s'|format(capacidad.techo) if capacidad else '' }}</i></div>
-      <div class="kpi"><b>{{ '%.0f'|format(health.pct) if health and health.pct else '—' }}%</b>
-        <span>Salud</span><i>de {{ health.ref_kind if health else '—' }}</i></div>
+      <div class="kpi" title="k = nitrógeno que produce el alimento ÷ (volumen de medio × amonio). Últimos 8 muestreos, llevada a 13,6 °C y pH 7,5. Su tendencia está en el gráfico del panel."><b>{{ ('%.1f'|format(health.k))|replace('.', ',') if health and health.k else '—' }}<span style="font-size:.7rem"> 1/h</span></b>
+        <span>k del biofiltro</span><i>a 13,6 °C y pH 7,5</i></div>
       <div class="kpi"><b>{{ '%.2f'|format(carga_sup)|replace('.', ',') if carga_sup else '—' }}</b>
         <span>Carga superficial</span><i>g TAN/m²·d</i></div>
       <div class="kpi"><b>{{ '%.0f'|format(superficie) if superficie else '—' }}<span style="font-size:.7rem"> m²</span></b>

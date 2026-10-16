@@ -476,8 +476,8 @@
             <div class="tr-n">últimos {{ u.bf_trend|length }} muestreos</div>
           </div>
           <div class="tr-chips">
-            {% for k, lab in [('ph','pH'),('temp','Temp'),('alk','Alcalinidad'),('do','O₂'),('nh4','NH₄'),('no2','NO₂'),('no3','NO₃'),('tn','N total'),('nh3','NH₃'),('eta','η'),('rem','Removido')] %}
-            <button type="button" class="tr-chip{{ ' tr-der' if k in ('eta','rem') else '' }}" data-param="{{ k }}">{{ lab }}</button>
+            {% for k, lab in [('ph','pH'),('temp','Temp'),('alk','Alcalinidad'),('do','O₂'),('nh4','NH₄'),('no2','NO₂'),('no3','NO₃'),('tn','N total'),('nh3','NH₃'),('co2','CO₂'),('k','k'),('eta','η'),('rem','Removido')] %}
+            <button type="button" class="tr-chip{{ ' tr-der' if k in ('co2','k','eta','rem') else '' }}" data-param="{{ k }}">{{ lab }}</button>
             {% endfor %}
           </div>
           <div class="tr-read"></div>
@@ -512,9 +512,6 @@
           <div class="cap-row"><span>Caudal depurado equiv.</span><b>{{ '%.0f'|format(c.cde) }} L/s</b></div>
           <div class="cap-row"><span>Techo de depuración</span><b>{{ '%.0f'|format(c.techo) }} L/s</b><i>{{ '%.0f'|format(c.uso_del_techo * 100) }}% usado</i></div>
           {% if c.vida_media_min %}<div class="cap-row"><span>Vida media del amonio</span><b>{{ '%.0f'|format(c.vida_media_min) }} min</b><i>contacto {{ '%.0f'|format(c.tau_min) }} min</i></div>{% endif %}
-          {% endif %}
-          {% if u.health and u.health.pct %}
-          <div class="cap-row"><span>Salud del biofiltro</span><b>{{ u.health.pct|round|int }}%</b><i>de {{ u.health.ref_kind }}</i></div>
           {% endif %}
           {% if u.health and u.health.get('balance') is not none %}
           <div class="cap-row" title="Nitrito que procesan las NOB por cada unidad de amonio que oxidan las AOB, promedio de los últimos {{ u.health.n_samples }} muestreos. Bajo 0,95 el nitrito se acumula pasada a pasada."><span>Balance nitrito (NOB/AOB)</span><b class="hb-{{ u.health.balance_state }}">{{ '%.2f'|format(u.health.balance)|replace('.', ',') }}</b><i>{%
@@ -627,6 +624,8 @@
       no3:  { label: 'Nitrato (NO₃-N)', unit: 'mg/L', dec: 2 },
       tn:   { label: 'N total', unit: 'mg/L', dec: 2 },
       nh3:  { label: 'NH₃-N no ionizado', unit: 'mg/L', dec: 4 },
+      co2:  { label: 'CO₂ libre (estimado de pH y alcalinidad)', unit: 'mg/L', dec: 0, single: 'Entrada', zero: true },
+      k:    { label: 'k del biofiltro · últimos 8 muestreos, a 13,6 °C y pH 7,5', unit: '1/h', dec: 1, single: 'k', zero: true },
       eta:  { label: 'η · amonio removido en una pasada', unit: '%', dec: 0, single: 'η', zero: true },
       rem:  { label: 'Amonio removido por pasada (entrada − salida)', unit: 'mg/L', dec: 2, single: 'Removido', zero: true }
     };
