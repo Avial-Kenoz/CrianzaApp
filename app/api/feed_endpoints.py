@@ -99,6 +99,17 @@ def calculate_feed_stock(feed_type_id: int, db: Session):
     }
 
 
+def _bag_kg(feed_type_id: int, db: Session) -> Decimal:
+    """Kilos por saco de un tipo de alimento.
+
+    Lo manda la guia de ingreso: cada recepcion deja el peso de su saco en
+    feed_types.bag_kg (Thalassa/Infa vienen en 20 kg, Progress/Reproductor
+    en 25). Si el tipo nunca ha entrado por guia, queda el valor del catalogo.
+    """
+    bag_kg = db.query(FeedType.bag_kg).filter(FeedType.id == feed_type_id).scalar()
+    return Decimal(str(bag_kg)) if bag_kg else Decimal("0")
+
+
 def _sum_executed_for_program(program_id: int, db: Session) -> dict:
     """Retorna {(pond_id, feed_type_id): total_confirmed_bags} para un programa."""
     events = db.query(FeedExecutionEvent).filter(
@@ -592,13 +603,14 @@ async def ui_feed_confirm_row(
                     }, status_code=400)
 
             # Crear evento de ejecucion
+            kg = bags * _bag_kg(feed_type_id, db)
             event = FeedExecutionEvent(
                 feed_program_id=program_id,
                 feed_program_line_id=line.id if line else None,
                 pond_id=pond_id,
                 feed_type_id=feed_type_id,
                 confirmed_bags=bags,
-                confirmed_kg=Decimal("0"),
+                confirmed_kg=kg,
                 is_unplanned=is_unplanned,
                 confirmed_at=now,
                 confirmed_by="system",
@@ -612,7 +624,7 @@ async def ui_feed_confirm_row(
                 feed_type_id=feed_type_id,
                 movement_type=FeedMovementType.execute,
                 bags_delta=-bags,
-                kg_delta=Decimal("0"),
+                kg_delta=-kg,
                 source_table="feed_execution_events",
                 source_id=event.id,
                 created_at=now,
@@ -623,6 +635,8 @@ async def ui_feed_confirm_row(
             if line:
                 line.executed_bags = int(line.executed_bags or 0) + bags
                 line.remaining_bags = max(0, int(line.planned_bags or 0) - int(line.executed_bags))
+                line.executed_kg = Decimal(line.executed_kg or 0) + kg
+                line.remaining_kg = line.remaining_bags * _bag_kg(feed_type_id, db)
                 line.updated_at = now
 
             db.flush()
@@ -728,13 +742,14 @@ async def ui_feed_confirm_all(
                             "error": f"Stock insuficiente para estanque {pond_id} / tipo {feed_type_id}",
                         }, status_code=400)
 
+                kg = bags * _bag_kg(feed_type_id, db)
                 event = FeedExecutionEvent(
                     feed_program_id=program_id,
                     feed_program_line_id=line.id if line else None,
                     pond_id=pond_id,
                     feed_type_id=feed_type_id,
                     confirmed_bags=bags,
-                    confirmed_kg=Decimal("0"),
+                    confirmed_kg=kg,
                     is_unplanned=is_unplanned,
                     confirmed_at=now,
                     confirmed_by="system",
@@ -747,7 +762,7 @@ async def ui_feed_confirm_all(
                     feed_type_id=feed_type_id,
                     movement_type=FeedMovementType.execute,
                     bags_delta=-bags,
-                    kg_delta=Decimal("0"),
+                    kg_delta=-kg,
                     source_table="feed_execution_events",
                     source_id=event.id,
                     created_at=now,
@@ -757,6 +772,8 @@ async def ui_feed_confirm_all(
                 if line:
                     line.executed_bags = int(line.executed_bags or 0) + bags
                     line.remaining_bags = max(0, int(line.planned_bags or 0) - int(line.executed_bags))
+                    line.executed_kg = Decimal(line.executed_kg or 0) + kg
+                    line.remaining_kg = line.remaining_bags * _bag_kg(feed_type_id, db)
                     line.updated_at = now
 
                 updated_cells.append({"feed_type_id": feed_type_id, "bags": bags})
@@ -928,6 +945,12 @@ async def ui_feed_load_save(
             db.add(line)
             db.flush()
 
+            # El peso del saco lo manda la guia: los kg de las salidas se
+            # calculan con este valor (ver _bag_kg).
+            db.query(FeedType).filter(FeedType.id == line_data["feed_type_id"]).update(
+                {FeedType.bag_kg: line_data["bag_weight_kg"], FeedType.updated_at: now},
+                synchronize_session=False)
+
             # Crear entrada en ledger
             ledger_entry = FeedStockLedger(
                 feed_type_id=line_data["feed_type_id"],
@@ -1017,7 +1040,7 @@ async def ui_feed_adjustment_save(
             feed_type_id=feed_type_id,
             movement_type=FeedMovementType.adjustment,
             bags_delta=int(difference_bags or 0),
-            kg_delta=Decimal("0"),  # No sabemos el kg exacto sin el peso_saco específico
+            kg_delta=int(difference_bags or 0) * _bag_kg(feed_type_id, db),
             source_table="feed_inventory_adjustments",
             source_id=adjustment.id,
             created_at=now,
@@ -1271,11 +1294,11 @@ async def ui_feed_new_program_save(
                 pond_id=pond_id,
                 feed_type_id=ft_id,
                 planned_bags=bags,
-                planned_kg=Decimal("0"),
+                planned_kg=bags * _bag_kg(ft_id, db),
                 executed_bags=0,
                 executed_kg=Decimal("0"),
                 remaining_bags=bags,
-                remaining_kg=Decimal("0"),
+                remaining_kg=bags * _bag_kg(ft_id, db),
                 created_at=now,
                 updated_at=now,
             )
