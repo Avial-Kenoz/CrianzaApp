@@ -38,7 +38,8 @@ from app.models.pond_oxygen_readings import PondOxygenReading
 from app.models.ponds import Pond
 from app.models.water_quality_alerts import WaterQualityAlert, WaterQualityAlertRule
 from app.services import water_quality as wq
-from app.services.wq_queries import latest_o2_by_pond, load_thresholds, o2_hours_ago
+from app.services.wq_queries import (latest_o2_by_pond, load_thresholds, o2_hours_ago,
+                                     tracked_units, untracked_unit_ids)
 
 logger = logging.getLogger("wq_alerts")
 
@@ -433,7 +434,10 @@ def run_detection(db: Session, now: Optional[datetime] = None) -> dict:
     ponds = (db.query(Pond)
                .filter(Pond.state != "inactive", Pond.parent_pond_id.is_(None))
                .order_by(Pond.name).all())
-    units = db.query(CultivationUnit).order_by(CultivationUnit.name).all()
+    # Unidades fuera de calidad de agua (Tranque): sin alertas ni Telegram.
+    fuera = untracked_unit_ids(db)
+    ponds = [p for p in ponds if p.cultivation_unit_id not in fuera]
+    units = tracked_units(db)
     ponds_by_unit: dict = {}
     for p in ponds:
         ponds_by_unit.setdefault(p.cultivation_unit_id, []).append(p)

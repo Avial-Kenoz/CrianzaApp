@@ -21,6 +21,7 @@ MAX_CLIENT_UUID_LEN = 64
 from app.db.session import SessionLocal
 from app.models.ponds import Pond
 from app.models.cultivation_units import CultivationUnit
+from app.services.wq_queries import tracked_units, untracked_unit_ids
 from app.models.pond_oxygen_readings import PondOxygenReading
 from app.services import water_quality as wq
 from app.services import wq_alerts
@@ -56,13 +57,16 @@ def bootstrap():
     db = SessionLocal()
     try:
         ensure_pond_qr_codes(db)  # garantiza qr_code para mapear escaneos offline
-        unit_names = {u.id: u.name for u in db.query(CultivationUnit).order_by(CultivationUnit.name).all()}
+        unit_names = {u.id: u.name for u in tracked_units(db)}
         ponds = (
             db.query(Pond)
             .filter(Pond.state != "inactive", Pond.parent_pond_id.is_(None))
             .order_by(Pond.name)
             .all()
         )
+        # Unidades fuera de calidad de agua (Tranque): sus estanques no van.
+        _fuera = untracked_unit_ids(db)
+        ponds = [p for p in ponds if p.cultivation_unit_id not in _fuera]
         return {
             "server_time": datetime.now().isoformat(),
             "site": {"altitude_m": wq.SITE_ALTITUDE_M},

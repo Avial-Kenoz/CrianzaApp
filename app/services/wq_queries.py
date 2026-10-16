@@ -17,9 +17,27 @@ from typing import Optional
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
+from app.models.cultivation_units import CultivationUnit
 from app.models.pond_oxygen_readings import PondOxygenReading
 from app.models.water_quality_thresholds import WaterQualityThreshold
 from app.services import water_quality as wq
+
+
+def untracked_unit_ids(db: Session) -> set:
+    """Unidades fuera de calidad de agua (wq_tracked = false), p. ej. Tranque.
+
+    Sus estanques no van al panel, a los formularios, a la app de terreno ni
+    al motor de alertas. Los estanques sin unidad siguen como antes.
+    """
+    return {uid for (uid,) in db.query(CultivationUnit.id)
+            .filter(CultivationUnit.wq_tracked.is_(False)).all()}
+
+
+def tracked_units(db: Session) -> list:
+    """Unidades con seguimiento de calidad de agua, por nombre."""
+    return (db.query(CultivationUnit)
+            .filter(CultivationUnit.wq_tracked.is_(True))
+            .order_by(CultivationUnit.name).all())
 
 
 def load_thresholds(db: Session) -> dict:

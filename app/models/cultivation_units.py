@@ -56,3 +56,7 @@ class CultivationUnit(Base):
     # cada cuanto vence la alcalinidad. Vuelve solo a basal.
     sampling_regime = Column(String(20), nullable=False, default="basal")
     sampling_regime_since = Column(Date)
+
+    # False = fuera de calidad de agua: sin panel, rondas de O2 ni alertas
+    # (Tranque: flujo libre y casi sin biomasa). Migración 20261016_06.
+    wq_tracked = Column(Boolean, nullable=False, default=True, server_default="true")

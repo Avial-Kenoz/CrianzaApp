@@ -36,6 +36,8 @@ from app.services import water_quality as wq
 from app.services import wq_alerts
 from app.services.wq_queries import (  # noqa: F401  (reexportadas: field.py las importa de aca)
     load_thresholds,
+    tracked_units,
+    untracked_unit_ids,
     latest_o2_by_pond as _latest_o2_by_pond,
     o2_hours_ago as _o2_hours_ago,
 )
@@ -885,13 +887,16 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
     db = SessionLocal()
     try:
         now = datetime.now()
-        units = db.query(CultivationUnit).order_by(CultivationUnit.name).all()
+        units = tracked_units(db)
         ponds = (
             db.query(Pond)
             .filter(Pond.state != "inactive", Pond.parent_pond_id.is_(None))
             .order_by(Pond.name)
             .all()
         )
+        # Unidades fuera de calidad de agua (Tranque): sus estanques no van.
+        _fuera = untracked_unit_ids(db)
+        ponds = [p for p in ponds if p.cultivation_unit_id not in _fuera]
         ponds_by_unit: dict = {}
         for p in ponds:
             ponds_by_unit.setdefault(p.cultivation_unit_id, []).append(p)
@@ -1273,6 +1278,9 @@ def oxigeno_form(request: Request, pond_id: Optional[int] = None):
             .order_by(Pond.name)
             .all()
         )
+        # Unidades fuera de calidad de agua (Tranque): sus estanques no van.
+        _fuera = untracked_unit_ids(db)
+        ponds = [p for p in ponds if p.cultivation_unit_id not in _fuera]
         th = load_thresholds(db)
         context = {
             "request": request,
@@ -1447,7 +1455,7 @@ def biofiltro_form(request: Request, unit_id: Optional[int] = None,
                    selftest: Optional[int] = None, edit: Optional[int] = None):
     db = SessionLocal()
     try:
-        units = db.query(CultivationUnit).order_by(CultivationUnit.name).all()
+        units = tracked_units(db)
         th = load_thresholds(db)
         # Edicion: se precarga el muestreo y el POST lo actualiza en vez de crear.
         editing = (db.query(BiofilterReading).get(edit) if edit else None)
@@ -1885,6 +1893,9 @@ def qr_labels(request: Request):
             .order_by(Pond.name)
             .all()
         )
+        # Unidades fuera de calidad de agua (Tranque): sus estanques no van.
+        _fuera = untracked_unit_ids(db)
+        ponds = [p for p in ponds if p.cultivation_unit_id not in _fuera]
         # Agrupar por unidad para ordenar la hoja
         groups: dict = {}
         for p in ponds:

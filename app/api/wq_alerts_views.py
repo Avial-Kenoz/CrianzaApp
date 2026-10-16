@@ -45,7 +45,7 @@ from app.models.water_quality_alerts import (
 from app.services import notify_telegram as tg
 from app.services import water_quality as wq
 from app.services import wq_alerts as al
-from app.services.wq_queries import load_thresholds
+from app.services.wq_queries import load_thresholds, tracked_units
 
 router = APIRouter(prefix="/views/ui/calidad-agua/alertas", tags=["calidad-agua-alertas"])
 template_dir = Path(__file__).parent.parent / "templates"
@@ -407,7 +407,7 @@ def destinatarios_form(request: Request, msg: Optional[str] = None):
     try:
         dest = (db.query(WaterQualityAlertRecipient)
                   .order_by(WaterQualityAlertRecipient.id).all())
-        units = db.query(CultivationUnit).order_by(CultivationUnit.name).all()
+        units = tracked_units(db)
         envios = {}
         for d in dest:
             envios[d.id] = (db.query(WaterQualityAlertNotification)
