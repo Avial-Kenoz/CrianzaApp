@@ -134,7 +134,11 @@ def _build_context(db, fecha: date, today: date) -> dict:
         d["iso"] = d["fecha"].isoformat()
 
     modo = "confirmar" if fecha < today else "programar"
+    anterior = fecha - timedelta(days=1)
     return {
+        "anterior_label": _day_label(anterior, today),
+        "anterior_n": db.query(FeedRation.id).filter(FeedRation.ration_date == anterior).count(),
+        "fecha_n": len(raciones),
         "fecha": fecha, "fecha_iso": fecha.isoformat(),
         "fecha_label": _day_label(fecha, today),
         "today": today, "modo": modo,
@@ -203,7 +207,8 @@ async def racion_programar(request: Request):
         uid = _user_id(db, payload.get("user_id"))
         if uid is None:
             return JSONResponse({"ok": False, "error": "Indica quién programa"}, status_code=400)
-        split_mode = payload.get("split_mode") if payload.get("split_mode") in ("biomasa", "iguales") else None
+        split_mode = (payload.get("split_mode")
+                      if payload.get("split_mode") in ("biomasa", "iguales", "carril") else None)
 
         carriles = fr.carril_inputs(db)
         items = payload.get("items") or []
@@ -285,6 +290,108 @@ async def racion_confirmar(request: Request):
             r.note = note or None
         db.commit()
         return JSONResponse({"ok": True, "pendientes": [d.isoformat() for d in fr.pending_dates(db, today)]})
+    except Exception as e:
+        db.rollback()
+        return JSONResponse({"ok": False, "error": "Error: {}".format(e)}, status_code=500)
+    finally:
+        db.close()
+
+
+def _unit_filter(q, unit_id):
+    """Filtro por unidad; SIN_UNIDAD son los carriles sin unidad de cultivo."""
+    if unit_id == SIN_UNIDAD:
+        return q.filter(FeedRation.cultivation_unit_id.is_(None))
+    return q.filter(FeedRation.cultivation_unit_id == unit_id)
+
+
+@router.post("/ui/feed/racion/anular")
+async def racion_anular(request: Request):
+    """Anula lo programado de una unidad para un día (error de uso).
+
+    Solo borra lo que sigue "programado": lo confirmado (alimentado / no
+    alimentado) ya es un registro de lo que pasó y no se toca.
+    """
+    payload = await request.json()
+    db = SessionLocal()
+    try:
+        try:
+            fecha = date.fromisoformat(payload.get("fecha") or "")
+            unit_id = int(payload.get("unit_id"))
+        except (TypeError, ValueError):
+            return JSONResponse({"ok": False, "error": "Fecha o unidad inválida"}, status_code=400)
+        n = (_unit_filter(db.query(FeedRation), unit_id)
+             .filter(FeedRation.ration_date == fecha, FeedRation.status == "programado")
+             .delete(synchronize_session=False))
+        db.commit()
+        if not n:
+            return JSONResponse({"ok": False, "error": "No había nada programado sin confirmar"}, status_code=404)
+        return JSONResponse({"ok": True, "anuladas": n})
+    except Exception as e:
+        db.rollback()
+        return JSONResponse({"ok": False, "error": "Error: {}".format(e)}, status_code=500)
+    finally:
+        db.close()
+
+
+@router.post("/ui/feed/racion/copiar")
+async def racion_copiar(request: Request):
+    """Programa un día igual que el anterior, en todas las unidades.
+
+    Del día anterior se toma lo que se dio si ya está confirmado (kg reales;
+    no alimentado = 0) y lo programado si no. Sobrescribe lo programado del
+    día destino; lo ya confirmado no se toca. El alimento de cada carril es el
+    de hoy (el último que salió de bodega para él).
+    """
+    payload = await request.json()
+    db = SessionLocal()
+    try:
+        today = date.today()
+        try:
+            fecha = date.fromisoformat(payload.get("fecha") or "")
+        except ValueError:
+            return JSONResponse({"ok": False, "error": "Fecha inválida"}, status_code=400)
+        if not (today <= fecha <= today + timedelta(days=fr.HORIZON_DAYS)):
+            return JSONResponse({"ok": False, "error": "Solo se programa desde hoy hasta {} días adelante".format(fr.HORIZON_DAYS)}, status_code=400)
+        if fr.pending_dates(db, today):
+            return JSONResponse({"ok": False, "error": "Primero confirma los días pasados que quedaron programados"}, status_code=409)
+        uid = _user_id(db, payload.get("user_id"))
+        if uid is None:
+            return JSONResponse({"ok": False, "error": "Indica quién programa"}, status_code=400)
+        origen = (db.query(FeedRation)
+                  .filter(FeedRation.ration_date == fecha - timedelta(days=1)).all())
+        if not origen:
+            return JSONResponse({"ok": False, "error": "El día anterior no tiene nada programado"}, status_code=404)
+        carriles = fr.carril_inputs(db)
+        destino = {r.pond_id: r for r in
+                   db.query(FeedRation).filter(FeedRation.ration_date == fecha).all()}
+        now = datetime.now()
+        n = 0
+        for o in origen:
+            c = carriles.get(o.pond_id)
+            if c is None:
+                continue                       # el carril ya no tiene peces
+            r = destino.get(o.pond_id)
+            if r is not None and r.status != "programado":
+                continue                       # confirmado: no se pisa
+            if r is None:
+                r = FeedRation(ration_date=fecha, pond_id=o.pond_id)
+                db.add(r)
+            if o.status == "alimentado":
+                kg = o.kg_fed
+            elif o.status == "no_alimentado":
+                kg = Decimal("0")
+            else:
+                kg = o.kg_planned
+            r.cultivation_unit_id = c["unit_id"]
+            r.feed_type_id = c["feed_type_id"]
+            r.kg_planned = kg or Decimal("0")
+            r.split_mode = o.split_mode
+            r.status = "programado"
+            r.planned_by = uid
+            r.planned_at = now
+            n += 1
+        db.commit()
+        return JSONResponse({"ok": True, "copiadas": n})
     except Exception as e:
         db.rollback()
         return JSONResponse({"ok": False, "error": "Error: {}".format(e)}, status_code=500)

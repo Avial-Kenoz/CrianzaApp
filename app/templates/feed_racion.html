@@ -72,6 +72,13 @@
     tbody tr.off td { color: #9ca3af; }
     td.kg-out { font-weight: 700; color: #0f766e; }
     tr.off td.kg-out { color: #9ca3af; }
+    .kg-carril { width: 80px; padding: 5px 7px; border: 1px solid #d1d5db; border-radius: 7px; text-align: right; font-weight: 700; display: none; }
+    .kg-carril.falta { border-color: #dc2626; background: #fff1f2; }
+    .unit.modo-carril .kg-carril { display: inline-block; }
+    .unit.modo-carril .kg-out-txt, .unit.modo-carril input.sel { display: none; }
+    .unit.modo-carril tr.off td { color: inherit; }
+    .kg-input[readonly] { background: #f3f4f6; color: #374151; }
+    .btn-anular { color: #b91c1c; font-size: .78rem; padding: 2px 6px; margin-left: auto; }
     .av { color: #b45309; font-size: .7rem; }
     .neg { color: #b91c1c; }
     .muted { color: #9ca3af; }
@@ -114,6 +121,7 @@
     </a>
     {% endfor %}
     <div class="day-actions">
+      {% if modo == 'programar' and not bloqueado and anterior_n %}<button class="btn btn-fast" onclick="copiarAnterior(this)">Igual que {{ anterior_label }}</button>{% endif %}
       {% if modo == 'programar' %}<a class="btn btn-print" href="/views/ui/feed/racion/imprimir?fecha={{ fecha_iso }}" target="_blank">Imprimir {{ fecha_label }}</a>{% endif %}
     </div>
   </div>
@@ -134,7 +142,8 @@
         {% if rows %}
         <div class="unit expanded">
           <div class="unit-head"><span class="unit-name">{{ u.name }}</span>
-            <span class="hint">programado {{ n(rows|map(attribute='racion.kg_planned')|sum, 1) }} kg</span></div>
+            <span class="hint">programado {{ n(rows|map(attribute='racion.kg_planned')|sum, 1) }} kg</span>
+            {% if 'programado' in rows|map(attribute='racion.status')|list %}<button class="btn btn-link btn-anular" onclick="anular(this, {{ u.unit_id }}, '{{ u.name }}')">Anular lo programado</button>{% endif %}</div>
           <table>
             <thead><tr><th class="l">Alimentado</th><th class="l">Carril</th><th class="l">Alimento</th><th>Programado kg</th><th>Se dio kg</th></tr></thead>
             <tbody>
@@ -185,6 +194,7 @@
         <span class="unit-name">{{ u.name }}</span>
         {% if prog is not none %}<span class="unit-state ok">{{ 'programado ' ~ n(prog, 1) ~ ' kg' if prog > 0 else 'ayuno programado' }}</span>{% endif %}
         <span class="hint">{{ u.carriles|length }} carril{{ 'es' if u.carriles|length != 1 else '' }}</span>
+        {% if 'programado' in u.racion_status and not bloqueado %}<button class="btn btn-link btn-anular" onclick="anular(this, {{ u.unit_id }}, '{{ u.name }}')">Anular lo programado</button>{% endif %}
       </div>
       <div class="chips">
         <span class="chip">Biomasa <b>{{ n(u.biomass_kg) }}</b> kg</span>
@@ -204,6 +214,7 @@
         <select class="split" onchange="recalc(this)" {% if bloqueado %}disabled{% endif %}>
           <option value="biomasa" {% if (u.split_mode or ('biomasa' if u.has_biomass else 'iguales')) == 'biomasa' %}selected{% endif %}>% a biomasa</option>
           <option value="iguales" {% if (u.split_mode or ('biomasa' if u.has_biomass else 'iguales')) == 'iguales' %}selected{% endif %}>Todos iguales</option>
+          <option value="carril" {% if u.split_mode == 'carril' %}selected{% endif %}>Por carril</option>
         </select>
         <span class="hint over-techo"></span>
         <span class="spacer"></span>
@@ -235,7 +246,9 @@
               <td title="{{ c.teorica_avisos|join(' · ') }}">{{ n(c.teorica_kg, 1) }}{% if c.teorica_avisos %} <span class="av">*</span>{% endif %}</td>
               <td>{{ n(c.programado_kg, 1) }}</td>
               <td{% if c.terreno_kg is not none and c.terreno_kg < 0 %} class="neg"{% endif %}>{{ n(c.terreno_kg) }}</td>
-              <td class="kg-out">—</td>
+              <td class="kg-out"><span class="kg-out-txt">—</span><input class="kg-carril" type="number" min="0" step="0.1"
+                  value="{{ '%.1f'|format(c.racion.kg_planned) if (c.racion and u.split_mode == 'carril') else '' }}"
+                  oninput="this.classList.remove('falta'); recalc(this)" {% if bloqueado %}disabled{% endif %}></td>
             </tr>
           {% endfor %}
           </tbody>
@@ -252,6 +265,8 @@
 
 <script>
   const FECHA = "{{ fecha_iso }}";
+  const FECHA_LABEL = "{{ fecha_label }}";
+  const FECHA_N = {{ fecha_n or 0 }};
   const who = document.getElementById('who');
   try { const v = localStorage.getItem('racion_who'); if (v && [...who.options].some(o => o.value === v)) who.value = v; } catch (e) {}
   who.addEventListener('change', () => { try { localStorage.setItem('racion_who', who.value); } catch (e) {} });
@@ -272,6 +287,15 @@
     const total = parseFloat(unit.querySelector('.kg-input').value) || 0;
     const mode = unit.querySelector('.split').value;
     const rows = [...unit.querySelectorAll('tr.carril')];
+    if (mode === 'carril') {
+      // Por carril: lo escrito en cada uno; vacío = null (no se puede programar).
+      const out = {};
+      rows.forEach(r => {
+        const v = r.querySelector('.kg-carril').value.trim();
+        out[r.dataset.pond] = v === '' ? null : Math.round(parseFloat(v) * 10) / 10;
+      });
+      return out;
+    }
     const sel = rows.filter(r => r.querySelector('.sel').checked);
     const bio = sel.reduce((s, r) => s + Math.max(0, parseFloat(r.dataset.bio) || 0), 0);
     const out = {};
@@ -287,11 +311,21 @@
   }
   function recalc(el) {
     const unit = el.closest('.unit');
+    const porCarril = unit.querySelector('.split').value === 'carril';
+    const kgInput = unit.querySelector('.kg-input');
+    unit.classList.toggle('modo-carril', porCarril);
+    kgInput.readOnly = porCarril;
+    if (porCarril) unit.classList.add('expanded');
     const kgs = split(unit);
+    if (porCarril) {
+      // El kg/día de la unidad pasa a ser la suma de los carriles.
+      const suma = Object.values(kgs).reduce((s, v) => s + (v || 0), 0);
+      kgInput.value = suma.toFixed(1);
+    }
     unit.querySelectorAll('tr.carril').forEach(r => {
       const on = r.querySelector('.sel').checked;
-      r.classList.toggle('off', !on);
-      r.querySelector('.kg-out').textContent = on ? fmt(kgs[r.dataset.pond]) : '—';
+      r.classList.toggle('off', !porCarril && !on);
+      r.querySelector('.kg-out-txt').textContent = on ? fmt(kgs[r.dataset.pond] || 0) : '—';
     });
     const techo = parseFloat(unit.dataset.techo);
     const total = parseFloat(unit.querySelector('.kg-input').value) || 0;
@@ -312,12 +346,36 @@
     const uid = needWho(); if (!uid) return;
     const unit = btn.closest('.unit');
     const kgs = alimentar ? split(unit) : {};
+    if (alimentar && unit.querySelector('.split').value === 'carril') {
+      const vacios = [...unit.querySelectorAll('tr.carril .kg-carril')].filter(i => i.value.trim() === '');
+      if (vacios.length) {
+        vacios.forEach(i => i.classList.add('falta')); vacios[0].focus();
+        toast('Completa los kg de cada carril (0 = no alimentar)', false); return;
+      }
+    }
     const items = [...unit.querySelectorAll('tr.carril')].map(r => ({pond_id: r.dataset.pond, kg: alimentar ? kgs[r.dataset.pond] : 0}));
     if (alimentar && !items.some(i => i.kg > 0)) { toast('No hay kg que repartir: escribe el kg/día o usa "No alimentar"', false); return; }
     btn.disabled = true;
     try {
       await post('/views/ui/feed/racion/programar', {fecha: FECHA, user_id: uid, split_mode: unit.querySelector('.split').value, items});
       location.reload();
+    } catch (e) { toast(e.message, false); btn.disabled = false; }
+  }
+
+  async function anular(btn, unitId, nombre) {
+    if (!confirm('¿Anular lo programado para ' + nombre + ' el ' + FECHA_LABEL + '?')) return;
+    btn.disabled = true;
+    try { await post('/views/ui/feed/racion/anular', {fecha: FECHA, unit_id: unitId}); location.reload(); }
+    catch (e) { toast(e.message, false); btn.disabled = false; }
+  }
+  async function copiarAnterior(btn) {
+    const uid = needWho(); if (!uid) return;
+    if (FECHA_N && !confirm('Ya hay unidades programadas para ' + FECHA_LABEL + '. ¿Reemplazarlas por lo del día anterior?')) return;
+    btn.disabled = true;
+    try {
+      const j = await post('/views/ui/feed/racion/copiar', {fecha: FECHA, user_id: uid});
+      toast(j.copiadas + ' carriles programados igual que el día anterior', true);
+      setTimeout(() => location.reload(), 600);
     } catch (e) { toast(e.message, false); btn.disabled = false; }
   }
 
