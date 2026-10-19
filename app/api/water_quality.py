@@ -258,24 +258,41 @@ def _bf_trend_by_unit(db: Session, n: int = BF_TREND_N) -> dict:
     return out
 
 
-def _unit_feed(db: Session, unit_id: int, since: date, until: date) -> Optional[dict]:
-    """Alimento de una unidad en la ventana: kg/día, N amoniacal y proteína.
+def _unit_rations_by_day(db: Session, unit_id: int, since: date, until: date) -> dict:
+    """{fecha: (kg, kg_proteína)} de la ración diaria de la unidad.
 
-    Usa proteína y kilos por saco de feed_types (fichas Aller y guías). La
-    proteína es el promedio ponderado por kilos de la mezcla que se dio:
-    Reproductor (52 %) y Progress (48 %) no cargan lo mismo por kilo.
-    Devuelve None si la unidad no tiene alimento registrado o falta la config.
-
-    La ventana se ensancha hacia atrás hasta FEED_MIN_WINDOW_DAYS: los eventos de
-    alimento se confirman en tandas, así que un rango corto puede caer entre dos
-    confirmaciones y dar una ración irreal.
+    Lo que se echó al agua: kg confirmados si el día está confirmado (no
+    alimentado = 0) y lo programado si todavía no. La proteína es la del
+    alimento de cada carril.
     """
+    out: dict = {}
+    for d, kg, prot in db.execute(sa_text("""
+        SELECT r.ration_date,
+               SUM(CASE r.status WHEN 'alimentado' THEN r.kg_fed
+                                 WHEN 'no_alimentado' THEN 0 ELSE r.kg_planned END),
+               SUM(CASE r.status WHEN 'alimentado' THEN r.kg_fed
+                                 WHEN 'no_alimentado' THEN 0 ELSE r.kg_planned END
+                   * COALESCE(ft.protein_pct, :pdef) / 100.0)
+          FROM feed_rations r
+          LEFT JOIN feed_types ft ON ft.id = r.feed_type_id
+         WHERE r.cultivation_unit_id = :uid
+           AND r.ration_date BETWEEN :since AND :until
+         GROUP BY r.ration_date
+    """), {"uid": unit_id, "since": since, "until": until, "pdef": PROTEIN_DEFAULT_PCT}).all():
+        out[d] = (float(kg or 0), float(prot or 0))
+    return out
+
+
+def _unit_first_ration(db: Session, unit_id: int) -> Optional[date]:
+    """Primer día con ración diaria de la unidad (desde ahí manda la ración)."""
+    return db.execute(sa_text(
+        "SELECT MIN(ration_date) FROM feed_rations WHERE cultivation_unit_id = :uid"),
+        {"uid": unit_id}).scalar()
+
+
+def _unit_bodega_rate(db: Session, unit_id: int, since: date, until: date) -> Optional[tuple]:
+    """(kg/día, kg proteína/día) según las salidas de bodega de la ventana."""
     days = (until - since).days + 1
-    if days <= 0:
-        return None
-    if days < FEED_MIN_WINDOW_DAYS:
-        since = until - timedelta(days=FEED_MIN_WINDOW_DAYS - 1)
-        days = FEED_MIN_WINDOW_DAYS
     row = db.execute(sa_text("""
         SELECT SUM(e.confirmed_bags * ft.bag_kg) AS feed_kg,
                SUM(e.confirmed_bags * ft.bag_kg * ft.protein_pct / 100.0) AS prot_kg
@@ -286,12 +303,86 @@ def _unit_feed(db: Session, unit_id: int, since: date, until: date) -> Optional[
            AND e.confirmed_at::date BETWEEN :since AND :until
            AND ft.bag_kg IS NOT NULL AND ft.protein_pct IS NOT NULL
     """), {"uid": unit_id, "since": since, "until": until}).first()
-    if not row or row.prot_kg is None or not row.feed_kg:
+    if days <= 0 or not row or row.prot_kg is None or not row.feed_kg:
         return None
-    # prot_kg ya trae alimento x fracción proteica; solo falta el factor TAN
-    return {"kg_day": float(row.feed_kg) / days,
-            "n_kg_day": float(row.prot_kg) * wq.TAN_PER_FEED_N / days,
-            "protein_pct": float(row.prot_kg) / float(row.feed_kg) * 100.0}
+    return float(row.feed_kg) / days, float(row.prot_kg) / days
+
+
+def _unit_feed(db: Session, unit_id: int, since: date, until: date) -> Optional[dict]:
+    """Alimento de una unidad en la ventana: kg/día, N amoniacal y proteína.
+
+    Día por día manda la RACIÓN DIARIA (lo que se echó al agua; lo programado
+    si aún no se confirma). Donde no hay ración —antes de que la unidad la
+    usara (16-10-2026) o un día que nadie programó— se usa el ritmo de las
+    salidas de bodega, que es lo único que había: sale en tandas que no se
+    reparten parejo en la semana (oct-2026: 107 kg/d de bodega contra 66 kg/d
+    al agua), así que esa parte se va diluyendo a medida que hay raciones.
+
+    La proteína es el promedio ponderado por kilos de la mezcla que se dio:
+    Reproductor (52 %) y Progress (48 %) no cargan lo mismo por kilo.
+    Devuelve None si la unidad no tiene alimento registrado o falta la config.
+
+    Si la ración no cubre toda la ventana, la ventana se ensancha hacia atrás
+    hasta FEED_MIN_WINDOW_DAYS: las salidas de bodega se confirman en tandas y
+    un rango corto puede caer entre dos y dar una ración irreal.
+    """
+    days = (until - since).days + 1
+    if days <= 0:
+        return None
+    raciones = _unit_rations_by_day(db, unit_id, since, until)
+    cubierta = len(raciones) == days
+    if not cubierta and days < FEED_MIN_WINDOW_DAYS:
+        since = until - timedelta(days=FEED_MIN_WINDOW_DAYS - 1)
+        days = FEED_MIN_WINDOW_DAYS
+        raciones = _unit_rations_by_day(db, unit_id, since, until)
+    kg = sum(v[0] for v in raciones.values())
+    prot = sum(v[1] for v in raciones.values())
+    sin_racion = days - len(raciones)
+    if sin_racion:
+        # Ritmo de bodega de las 4 semanas ANTERIORES a la ración: después de
+        # ese día las salidas siguen, pero ya no describen lo que se echa.
+        r0 = _unit_first_ration(db, unit_id)
+        b_end = min(until, r0 - timedelta(days=1)) if r0 else until
+        b_len = max(FEED_MIN_WINDOW_DAYS, days)
+        tasa = _unit_bodega_rate(db, unit_id, b_end - timedelta(days=b_len - 1), b_end)
+        if tasa:
+            kg += tasa[0] * sin_racion
+            prot += tasa[1] * sin_racion
+    if kg <= 0:
+        return None
+    # prot ya trae alimento x fracción proteica; solo falta el factor TAN
+    return {"kg_day": kg / days,
+            "n_kg_day": prot * wq.TAN_PER_FEED_N / days,
+            "protein_pct": prot / kg * 100.0,
+            "fuente": ("ración" if not sin_racion else
+                       "bodega" if not raciones else "ración + bodega")}
+
+
+RATION_WINDOW_PAST = 6          # mantención: última semana de ración...
+RATION_WINDOW_AHEAD = 3         # ...más lo ya programado para los próximos días
+
+
+def _unit_ration_kg_day(db: Session, unit_id: int, today: Optional[date] = None) -> Optional[dict]:
+    """Ración diaria media de la unidad para dosificar: la última semana más lo
+    programado (hasta RATION_WINDOW_AHEAD días), con los días sin alimentar en
+    0 (el domingo no se alimenta y la dosis es diaria). Solo cuenta desde el
+    primer día de ración. None si la unidad no usa la ración diaria.
+    """
+    today = today or date.today()
+    r0 = _unit_first_ration(db, unit_id)
+    if r0 is None:
+        return None
+    desde = max(today - timedelta(days=RATION_WINDOW_PAST), r0)
+    raciones = _unit_rations_by_day(db, unit_id, desde, today + timedelta(days=RATION_WINDOW_AHEAD))
+    dias = [desde + timedelta(days=i) for i in range((today - desde).days + 1)]
+    dias += [d for d in sorted(raciones) if d > today]      # futuro: solo lo programado
+    if not dias:
+        return None
+    kg = sum(raciones.get(d, (0.0, 0.0))[0] for d in dias)
+    prot = sum(raciones.get(d, (0.0, 0.0))[1] for d in dias)
+    return {"kg_day": kg / len(dias), "n_days": len(dias),
+            "protein_pct": (prot / kg * 100.0) if kg else PROTEIN_DEFAULT_PCT,
+            "desde": dias[0], "hasta": dias[-1]}
 
 
 def _unit_feed_n_kg_day(db: Session, unit_id: int, since: date, until: date) -> Optional[float]:
@@ -341,14 +432,28 @@ def _window_k(db: Session, unit, rows) -> Optional[float]:
 
 
 def _last_feed_by_unit(db: Session) -> dict:
-    """{unit_id: fecha de la última confirmación de alimento}."""
-    return {uid: d for uid, d in db.execute(sa_text("""
+    """{unit_id: último día con alimento registrado}.
+
+    El más reciente entre la última salida de bodega y el último día de ración
+    diaria hasta hoy (confirmada o programada): con la ración, el alimento se
+    conoce día a día y la k ya no se corta en la última tanda de bodega.
+    """
+    out = {uid: d for uid, d in db.execute(sa_text("""
         SELECT p.cultivation_unit_id, MAX(e.confirmed_at)::date
           FROM feed_execution_events e
           JOIN ponds p ON p.id = e.pond_id
          WHERE e.confirmed_at IS NOT NULL
          GROUP BY p.cultivation_unit_id
     """)).all()}
+    for uid, d in db.execute(sa_text("""
+        SELECT cultivation_unit_id, MAX(ration_date)
+          FROM feed_rations
+         WHERE ration_date <= CURRENT_DATE AND cultivation_unit_id IS NOT NULL
+         GROUP BY cultivation_unit_id
+    """)).all():
+        if d and (out.get(uid) is None or d > out[uid]):
+            out[uid] = d
+    return out
 
 
 ALK_CAP_SAMPLES = 6             # pares laguna/fuente promediados (~2 semanas)
@@ -1243,6 +1348,9 @@ def panel(request: Request, msg: Optional[str] = None, open: Optional[int] = Non
                 "accion": accion,
                 "capacidad": capacidad,
                 "feed_cap": feed_cap,
+                # Lo que se echa hoy al agua (ración diaria), contra el techo.
+                "racion_hoy": (_unit_rations_by_day(db, u.id, now.date(), now.date())
+                               .get(now.date(), (None,))[0]),
                 "solucion": solucion,
                 "alk_origen": alk_origen,
                 "no2_umbral": th_u["nitrite_n"],
@@ -2096,11 +2204,16 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
             equilibrio["alk_equilibrio"] if equilibrio else None)
 
         # --- mantención de alcalinidad -------------------------------------
-        # Dosis = consumo del alimento, con la ración planificada si está
-        # cargada. La laguna tiende a la fuente y no depende del caudal.
-        feed_plan = float(u.feed_plan_kg_day) if u.feed_plan_kg_day else None
-        mant_alim = wq.maintenance_by_feed(feed_plan or feed_kg, protein)
-        mant_fuente = "plan" if feed_plan else ("ejecutado" if feed_kg else None)
+        # Dosis = consumo del alimento. Manda la ración diaria (última semana
+        # + lo programado, días sin alimentar en 0); sin ración, lo de bodega.
+        # La laguna tiende a la fuente y no depende del caudal.
+        racion = _unit_ration_kg_day(db, unit_id)
+        if racion and racion["kg_day"] > 0:
+            mant_alim = wq.maintenance_by_feed(racion["kg_day"], racion["protein_pct"])
+            mant_fuente = "racion"
+        else:
+            mant_alim = wq.maintenance_by_feed(feed_kg, protein)
+            mant_fuente = "ejecutado" if feed_kg else None
         alk_alarma = alk_medida is not None and alk_medida < wq.ALK_ALARMA
 
         # --- sal ------------------------------------------------------------
@@ -2172,7 +2285,8 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
             "caliza_pureza": wq.CALIZA_PUREZA,
             "users": users, "operadores": operadores,
             "hoy_por_producto": hoy_por_producto,
-            "mant_alim": mant_alim, "mant_fuente": mant_fuente,
+            "mant_alim": mant_alim, "mant_fuente": mant_fuente, "racion": racion,
+            "feed_fuente": (feed_u or {}).get("fuente"),
             "alk_alarma": alk_alarma, "alk_alarma_mg_l": wq.ALK_ALARMA,
             "bf_fecha": bf.reading_date if bf is not None else None,
             "now_input": now.strftime("%Y-%m-%dT%H:%M"),

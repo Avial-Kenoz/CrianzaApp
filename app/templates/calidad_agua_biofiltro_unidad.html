@@ -116,8 +116,8 @@
         <b>{{ '%.0f'|format(mant_alim.kg_caliza_dia) }} kg</b> carbonato de calcio
         <span class="est">o {{ '%.0f'|format(mant_alim.kg_nahco3_dia) }} kg bicarbonato ·
           por {{ '%.0f'|format(mant_alim.feed_kg_dia) }} kg/día de alimento
-          {{ '(plan)' if mant_fuente == 'plan' else '(ejecutado, últimos 28 días)' }}</span>
-      {% else %}<span class="est">sin ración: cárgala en Configuración</span>{% endif %}
+          {% if mant_fuente == 'racion' %}(ración diaria {{ racion.desde.strftime('%d-%m') }} a {{ racion.hasta.strftime('%d-%m') }}, días sin alimentar en 0){% else %}(salidas de bodega, últimos 28 días){% endif %}</span>
+      {% else %}<span class="est">sin alimento registrado: prográmalo en Alimentación → Ración diaria</span>{% endif %}
     </div>
     {% if no2_fit is defined %}
     <div><span class="est">Sal sugerida por día</span>
@@ -257,9 +257,6 @@
   <form method="post" action="/views/ui/calidad-agua/biofiltro/unidad/{{ u.id }}/config">
     <div class="card">
       <div class="fields">
-        <div><label>Ración planificada (kg/día)</label>
-          <input type="number" step="any" min="0" name="feed_plan_kg_day" value="{{ '%g'|format(u.feed_plan_kg_day) if u.feed_plan_kg_day else '' }}" placeholder="{{ '%.0f'|format(feed_kg) if feed_kg else '' }}" />
-          <div class="est" style="margin-top:4px">fija la mantención; vacío = lo ejecutado</div></div>
         <div><label>Tipo de medio</label>
           <input type="text" name="media_type" value="{{ u.media_type or '' }}" placeholder="K1, K3, Bioflow…" /></div>
         <div><label>Volumen de biomedio (m³)</label>
@@ -369,7 +366,7 @@
       {% else %}
       <table>
         <tbody>
-          <tr><td>Alimento {{ '(plan)' if mant_fuente == 'plan' else '(ejecutado)' }}</td><td class="num">{{ '%.0f'|format(mant_alim.feed_kg_dia) }} kg/día</td></tr>
+          <tr><td>Alimento {{ '(ración diaria)' if mant_fuente == 'racion' else '(salidas de bodega)' }}</td><td class="num">{{ '%.0f'|format(mant_alim.feed_kg_dia) }} kg/día</td></tr>
           <tr><td>Consume la nitrificación</td><td class="num">{{ '%.1f'|format(mant_alim.kg_caco3_dia)|replace('.', ',') }} kg CaCO₃</td></tr>
           <tr><td><strong>Carbonato de calcio {{ '%.0f'|format(caliza_pureza * 100) }}% por día</strong></td>
             <td class="num"><strong>{{ '%.0f'|format(mant_alim.kg_caliza_dia) }} kg</strong></td></tr>

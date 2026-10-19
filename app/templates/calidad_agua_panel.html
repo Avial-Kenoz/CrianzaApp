@@ -521,6 +521,9 @@
           <div class="cap-max">
             <div class="cm-v">{{ '%.0f'|format(fc.feed_max) }} <span>kg/día</span></div>
             <div class="cm-l">alimentación máxima · limita <b>{{ fc.manda }}</b></div>
+            {% if u.racion_hoy is not none %}
+            <div class="cm-l"{% if u.racion_hoy > fc.feed_max %} style="color:#b45309;font-weight:700"{% endif %}>ración de hoy {{ '%.0f'|format(u.racion_hoy) }} kg{% if u.racion_hoy > fc.feed_max %} · sobre el techo{% endif %}</div>
+            {% endif %}
           </div>
           <table class="cap-table">
             {% for t in fc.techos %}
