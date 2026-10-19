@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <title>Terreno – Crianza</title>
+  <!-- Terreno: una sola PWA con un módulo por pestaña (Dosificación hoy;
+       O₂ y Ensilaje se suman uno a uno). Una cola y una sincronización para
+       todos. OJO al desplegar: subir APP_VERSION (core.js), CACHE (sw.js) y
+       el ?v= de los <script> de abajo, los tres juntos. -->
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    :root { --bg:#0f172a; --panel:#1e293b; --panel2:#334155; --line:#334155; --txt:#e2e8f0; --mut:#94a3b8;
+            --blue:#3b82f6; --green:#22c55e; --amber:#f59e0b; --red:#ef4444; }
+    html, body { height: 100%; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: var(--bg); color: var(--txt); overscroll-behavior: none;
+           padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    .app { max-width: 900px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; }
+    .hidden { display: none !important; }
+
+    /* Encabezado común */
+    .top { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+    .top-row { padding: 12px 16px 8px; display: flex; align-items: center; gap: 10px; }
+    .top h1 { font-size: 1.05rem; font-weight: 750; flex: 1; }
+    .ver { font-size: .66rem; color: var(--mut); font-weight: 500; margin-left: 6px; }
+    .net { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--mut); }
+    .net .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+    .net.off .dot { background: var(--mut); }
+    .subbar { display: flex; gap: 8px; padding: 0 16px 10px; font-size: .76rem; color: var(--mut);
+              align-items: center; flex-wrap: wrap; }
+    .badge { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px;
+             color: var(--mut); font-size: .76rem; font-family: inherit; }
+    .badge b { color: var(--txt); }
+    button.badge { cursor: pointer; }
+    .badge.warn { border-color: var(--amber); color: var(--amber); }
+    .badge.err { border-color: var(--red); color: #fca5a5; }
+    .tabs { display: flex; gap: 4px; padding: 0 10px; }
+    .tabs button { flex: 1; background: none; border: none; border-bottom: 3px solid transparent; color: var(--mut);
+                   font-size: .92rem; font-weight: 700; padding: 10px 6px; cursor: pointer; font-family: inherit; }
+    .tabs button.on { color: var(--txt); border-bottom-color: var(--blue); }
+    .warn-banner { background: rgba(245,158,11,.16); border-bottom: 1px solid var(--amber);
+                   color: #fbbf24; font-size: .82rem; font-weight: 650; padding: 10px 16px; text-align: center; }
+
+    section.mod { padding: 16px; flex: 1; }
+    .mod-error { background: rgba(239,68,68,.12); border: 1px solid var(--red); color: #fecaca;
+                 border-radius: 14px; padding: 16px; font-size: .9rem; line-height: 1.45; }
+
+    /* Piezas comunes */
+    .btn { border: none; border-radius: 14px; padding: 16px; font-size: 1rem; font-weight: 750; font-family: inherit;
+           cursor: pointer; color: #fff; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+    .btn:active { transform: scale(.98); }
+    .btn-primary { background: var(--blue); }
+    .btn-ghost { background: transparent; color: var(--mut); border: 1px solid var(--line); }
+    .btn-block { width: 100%; }
+    .row { display: flex; gap: 10px; }
+    .row .btn { flex: 1; }
+    .mt { margin-top: 12px; }
+    .empty { color: var(--mut); text-align: center; padding: 36px 20px; line-height: 1.5; }
+    .list-title { font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; color: var(--mut);
+                  font-weight: 700; margin: 18px 4px 8px; }
+    .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .74rem; font-weight: 800; }
+    .p-new { background: rgba(59,130,246,.2); color: #93c5fd; }
+    .p-ok { background: rgba(34,197,94,.15); color: var(--green); }
+    .p-warn { background: rgba(245,158,11,.15); color: var(--amber); }
+
+    /* Dosificación: una fila por (unidad, producto); las 5 unidades en una pantalla */
+    .dz-head, .dz-row { display: grid; align-items: center; gap: 8px;
+      grid-template-columns: minmax(84px, 1.1fr) minmax(70px, 1fr) 62px minmax(78px, .9fr) 76px 36px 104px; }
+    .dz-head { font-size: .66rem; text-transform: uppercase; letter-spacing: .05em; color: var(--mut);
+               font-weight: 700; padding: 0 8px 6px; border-bottom: 1px solid var(--line); }
+    .dz-row { padding: 6px 8px; min-height: 52px; border-bottom: 1px solid #263244; }
+    .dz-row.first { border-top: 1px solid var(--line); }
+    .dz-row.is-new { box-shadow: inset 4px 0 0 var(--blue); }
+    .dz-unit { font-weight: 750; font-size: .9rem; }
+    .dz-prod { font-size: .9rem; }
+    .dz-prod .nt { display: block; font-size: .72rem; color: #cbd5e1; margin-top: 1px; }
+    .dz-prod .nw { color: #93c5fd; font-size: .68rem; font-weight: 800; margin-left: 4px; }
+    .dz-ins { font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; }
+    .dz-today { font-variant-numeric: tabular-nums; font-size: .86rem; }
+    .dz-today .bar { height: 6px; background: var(--panel2); border-radius: 999px; overflow: hidden; margin-top: 3px; }
+    .dz-today .bar > i { display: block; height: 100%; background: var(--green); }
+    .dz-today.over .bar > i { background: var(--amber); }
+    .dz-today .ok { color: var(--green); font-weight: 800; }
+    .dz-today .ov { color: var(--amber); font-weight: 750; font-size: .74rem; }
+    .dz-in { width: 100%; background: var(--panel); border: 2px solid var(--line); border-radius: 10px; color: var(--txt);
+             font-size: 1.05rem; font-weight: 750; text-align: center; padding: 8px 4px; outline: none;
+             font-variant-numeric: tabular-nums; font-family: inherit; }
+    .dz-in:focus { border-color: var(--blue); }
+    .dz-nb { background: none; border: 1px solid var(--line); border-radius: 10px; color: var(--mut);
+             height: 40px; cursor: pointer; font-size: 1rem; }
+    .dz-nb.on { border-color: var(--blue); color: #93c5fd; }
+    .dz-ok { border: none; border-radius: 10px; background: var(--blue); color: #fff; font-weight: 750;
+             font-size: .9rem; height: 40px; cursor: pointer; font-family: inherit; }
+    .dz-ok:active { transform: scale(.97); }
+    .dz-note { grid-column: 2 / -1; }
+    .dz-note input { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+                     color: var(--txt); padding: 8px 10px; font-size: .9rem; outline: none; font-family: inherit; }
+    .stale { font-size: .8rem; color: var(--mut); text-align: center; margin: 14px 0 4px; }
+    .stale.old { color: var(--amber); }
+    /* Teléfono: cada producto en tres líneas (nombre · avance · entrada) */
+    @media (max-width: 560px) {
+      .dz-head { display: none; }
+      .dz-row { grid-template-columns: 1fr 44px 112px; row-gap: 6px; padding: 10px 4px;
+                grid-template-areas: "u u i" "p p i" "t t t" "in nb ok" "nt nt nt"; }
+      .dz-unit { grid-area: u; } .dz-unit:empty { display: none; }
+      .dz-prod { grid-area: p; } .dz-ins { grid-area: i; align-self: start; }
+      .dz-today { grid-area: t; } .dz-in { grid-area: in; } .dz-nb { grid-area: nb; }
+      .dz-ok { grid-area: ok; } .dz-note { grid-area: nt; }
+      .dz-row { border-bottom: none; } .dz-row.first { border-top: 1px solid var(--line); }
+    }
+
+    /* Deshacer: el registro recién entra a la cola cuando vence */
+    .undo { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 85;
+            background: #0b1220; border: 1px solid var(--green); border-radius: 12px; padding: 8px 8px 8px 16px;
+            display: none; align-items: center; gap: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.5); max-width: 94%; }
+    .undo.show { display: flex; }
+    .undo span { font-size: .9rem; }
+    .undo button { background: var(--panel2); border: none; color: #fff; font-weight: 750; border-radius: 9px;
+                   padding: 10px 14px; cursor: pointer; font-family: inherit; }
+    @media (max-width: 560px) {
+      .undo { left: 16px; right: 16px; transform: none; max-width: none; }
+      .undo span { font-size: .84rem; }
+    }
+
+    /* Modal genérico */
+    .modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.62); display: none;
+                  align-items: center; justify-content: center; padding: 18px; z-index: 80; }
+    .modal-back.show { display: flex; }
+    .modal { background: var(--panel); border: 1px solid var(--line); border-top: 5px solid var(--blue);
+             border-radius: 18px; width: 100%; max-width: 460px; padding: 20px; max-height: 90vh; overflow: auto; }
+    .modal.warn { border-top-color: var(--amber); }
+    .modal h3 { font-size: 1.12rem; margin-bottom: 8px; }
+    .modal p { color: var(--mut); font-size: .92rem; line-height: 1.45; }
+    .modal .m-stack { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+
+    .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: #0b1220;
+             border: 1px solid var(--line); color: var(--txt); padding: 12px 18px; border-radius: 12px;
+             font-size: .9rem; box-shadow: 0 8px 30px rgba(0,0,0,.5); opacity: 0; transition: opacity .2s;
+             z-index: 90; max-width: 90%; pointer-events: none; }
+    .toast.show { opacity: 1; }
+    .toast.ok { border-color: var(--green); } .toast.err { border-color: var(--red); }
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="top-row">
+      <h1>Terreno<span class="ver" id="app-ver"></span></h1>
+      <span class="net" id="net"><span class="dot"></span><span id="net-txt">en línea</span></span>
+    </div>
+    <div class="subbar">
+      <button class="badge" id="sync-badge">Sin subir: <b id="pending-n">0</b></button>
+    </div>
+    <nav class="tabs" id="tabs"></nav>
+  </div>
+  <div class="warn-banner hidden" id="nopersist">⚠ Este equipo no guarda datos localmente. Sincroniza antes de cerrar la app.</div>
+  <main id="modules"></main>
+</div>
+
+<!-- Confirmación genérica -->
+<div class="modal-back" id="modal-confirm">
+  <div class="modal warn">
+    <h3 id="cf-title">¿Seguro?</h3>
+    <p id="cf-text"></p>
+    <div class="m-stack">
+      <button class="btn btn-primary" id="cf-yes">Sí, registrar</button>
+      <button class="btn btn-ghost" id="cf-no">Volver</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="undo" id="undo"><span id="undo-txt"></span><button id="undo-btn">Deshacer</button></div>
+
+<script src="core.js?v=5"></script>
+<script src="mod_dosificacion.js?v=5"></script>
+<script>Terreno.start();</script>
+</body>
+</html>

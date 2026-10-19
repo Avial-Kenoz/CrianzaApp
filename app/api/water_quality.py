@@ -31,6 +31,7 @@ from app.models.water_quality_test_specs import WaterQualityTestSpec
 from app.models.water_treatment_doses import WaterTreatmentDose
 from app.models.solar_daily import SolarDaily
 from app.services import water_quality as wq
+from app.services import dosing as ds
 # Las consultas que comparte con el motor de alertas viven una capa abajo:
 # un servicio no puede importar este router sin cerrar el ciclo.
 from app.services import wq_alerts
@@ -2133,8 +2134,24 @@ def biofiltro_unidad(request: Request, unit_id: int, msg: Optional[str] = None):
                 hoy_por_producto[d.product] = (hoy_por_producto.get(d.product, 0.0)
                                                + float(d.kg or 0))
 
+        # --- tablet de dosificación ---------------------------------------
+        # Por producto: la sugerencia (que NO viaja a la tablet), la
+        # instrucción vigente y lo aplicado hoy contra ella.
+        sugerido = {
+            "carbonato de calcio": mant_alim["kg_caliza_dia"] if mant_alim else None,
+            "bicarbonato": mant_alim["kg_nahco3_dia"] if mant_alim else None,
+            "sal": (sal or {}).get("kg_dia") if sal_obj else None,
+        }
+        vigentes = {i.product: i for i in ds.active_instructions(db, unit_id)}
+        tablet = [{"product": p, "label": label,
+                   "sugerido": sugerido.get(p),
+                   "vigente": vigentes.get(p),
+                   "hoy": hoy_por_producto.get(p, 0.0)}
+                  for p, label in ds.PRODUCTS]
+
         context = {
             "request": request, "msg": msg, "u": u, "now": now,
+            "tablet": tablet,
             "eta": eta, "eta_n": (etas or {}).get("n"),
             "health": health, "capacidad": capacidad,
             "superficie": superficie, "carga_sup": carga_sup,
@@ -2200,6 +2217,42 @@ def biofiltro_unidad_config(
         u.chloride_is_measured = bool(chloride_is_measured)
         db.commit()
         msg = "Configuración del biofiltro guardada."
+        return RedirectResponse(
+            url=f"/views/ui/calidad-agua/biofiltro/unidad/{unit_id}?msg={quote_plus(msg)}",
+            status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/biofiltro/unidad/{unit_id}/instruccion")
+def biofiltro_unidad_instruccion(
+    unit_id: int,
+    product: str = Form(...),
+    action: str = Form("enviar"),
+    kg_day: Optional[str] = Form(None),
+    suggested_kg_day: Optional[str] = Form(None),
+    note: Optional[str] = Form(None),
+):
+    """«Enviar a tablet»: deja vigente la cantidad que decidió el supervisor
+    (reemplaza la anterior). «Quitar»: el producto desaparece de la tablet."""
+    db = SessionLocal()
+    try:
+        label = ds.PRODUCT_LABELS.get(product, product)
+        if action == "quitar":
+            n = ds.end(db, unit_id, product)
+            db.commit()
+            msg = f"{label}: quitado de la tablet." if n else f"{label}: no estaba en la tablet."
+        else:
+            kg = _parse_decimal(kg_day)
+            if kg is None or kg < 0:
+                msg = f"{label}: indica los kg por día a enviar."
+            else:
+                ds.issue(db, unit_id, product, float(kg),
+                         suggested_kg_day=_parse_decimal(suggested_kg_day),
+                         note=(note or "").strip()[:255] or None)
+                db.commit()
+                msg = (f"{label}: {float(kg):g} kg/día enviados a la tablet. "
+                       "Llegan cuando la app de dosificación se abra con red.")
         return RedirectResponse(
             url=f"/views/ui/calidad-agua/biofiltro/unidad/{unit_id}?msg={quote_plus(msg)}",
             status_code=303)

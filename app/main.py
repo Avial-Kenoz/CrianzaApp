@@ -24,6 +24,7 @@ from app.api.field import router as field_router
 from app.api.sexado import router as sexado_router, admin_router as sexado_admin_router
 from app.api.silage import router as silage_router
 from app.api.silage_views import router as silage_views_router
+from app.api.dosing import router as dosing_router
 from app.maintenance.router import router as maintenance_router
 from app.api.personas_views import router as personas_router
 from app.maintenance import telegram_bot as maintenance_bot
@@ -124,6 +125,9 @@ app.mount("/captura", NoCacheStatic(directory=str(Path(__file__).parent / "field
 app.mount("/sexado_offline", NoCacheStatic(directory=str(Path(__file__).parent / "sexado_client"), html=True), name="sexado_offline")
 # PWA de molienda y ensilaje (registro PC 03.2 en la zona de molienda, sin señal)
 app.mount("/ensilaje", NoCacheStatic(directory=str(Path(__file__).parent / "silage_client"), html=True), name="ensilaje")
+# PWA unificada de terreno: un módulo por pestaña (Dosificación; luego O2 y
+# Ensilaje), una sola cola y una sola sincronización. Sexado queda aparte.
+app.mount("/terreno", NoCacheStatic(directory=str(Path(__file__).parent / "terreno_client"), html=True), name="terreno")
 
 
 app.include_router(fish_router)
@@ -148,6 +152,7 @@ app.include_router(sexado_router)
 app.include_router(sexado_admin_router)
 app.include_router(silage_router)
 app.include_router(silage_views_router)
+app.include_router(dosing_router)
 app.include_router(maintenance_router)
 app.include_router(personas_router)
 

@@ -70,6 +70,8 @@ from .silage_grinding_events import SilageGrindingEvent
 from .silage_weekly_inspections import SilageWeeklyInspection
 from .silage_acid import SilageAcidLot, SilageAcidMovement
 from .silage_thresholds import SilageThreshold
+# Dosificación de biofiltros (PWA /dosificacion)
+from .dosing_instructions import DosingInstruction
 # Mantenimiento de maquinaria: el módulo vive en su propio paquete
 # (app/maintenance); se registra aquí para que Alembic vea sus tablas.
 from app.maintenance.models import (

@@ -36,4 +36,9 @@ class WaterTreatmentDose(Base):
     ph_after_2h = Column(Numeric(4, 2))
 
     observation = Column(String(255))
+
+    # Cargas registradas desde la PWA /dosificacion: idempotencia del lote y
+    # la instrucción que se estaba cumpliendo (instruido vs aplicado).
+    client_uuid = Column(String(64), unique=True)
+    instruction_id = Column(BigInteger, ForeignKey("dosing_instructions.id"))
     created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))

@@ -93,7 +93,7 @@ salida oficial. Tras una carga masiva o un `alembic upgrade`, poblar con
 Al tocar un reporte, cambiar el payload —no el handler— o el dashboard queda viendo otra
 cosa. El JSON devuelve solo el bloque del reporte pedido.
 
-## PWAs offline (mismo patrón, tres veces)
+## PWAs offline (mismo patrón, tres veces + Terreno)
 
 `app/field_client/` → `/captura` (O2) · `app/sexado_client/` → `/sexado_offline` ·
 `app/silage_client/` → `/ensilaje` (molienda). Todas: montadas en `main.py` con
@@ -121,6 +121,33 @@ reinstalar la app). Tres defensas, y las tres tienen que moverse juntas:
 Con `sw.js` cache-first (el patrón viejo, que aún usan `/captura` y `/ensilaje`) un deploy
 tarda **dos recargas** en llegar: la primera instala el SW nuevo, la segunda recién sirve
 el `app.js` nuevo.
+
+### Terreno: PWA unificada (en curso, oct-2026)
+
+`app/terreno_client/` → `/terreno`. **Una** app con un módulo por pestaña para el
+operador que hoy abre tres: **Dosificación** (hecha), luego **O₂** y **Ensilaje**,
+uno a uno; Sexado queda aparte (otra tablet). `core.js` es lo común (IndexedDB
+`terreno`, **una cola** `{client_uuid, module, payload}`,
+pestañas, sync al abrir/guardar/volver la red/cada 60 s visible); cada
+`mod_<x>.js` se registra con `Terreno.register({id,label,init,refresh,flush,onShow})`
+y corre en try/catch: si revienta, solo su pestaña muestra el error.
+- Al sumar un módulo: su `.js` en `ASSETS` de `sw.js` + `<script>` en index.html.
+- Ensilaje, al migrar: la ventana de seguridad va en `onShow` (al **entrar a la
+  pestaña**, acordado con el usuario 19-10) y su HTML/JS sigue en `index.html`.
+- Migrar un módulo = rescatar la cola de la app vieja (mismo origen: abrir la
+  IndexedDB `captura`/`ensilaje` y subirla) y luego redirigir la ruta vieja.
+- Probado con Chrome headless por CDP contra una API simulada (no hay node).
+
+**Dosificación** (`/api/dosing/v1`, `app/services/dosing.py`): el supervisor manda
+la cantidad desde la vista de la unidad («Enviar a tablet») → `dosing_instructions`,
+vigente hasta reemplazarla (índice único parcial). **La tablet muestra lo
+instruido, nunca la sugerencia** (`suggested_kg_day` queda solo para auditoría y
+no viaja). El bootstrap marca `received_at` = «✓ recibida» en el escritorio. Las
+aplicaciones van a `water_treatment_doses` (+`client_uuid`, `instruction_id`);
+pasarse de lo instruido pide confirmación, no bloquea.
+**No se elige operador**: quien registra en la tablet es «Turno» (persona que
+cambia todo el tiempo; decisión del usuario 19-10). Llega `operator_id` NULL y el
+escritorio muestra «Turno» por `client_uuid`. No reintroducir un selector.
 
 ## Sexado offline: conflictos y ciclo de sesión
 

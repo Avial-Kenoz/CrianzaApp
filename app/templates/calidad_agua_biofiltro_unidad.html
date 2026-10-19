@@ -82,6 +82,17 @@
              border-radius: 14px; padding: 13px 18px; font-size: .92rem; }
     .today .est { display: block; font-size: .7rem; margin-bottom: 2px; }
     tr.hoy td { background: #f5f8ff; }
+    .disp { display: grid; grid-template-columns: 210px 140px auto 1fr; gap: 12px; align-items: center;
+            padding: 9px 0; border-bottom: 1px dashed #eef0f3; font-size: .86rem; }
+    .disp:last-child { border-bottom: none; }
+    .disp-prod .est { display: block; }
+    .disp-in { display: flex; align-items: center; gap: 6px; }
+    .disp-in input { width: 90px; }
+    .disp-st { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+    .linkbtn { background: none; border: none; color: #6b7280; font-size: .74rem; cursor: pointer;
+               text-decoration: underline; font-family: inherit; }
+    .linkbtn:hover { color: #991b1b; }
+    @media (max-width: 800px) { .disp { grid-template-columns: 1fr 1fr; } }
     details.analisis { margin-top: 30px; }
     details.analisis > summary { padding: 12px 0; border-top: 1px solid #e5e7eb; }
   </style>
@@ -129,6 +140,38 @@
         {% for p, kg in hoy_por_producto|dictsort %}<b>{{ ('%g'|format(kg))|replace('.', ',') }} kg</b> {{ p }}{{ ' · ' if not loop.last }}{% endfor %}
       {% else %}<span class="est">nada todavía</span>{% endif %}
     </div>
+  </div>
+
+  <!-- ================= TABLET DE DOSIFICACIÓN ================= -->
+  {# La tablet muestra solo lo enviado aquí, nunca la sugerencia. #}
+  <div class="section-title">Tablet de dosificación</div>
+  <div class="card">
+    {% for t in tablet %}
+    {% set v = t.vigente %}
+    <form method="post" action="/views/ui/calidad-agua/biofiltro/unidad/{{ u.id }}/instruccion" class="disp">
+      <input type="hidden" name="product" value="{{ t.product }}" />
+      <input type="hidden" name="suggested_kg_day" value="{{ '%.1f'|format(t.sugerido) if t.sugerido is not none }}" />
+      <div class="disp-prod"><b>{{ t.label }}</b>
+        <span class="est">{% if t.sugerido is not none %}sugerido {{ '%.0f'|format(t.sugerido) }} kg/día{% else %}sin sugerencia{% endif %}</span></div>
+      <div class="disp-in">
+        <input type="number" step="any" min="0" name="kg_day" aria-label="kg por día"
+               value="{{ ('%g'|format(v.kg_day|float)) if v else ('%.0f'|format(t.sugerido) if t.sugerido is not none else '') }}" />
+        <span class="est">kg/día</span>
+      </div>
+      <button type="submit" name="action" value="enviar" class="btn btn-primary">Enviar a tablet</button>
+      <div class="disp-st">
+        {% if v %}
+          En la tablet: <b>{{ ('%g'|format(v.kg_day|float))|replace('.', ',') }} kg/día</b>
+          <span class="est">desde {{ v.issued_at.strftime('%d/%m %H:%M') }}</span>
+          {% if v.received_at %}<span class="pill pill-ok">✓ recibida {{ v.received_at.strftime('%d/%m %H:%M') }}</span>
+          {% else %}<span class="pill pill-warn">aún no llega a la tablet</span>{% endif %}
+          <span class="est">hoy {{ ('%g'|format(t.hoy))|replace('.', ',') }} de {{ ('%g'|format(v.kg_day|float))|replace('.', ',') }} kg</span>
+          <button type="submit" name="action" value="quitar" class="linkbtn"
+                  onclick="return confirm('¿Quitar {{ t.label }} de la tablet?')">quitar de la tablet</button>
+        {% else %}<span class="est">no está en la tablet</span>{% endif %}
+      </div>
+    </form>
+    {% endfor %}
   </div>
 
   <!-- ================= REGISTRAR CARGA ================= -->
@@ -194,7 +237,7 @@
           <td>{{ d.product }}</td>
           <td class="num">{{ ('%g'|format(d.kg))|replace('.', ',') }}</td>
           <td>{% if d.mode == 'choque' %}<span class="pill pill-warn">choque</span>{% else %}<span class="est">mantención</span>{% endif %}</td>
-          <td>{{ (operadores or {}).get(d.operator_id, '—') if d.operator_id else '—' }}</td>
+          <td>{{ (operadores or {}).get(d.operator_id, '—') if d.operator_id else ('Turno' if d.client_uuid else '—') }}</td>
           <td class="num">{{ '%g'|format(d.alk_before) if d.alk_before is not none else '—' }}</td>
           <td class="num">{{ '%g'|format(d.alk_after_2h) if d.alk_after_2h is not none else '—' }}</td>
           <td class="num">{% if d.alk_before is not none and d.alk_after_2h is not none %}
