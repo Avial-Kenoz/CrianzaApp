@@ -196,6 +196,12 @@
       padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px;
       background: #fff; font-size: 0.9rem; color: #111827;
     }
+    .diam-filter-input {
+      width: 9ch; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px;
+      background: #fff; font-size: 0.9rem; color: #111827; outline: none;
+    }
+    .diam-filter-input::placeholder { color: #9ca3af; font-size: 0.82rem; }
+    .diam-filter-input:focus { border-color: #6b7280; box-shadow: 0 0 0 2px rgba(107,114,128,.15); }
     .fish-search button { cursor: pointer; background: #1f2937; color: #fff; border-color: #1f2937; }
     .fish-search button.ver-todos { background: #fff; color: #1f2937; }
     .fish-search .limpiar { text-decoration: none; }
@@ -212,7 +218,7 @@
     .paginador span { color: #4b5563; }
     @media (max-width: 640px) {
       .fish-search { flex-direction: column; align-items: stretch; }
-      .pit-search-input { width: 100%; }
+      .pit-search-input, .diam-filter-input { width: 100%; }
     }
     th, td { padding: 10px 10px; text-align: left; font-size: .88rem; }
     .table-wrap th:nth-child(1),
@@ -757,6 +763,12 @@
             {% endfor %}
           </select>
           {% endif %}
+          <input name="diam_min" type="text" inputmode="decimal" class="diam-filter-input"
+                 placeholder="Ø desde" aria-label="Diametro de ova desde (mm)"
+                 title="Diametro de ova desde (mm)" value="{{ f_diam_min }}" />
+          <input name="diam_max" type="text" inputmode="decimal" class="diam-filter-input"
+                 placeholder="Ø hasta" aria-label="Diametro de ova hasta (mm)"
+                 title="Diametro de ova hasta (mm)" value="{{ f_diam_max }}" />
           <select name="per_page" aria-label="Registros por pagina">
             {% for n in per_page_choices %}
             <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }} por pagina</option>
@@ -917,6 +929,8 @@
                   <input type="hidden" name="ret_sexo" value="{{ f_sexo }}" />
                   <input type="hidden" name="ret_estado" value="{{ f_estado }}" />
                   <input type="hidden" name="ret_lote" value="{{ f_lote }}" />
+                  <input type="hidden" name="ret_diam_min" value="{{ f_diam_min }}" />
+                  <input type="hidden" name="ret_diam_max" value="{{ f_diam_max }}" />
                 </form>
                 <a class="pit-link" href="/views/ui/fish/{{ row.fish_id }}">{{ row.internal_id }}</a>
               </td>
@@ -1069,7 +1083,9 @@
                       ~ ("&q=" ~ f_q if f_q else "")
                       ~ ("&sexo=" ~ f_sexo if f_sexo else "")
                       ~ ("&estado=" ~ f_estado if f_estado else "")
-                      ~ ("&lote=" ~ f_lote if f_lote else "") %}
+                      ~ ("&lote=" ~ f_lote if f_lote else "")
+                      ~ ("&diam_min=" ~ f_diam_min if f_diam_min else "")
+                      ~ ("&diam_max=" ~ f_diam_max if f_diam_max else "") %}
         <nav class="paginador" aria-label="Paginacion de peces">
           {% if page > 1 %}
           <a href="{{ base }}&page=1">« Primera</a>

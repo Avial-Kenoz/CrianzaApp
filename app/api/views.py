@@ -2377,6 +2377,22 @@ def ui_pond_edit_save(
         return go("error", "No se pudieron guardar los cambios del estanque.")
 
 
+
+def _parse_diameter_filter(value: Optional[str]) -> Optional[float]:
+    """Diametro (mm) de un filtro de la vista; acepta coma decimal. None si vacio/invalido."""
+    txt = (value or "").strip().replace(",", ".")
+    if not txt:
+        return None
+    try:
+        num = float(txt)
+    except ValueError:
+        return None
+    return num if 0 <= num < 100 else None
+
+
+def _format_diameter_filter(value: Optional[float]) -> str:
+    return "" if value is None else f"{value:g}"
+
 @router.get("/ui/ponds/{pond_id}", response_class=HTMLResponse)
 def ui_pond_detail(
     pond_id: int,
@@ -2387,6 +2403,8 @@ def ui_pond_detail(
     sexo: Optional[str] = None,
     estado: Optional[str] = None,
     lote: Optional[str] = None,
+    diam_min: Optional[str] = None,
+    diam_max: Optional[str] = None,
     ver: Optional[str] = None,
     page: int = 1,
     per_page: int = 50,
@@ -2643,6 +2661,17 @@ def ui_pond_detail(
                          if (r.get("development_state") or "") == _e]
     if lote and str(lote).isdigit():
         filtered_rows = [r for r in filtered_rows if str(r.get("lot_id") or "") == str(lote)]
+    # Rango de diametro de ova (mm, inclusivo). Con el filtro activo quedan fuera
+    # los peces sin diametro (machos, hembras sin muestreo de ovas).
+    d_min = _parse_diameter_filter(diam_min)
+    d_max = _parse_diameter_filter(diam_max)
+    if d_min is not None or d_max is not None:
+        filtered_rows = [
+            r for r in filtered_rows
+            if r.get("last_caviar_diameter") is not None
+            and (d_min is None or r["last_caviar_diameter"] >= d_min)
+            and (d_max is None or r["last_caviar_diameter"] <= d_max)
+        ]
 
     PER_PAGE_CHOICES = [50, 100, 200]
     per_page = per_page if per_page in PER_PAGE_CHOICES else 50
@@ -2652,7 +2681,7 @@ def ui_pond_detail(
 
     # La tabla se muestra si el usuario la pidio, si busco/filtro algo, o si el
     # estanque es chico (no tiene sentido esconder 20 peces).
-    has_filter = bool(q_norm or sexo or estado or lote)
+    has_filter = bool(q_norm or sexo or estado or lote or d_min is not None or d_max is not None)
     show_table = bool(ver) or has_filter or len(fish_rows) <= per_page
     page_rows = filtered_rows[(page - 1) * per_page: page * per_page] if show_table else []
 
@@ -2801,6 +2830,8 @@ def ui_pond_detail(
         "f_sexo": sexo or "",
         "f_estado": estado or "",
         "f_lote": lote or "",
+        "f_diam_min": _format_diameter_filter(d_min),
+        "f_diam_max": _format_diameter_filter(d_max),
         # Solo los PIT (~9 bytes c/u): permite autocompletar al instante sin
         # renderizar las filas. Para el estanque 6 son ~25 KB contra 9,5 MB.
         "pit_index": [r["internal_id"] for r in fish_rows if r.get("internal_id")],
@@ -3273,6 +3304,8 @@ def ui_pond_fish_save(
     ret_sexo: Optional[str] = Form(None),
     ret_estado: Optional[str] = Form(None),
     ret_lote: Optional[str] = Form(None),
+    ret_diam_min: Optional[str] = Form(None),
+    ret_diam_max: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     # Vuelve a la misma pagina/filtro desde donde se edito. Se reconstruye a partir
@@ -3296,6 +3329,10 @@ def ui_pond_fish_save(
             _ret += f"&estado={quote_plus(_txt(ret_estado)[:2])}"
         if _txt(ret_lote).isdigit():
             _ret += f"&lote={int(ret_lote)}"
+        for _key, _val in (("diam_min", ret_diam_min), ("diam_max", ret_diam_max)):
+            _d = _parse_diameter_filter(_val)
+            if _d is not None:
+                _ret += f"&{_key}={_format_diameter_filter(_d)}"
 
     from app.services.sexado_sessions import pond_lock_session
     if pond_lock_session(db, pond_id):
