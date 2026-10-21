@@ -18,3 +18,12 @@ if DATABASE_URL.startswith("postgresql://") and "+" not in DATABASE_URL.split(":
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+
+def get_db():
+	"""Dependencia de FastAPI: una sesión por request, cerrada al terminar."""
+	db = SessionLocal()
+	try:
+		yield db
+	finally:
+		db.close()

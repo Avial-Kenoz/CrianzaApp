@@ -7,6 +7,8 @@ from datetime import date, datetime, time, timedelta
 
 from sqlalchemy.orm import Session
 
+from app.services.forms import parse_float, parse_int
+
 from app.models.reproductor_selections import ReproductorSelection
 from app.models.reproductor_monitoring_logs import ReproductorMonitoringLog
 from app.models.reproductor_spawning_events import ReproductorSpawningEvent
@@ -156,13 +158,7 @@ def add_monitoring_log(db: Session, selection_id: int, *, log_date: str, sex: st
     db.commit()
 
 
-def _to_decimal(value):
-    if value is None or str(value).strip() == "":
-        return None
-    try:
-        return float(str(value).replace(",", "."))
-    except ValueError:
-        return None
+_to_decimal = parse_float  # app/services/forms.py (devuelve float pese al nombre)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -707,10 +703,7 @@ def _parse_datetime(v):
 
 
 def _to_int(v):
-    try:
-        return int(float(str(v).strip())) if str(v).strip() else None
-    except ValueError:
-        return None
+    return parse_int(v, truncate=True)
 
 
 def _selection_used_drugs(db: Session, selection_id: int) -> bool:

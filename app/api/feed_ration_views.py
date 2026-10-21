@@ -11,12 +11,11 @@ echa al agua. Ver services/feed_ration.py.
 """
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from jinja2 import Environment, FileSystemLoader
+from app.core.templating import jinja_env
 
 from app.api.water_quality import feed_limits_by_unit
 from app.db.session import SessionLocal
@@ -27,8 +26,6 @@ from app.models.users import User
 from app.services import feed_ration as fr
 
 router = APIRouter(prefix="/views", tags=["feed-ration"])
-template_dir = Path(__file__).parent.parent / "templates"
-jinja_env = Environment(loader=FileSystemLoader(str(template_dir)))
 
 DIAS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 SIN_UNIDAD = 0      # carriles sin unidad de cultivo (p. ej. Tranque)

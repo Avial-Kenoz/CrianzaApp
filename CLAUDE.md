@@ -85,6 +85,25 @@ algoritmo: si cambia el criterio de biomasa, estas columnas tienen que seguir si
 salida oficial. Tras una carga masiva o un `alembic upgrade`, poblar con
 `scripts/rebuild_pond_runtime_cache.py`.
 
+## Piezas compartidas — usar estas, no copiar
+
+Revisión de duplicados del 21-10-2026. Antes de escribir un helper, mirar aquí:
+
+- **Plantillas** → `from app.core.templating import jinja_env` (o `templates` para
+  `TemplateResponse`). Entorno **único y con autoescape**: no crear otro `Environment`.
+  HTML armado en Python va con `Markup(...)`/`|safe`; datos a un `<script>` con `|tojson`.
+  Un literal HTML dentro de `{{ }}` se escapa: usar `{% if %}…{% else %}<em>…</em>{% endif %}`.
+- **Sesión BD** → `from app.db.session import get_db` (había 15 copias).
+- **PIT** → `app/services/pit.py`: `canonical_pit()` (quita los ceros que antepone el
+  lector) y `canonical_pit_column()` para el lado SQL. Había 4 copias y la de
+  `/fish/integration/v1/confirm-faena-crotales` (PlantaApp) no quitaba los ceros.
+- **Campos de formulario** → `app/services/forms.py`: `parse_decimal`, `parse_float`,
+  `parse_int(truncate=…)`, `require_decimal(valor, "Campo")` (lanza ValueError con mensaje).
+- **Biomasa en otras vistas** → leer `ponds.biomass_projected_kg` (ver arriba). Las filas
+  padre+hijos de alimentación salen de `_parent_pond_rows()` en `feed_endpoints.py`.
+- Las REST de andamiaje (`/movements/`, `/fish/`, `/fish/search/`) paginan: `limit` (500 por
+  defecto, máx. 5000) y `offset`, más recientes primero.
+
 ## Reportes mensuales: una sola fuente para HTML y JSON
 
 `build_reports_payload(month, report, db)` arma los cuatro reportes de `/views/ui/reports`

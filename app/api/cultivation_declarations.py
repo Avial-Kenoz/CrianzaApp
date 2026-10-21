@@ -1,6 +1,5 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import Optional
 import hashlib
 import hmac
@@ -15,11 +14,10 @@ from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, aliased
 
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.cultivation_declarations import CultivationDeclaration
 from app.models.cultivation_declaration_items import CultivationDeclarationItem
 from app.models.cultivation_units import CultivationUnit
@@ -33,7 +31,7 @@ from app.models.sanitary_reports import SanitaryReport
 from app.models.species import Species
 
 router = APIRouter(prefix="/views", tags=["cultivation-declarations"])
-templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
+from app.core.templating import templates
 
 _PLANTA_IMPORT_URL_ENV = (os.getenv("PLANTA_IMPORT_URL") or "").strip()
 PLANTA_IMPORT_URL = _PLANTA_IMPORT_URL_ENV or "http://127.0.0.1:8000/api/integration/v1/warranty-imports/receive-json"
@@ -112,12 +110,6 @@ def _send_declaration_json_to_planta(payload_obj: dict, target_url: str | None =
         }
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def _parse_withdrawal_days(withdrawal_period: Optional[str]) -> Optional[int]:

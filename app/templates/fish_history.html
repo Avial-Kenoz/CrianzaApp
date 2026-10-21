@@ -481,7 +481,7 @@
         <span class="sampling-title">Notas</span>
         <button class="edit-btn" id="notes-edit-btn" onclick="showNotesEdit()" title="Editar notas">✏️</button>
       </div>
-      <div id="notes-display" class="notes-display">{{ fish.notes or '<em class="notes-empty">Sin notas</em>' }}</div>
+      <div id="notes-display" class="notes-display">{% if fish.notes %}{{ fish.notes }}{% else %}<em class="notes-empty">Sin notas</em>{% endif %}</div>
       <div id="notes-form">
         <textarea id="notes-input" rows="3">{{ fish.notes or '' }}</textarea>
         <div class="notes-actions">

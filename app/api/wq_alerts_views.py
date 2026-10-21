@@ -22,7 +22,7 @@ correctiva) y significa otra cosa.
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from app.core.templating import jinja_env
 from pathlib import Path
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -45,15 +45,10 @@ from app.models.water_quality_alerts import (
 from app.services import notify_telegram as tg
 from app.services import water_quality as wq
 from app.services import wq_alerts as al
+from app.services.forms import parse_float, parse_int
 from app.services.wq_queries import load_thresholds, tracked_units
 
 router = APIRouter(prefix="/views/ui/calidad-agua/alertas", tags=["calidad-agua-alertas"])
-template_dir = Path(__file__).parent.parent / "templates"
-# autoescape: el detalle de una alerta puede traer texto del operador y el
-# título lleva "<" en los umbrales ("< 70%").
-jinja_env = Environment(loader=FileSystemLoader(str(template_dir)),
-                        autoescape=select_autoescape(["html"]))
-
 KIND_LABELS = {
     al.KIND_LECTURA: "Lectura fuera de rango",
     al.KIND_RONDA: "Ronda sin tomar",
@@ -333,19 +328,10 @@ def reglas_form(request: Request, msg: Optional[str] = None):
 
 
 def _int_o_none(v) -> Optional[int]:
-    try:
-        s = str(v).strip().replace(",", ".")
-        return int(float(s)) if s else None
-    except (TypeError, ValueError):
-        return None
+    return parse_int(v, truncate=True)
 
 
-def _float_o_none(v) -> Optional[float]:
-    try:
-        s = str(v).strip().replace(",", ".")
-        return float(s) if s else None
-    except (TypeError, ValueError):
-        return None
+_float_o_none = parse_float  # app/services/forms.py
 
 
 @router.post("/reglas")

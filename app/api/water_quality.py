@@ -9,7 +9,7 @@ puro `app.services.water_quality`; persiste los flags/niveles calculados.
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from app.core.templating import jinja_env
 from pathlib import Path
 from sqlalchemy import func, and_, text as sa_text
 from sqlalchemy.orm import Session
@@ -20,7 +20,7 @@ from urllib.parse import quote_plus
 import secrets
 import segno
 
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, get_db
 from app.models.ponds import Pond
 from app.models.cultivation_units import CultivationUnit
 from app.models.users import User
@@ -35,6 +35,7 @@ from app.services import dosing as ds
 # Las consultas que comparte con el motor de alertas viven una capa abajo:
 # un servicio no puede importar este router sin cerrar el ciclo.
 from app.services import wq_alerts
+from app.services.forms import parse_float
 from app.services.wq_queries import (  # noqa: F401  (reexportadas: field.py las importa de aca)
     load_thresholds,
     tracked_units,
@@ -44,12 +45,6 @@ from app.services.wq_queries import (  # noqa: F401  (reexportadas: field.py las
 )
 
 router = APIRouter(prefix="/views/ui/calidad-agua", tags=["calidad-agua"])
-template_dir = Path(__file__).parent.parent / "templates"
-# autoescape: sin esto un '<' de un texto de diagnostico ("< 70%") o una
-# observacion escrita por el operador entran crudos al HTML.
-jinja_env = Environment(loader=FileSystemLoader(str(template_dir)),
-                        autoescape=select_autoescape(["html"]))
-
 # Una lectura de O2 se considera vencida si supera este intervalo (cada 2-4 h)
 O2_STALE_HOURS = 4
 # Pasado este plazo una lectura ya no colorea la tarjeta ni entra al minimo: es
@@ -71,24 +66,9 @@ CORRECTIVE_ACTIONS = [
 ]
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
-def _parse_decimal(value: Optional[str]) -> Optional[float]:
-    if value is None:
-        return None
-    value = str(value).strip().replace(",", ".")
-    if value == "":
-        return None
-    try:
-        return float(Decimal(value))
-    except (InvalidOperation, ValueError):
-        return None
+_parse_decimal = parse_float  # app/services/forms.py (devuelve float)
 
 
 def load_test_specs(db: Session) -> dict:
@@ -258,54 +238,86 @@ def _bf_trend_by_unit(db: Session, n: int = BF_TREND_N) -> dict:
     return out
 
 
-def _unit_rations_by_day(db: Session, unit_id: int, since: date, until: date) -> dict:
-    """{fecha: (kg, kg_proteína)} de la ración diaria de la unidad.
+# El alimento de una unidad se consulta por cada ventana de muestreos del
+# biofiltro (el panel pedía ~130 ventanas: 500+ consultas y creciendo con el
+# historial). Se trae UNA vez por unidad y request —día a día— y cada ventana
+# se resuelve en memoria. El caché vive en `db.info`, que dura lo que la sesión
+# (un request); quien escriba raciones o salidas y luego lea en la misma sesión
+# debe vaciarlo con `db.info.pop(_FEED_CACHE_KEY, None)`.
+_FEED_CACHE_KEY = "wq_unit_feed_cache"
+
+
+def _feed_cache(db: Session, kind: str) -> dict:
+    return db.info.setdefault(_FEED_CACHE_KEY, {}).setdefault(kind, {})
+
+
+def _unit_ration_days(db: Session, unit_id: int) -> dict:
+    """{fecha: (kg, kg_proteína)} de TODA la ración diaria de la unidad, por fecha.
 
     Lo que se echó al agua: kg confirmados si el día está confirmado (no
     alimentado = 0) y lo programado si todavía no. La proteína es la del
     alimento de cada carril.
     """
-    out: dict = {}
-    for d, kg, prot in db.execute(sa_text("""
-        SELECT r.ration_date,
-               SUM(CASE r.status WHEN 'alimentado' THEN r.kg_fed
-                                 WHEN 'no_alimentado' THEN 0 ELSE r.kg_planned END),
-               SUM(CASE r.status WHEN 'alimentado' THEN r.kg_fed
-                                 WHEN 'no_alimentado' THEN 0 ELSE r.kg_planned END
-                   * COALESCE(ft.protein_pct, :pdef) / 100.0)
-          FROM feed_rations r
-          LEFT JOIN feed_types ft ON ft.id = r.feed_type_id
-         WHERE r.cultivation_unit_id = :uid
-           AND r.ration_date BETWEEN :since AND :until
-         GROUP BY r.ration_date
-    """), {"uid": unit_id, "since": since, "until": until, "pdef": PROTEIN_DEFAULT_PCT}).all():
-        out[d] = (float(kg or 0), float(prot or 0))
-    return out
+    cache = _feed_cache(db, "rations")
+    if unit_id not in cache:
+        cache[unit_id] = {d: (float(kg or 0), float(prot or 0)) for d, kg, prot in db.execute(sa_text("""
+            SELECT r.ration_date,
+                   SUM(CASE r.status WHEN 'alimentado' THEN r.kg_fed
+                                     WHEN 'no_alimentado' THEN 0 ELSE r.kg_planned END),
+                   SUM(CASE r.status WHEN 'alimentado' THEN r.kg_fed
+                                     WHEN 'no_alimentado' THEN 0 ELSE r.kg_planned END
+                       * COALESCE(ft.protein_pct, :pdef) / 100.0)
+              FROM feed_rations r
+              LEFT JOIN feed_types ft ON ft.id = r.feed_type_id
+             WHERE r.cultivation_unit_id = :uid
+               AND r.ration_date IS NOT NULL
+             GROUP BY r.ration_date
+             ORDER BY r.ration_date
+        """), {"uid": unit_id, "pdef": PROTEIN_DEFAULT_PCT}).all()}
+    return cache[unit_id]
+
+
+def _unit_rations_by_day(db: Session, unit_id: int, since: date, until: date) -> dict:
+    """{fecha: (kg, kg_proteína)} de la ración diaria de la unidad en la ventana."""
+    return {d: v for d, v in _unit_ration_days(db, unit_id).items() if since <= d <= until}
 
 
 def _unit_first_ration(db: Session, unit_id: int) -> Optional[date]:
     """Primer día con ración diaria de la unidad (desde ahí manda la ración)."""
-    return db.execute(sa_text(
-        "SELECT MIN(ration_date) FROM feed_rations WHERE cultivation_unit_id = :uid"),
-        {"uid": unit_id}).scalar()
+    return next(iter(_unit_ration_days(db, unit_id)), None)
+
+
+def _unit_bodega_days(db: Session, unit_id: int) -> dict:
+    """{fecha: (kg, kg_proteína)} de las salidas de bodega confirmadas de la unidad."""
+    cache = _feed_cache(db, "bodega")
+    if unit_id not in cache:
+        cache[unit_id] = {d: (feed_kg, prot_kg) for d, feed_kg, prot_kg in db.execute(sa_text("""
+            SELECT e.confirmed_at::date,
+                   SUM(e.confirmed_bags * ft.bag_kg),
+                   SUM(e.confirmed_bags * ft.bag_kg * ft.protein_pct / 100.0)
+              FROM feed_execution_events e
+              JOIN ponds p ON p.id = e.pond_id
+              JOIN feed_types ft ON ft.id = e.feed_type_id
+             WHERE p.cultivation_unit_id = :uid
+               AND e.confirmed_at IS NOT NULL
+               AND ft.bag_kg IS NOT NULL AND ft.protein_pct IS NOT NULL
+             GROUP BY e.confirmed_at::date
+        """), {"uid": unit_id}).all()}
+    return cache[unit_id]
 
 
 def _unit_bodega_rate(db: Session, unit_id: int, since: date, until: date) -> Optional[tuple]:
     """(kg/día, kg proteína/día) según las salidas de bodega de la ventana."""
     days = (until - since).days + 1
-    row = db.execute(sa_text("""
-        SELECT SUM(e.confirmed_bags * ft.bag_kg) AS feed_kg,
-               SUM(e.confirmed_bags * ft.bag_kg * ft.protein_pct / 100.0) AS prot_kg
-          FROM feed_execution_events e
-          JOIN ponds p ON p.id = e.pond_id
-          JOIN feed_types ft ON ft.id = e.feed_type_id
-         WHERE p.cultivation_unit_id = :uid
-           AND e.confirmed_at::date BETWEEN :since AND :until
-           AND ft.bag_kg IS NOT NULL AND ft.protein_pct IS NOT NULL
-    """), {"uid": unit_id, "since": since, "until": until}).first()
-    if days <= 0 or not row or row.prot_kg is None or not row.feed_kg:
+    en_ventana = [v for d, v in _unit_bodega_days(db, unit_id).items() if since <= d <= until]
+    if days <= 0 or not en_ventana:
         return None
-    return float(row.feed_kg) / days, float(row.prot_kg) / days
+    # Sumas exactas (Numeric → Decimal), igual que el SUM de la consulta por ventana.
+    feed_kg = sum(v[0] for v in en_ventana)
+    prot_kg = sum(v[1] for v in en_ventana)
+    if not feed_kg:
+        return None
+    return float(feed_kg) / days, float(prot_kg) / days
 
 
 def _unit_feed(db: Session, unit_id: int, since: date, until: date) -> Optional[dict]:

@@ -14,13 +14,12 @@ de Configuración: quién recibe qué es configuración, no trabajo diario.
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from jinja2 import Environment, FileSystemLoader
+from app.core.templating import jinja_env
 from sqlalchemy import func
 
 from app.db.session import SessionLocal
@@ -31,7 +30,6 @@ from app.services import personas as directorio
 
 PREFIX = "/views/ui/config/personas"
 router = APIRouter(prefix=PREFIX, tags=["personas"])
-jinja_env = Environment(loader=FileSystemLoader(str(Path(__file__).parent.parent / "templates")))
 
 _TABS = [
     ("directorio", "Directorio", PREFIX),

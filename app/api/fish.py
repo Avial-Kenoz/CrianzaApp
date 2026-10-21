@@ -4,13 +4,14 @@ import hmac
 import json
 import os
 import time as pytime
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.fish import Fish
+from app.services.pit import canonical_pit
 from app.models.ponds_movements import PondMovement
 from app.models.ponds import Pond
 from app.models.cultivation_units import CultivationUnit
@@ -34,10 +35,7 @@ INTEGRATION_MAX_BODY_BYTES = int(os.getenv("INTEGRATION_MAX_BODY_BYTES") or "200
 INTEGRATION_USED_NONCES: dict[str, int] = {}
 
 
-def _normalize_pit_tag(value: Optional[str]) -> str:
-    if value is None:
-        return ""
-    return str(value).strip().upper()
+_normalize_pit_tag = canonical_pit  # regla única en app/services/pit.py
 
 
 def _integration_cleanup_used_nonces(now_ts: int):
@@ -114,12 +112,6 @@ def _verify_integration_request_headers(raw_body: bytes, headers) -> str:
     INTEGRATION_USED_NONCES[nonce] = now_ts + INTEGRATION_NONCE_TTL_SECONDS
     return source_key
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.post("/", response_model=FishRead)
 def create_fish(fish: FishCreate, db: Session = Depends(get_db)):
@@ -145,14 +137,21 @@ def create_fish(fish: FishCreate, db: Session = Depends(get_db)):
     return db_fish
 
 @router.get("/", response_model=List[FishRead])
-def list_fish(db: Session = Depends(get_db)):
-    return db.query(Fish).all()
+def list_fish(
+    db: Session = Depends(get_db),
+    # Sin tope devolvía los ~50 mil peces (17 MB): más recientes primero.
+    limit: int = Query(500, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+):
+    return db.query(Fish).order_by(Fish.id.desc()).offset(offset).limit(limit).all()
 
 @router.get("/search/", response_model=List[FishRead])
 def search_fish(
     db: Session = Depends(get_db),
     internal_id: Optional[str] = None,
-    lot: Optional[int] = None
+    lot: Optional[int] = None,
+    limit: int = Query(500, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
 ):
     query = db.query(Fish)
     if internal_id:
@@ -160,7 +159,7 @@ def search_fish(
         query = query.filter(Fish.internal_id.ilike(f"%{normalized_internal_id}%"))
     if lot:
         query = query.filter(Fish.lot_id == lot)
-    return query.all()
+    return query.order_by(Fish.id.desc()).offset(offset).limit(limit).all()
 
 @router.get("/{fish_id}", response_model=FishRead)
 def get_fish(fish_id: int, db: Session = Depends(get_db)):

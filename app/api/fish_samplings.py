@@ -2,19 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.fish_samplings import FishSampling
 from app.models.fish import Fish
 from app.schemas.fish_samplings import FishSamplingCreate, FishSamplingRead
 
 router = APIRouter(prefix="/fish-samplings", tags=["fish-samplings"])
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.get("/", response_model=List[FishSamplingRead])
 def list_fish_samplings(

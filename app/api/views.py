@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from jinja2 import Environment, FileSystemLoader
+from app.core.templating import jinja_env
 from pathlib import Path
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy import case, func, literal, or_, text
@@ -15,7 +15,7 @@ import bisect
 import re
 import json
 from zoneinfo import ZoneInfo
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, get_db
 from app.models.ponds import Pond
 from app.models.pond_types import PondType
 from app.models.fish import Fish
@@ -41,14 +41,14 @@ from app.services.planta_yield import get_caviar_yield_factor
 from app.services import ovulation_cycle as _ovc
 from app.services import reproduccion as _repro
 from app.services import oocyte_growth as _og
+from app.services.pit import canonical_pit
+from app.services.forms import require_decimal
 
 # Estados de desarrollo maduros: solo estas hembras tienen ova lista y se les
 # estima caviar. Las inmaduras muestran biomasa pero sin estimado.
 CAVIAR_MATURE_STATES = {"3", "4"}
 
 router = APIRouter(prefix="/views", tags=["views"])
-template_dir = Path(__file__).parent.parent / "templates"
-jinja_env = Environment(loader=FileSystemLoader(str(template_dir)))
 
 STALE_WEIGHT_DAYS = 90
 
@@ -108,12 +108,6 @@ def _format_local_datetime(value: Optional[datetime]) -> Optional[str]:
     local_dt = _to_local_datetime(value)
     return local_dt.strftime("%d/%m/%Y %H:%M") if local_dt else None
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def _latest_movement_id_per_fish_subq(db: Session):
@@ -1431,6 +1425,17 @@ def build_reports_payload(
         report = "existencia_lote"
     month_value, month_start, month_next, month_end = _parse_month_for_reports(month)
 
+    # El armado pide varias veces lo mismo (saldos al inicio y al cierre, el
+    # checkpoint de cada fecha): se calcula una vez por llamada. Los resultados
+    # solo se leen, así que compartirlos no cambia ningún número.
+    _memo: dict = {}
+
+    def _once(fn, *args):
+        key = (fn.__name__,) + args
+        if key not in _memo:
+            _memo[key] = fn(*args, db)
+        return _memo[key]
+
     # Si se consulta el mes en curso, cortar al instante actual para que el
     # cierre "final" sea consistente con la vista operativa de estanques.
     now_utc = datetime.utcnow()
@@ -1443,7 +1448,7 @@ def build_reports_payload(
         report_end_snapshot = month_end
 
     # Reporte 1: Existencia por lotes (nivel centro)
-    initial_lot_counts = _sum_center_lot_balance_until(month_start, db)
+    initial_lot_counts = _once(_sum_center_lot_balance_until, month_start)
     if is_current_month:
         current_pond_lot_counts = _build_current_pond_lot_counts(db)
         final_lot_counts = _aggregate_lot_totals(current_pond_lot_counts)
@@ -1452,8 +1457,8 @@ def build_reports_payload(
         movement_final_lot_counts = _aggregate_lot_totals(current_pond_lot_counts)
     else:
         current_pond_lot_counts = None
-        final_lot_counts = _sum_center_lot_balance_until(report_end_exclusive, db)
-        movement_final_lot_counts = _sum_center_lot_balance_until(report_end_exclusive, db)
+        final_lot_counts = _once(_sum_center_lot_balance_until, report_end_exclusive)
+        movement_final_lot_counts = final_lot_counts
     mortality_lot_counts = _sum_center_lot_reason_between(month_start, report_end_exclusive, "mortality", db)
     faena_lot_counts = _sum_center_lot_reason_between(month_start, report_end_exclusive, "faena", db)
 
@@ -1464,11 +1469,11 @@ def build_reports_payload(
     } if lot_ids else {}
 
     # Biomasa inicial: leer desde checkpoint si existe (inmutable), si no calcular on-the-fly.
-    initial_lot_biomass, _initial_pond_biomass_ck = _read_biomass_checkpoint(
-        month_start.date(), "month_start", db
+    initial_lot_biomass, _initial_pond_biomass_ck = _once(
+        _read_biomass_checkpoint, month_start.date(), "month_start"
     )
     if not initial_lot_biomass:
-        initial_pond_lot_for_biomass = _sum_pond_lot_balance_until(month_start, db)
+        initial_pond_lot_for_biomass = _once(_sum_pond_lot_balance_until, month_start)
         pond_lot_weights_start = _build_pond_lot_weight_snapshot(
             set(initial_pond_lot_for_biomass.keys()), month_start, db
         )
@@ -1491,11 +1496,11 @@ def build_reports_payload(
         for (_pid, _lid), _bm in _pond_lot_proj.items():
             final_lot_biomass[_lid] += _bm
     else:
-        final_lot_biomass, _ = _read_biomass_checkpoint(
-            report_end_snapshot.date(), "month_start", db
+        final_lot_biomass, _ = _once(
+            _read_biomass_checkpoint, report_end_snapshot.date(), "month_start"
         )
         if not final_lot_biomass:
-            final_pond_lot_for_biomass = _sum_pond_lot_balance_until(report_end_exclusive, db)
+            final_pond_lot_for_biomass = _once(_sum_pond_lot_balance_until, report_end_exclusive)
             pond_lot_weights_end = _build_pond_lot_weight_snapshot(
                 set(final_pond_lot_for_biomass.keys()), report_end_snapshot, db
             )
@@ -1536,15 +1541,15 @@ def build_reports_payload(
     }
 
     # Reporte 2: Existencia por estanque
-    initial_pond_lot = _sum_pond_lot_balance_until(month_start, db)
+    initial_pond_lot = _once(_sum_pond_lot_balance_until, month_start)
     if is_current_month:
         # Para el mes en curso usar tagged-count (último movimiento por pez) como referencia
         # de movimientos, evitando sobreconteo de peces que ciclaron por un estanque.
         final_pond_lot = current_pond_lot_counts or {}
         movement_final_pond_lot = current_pond_lot_counts or {}
     else:
-        movement_final_pond_lot = _sum_pond_lot_balance_until(report_end_exclusive, db)
-        final_pond_lot = _sum_pond_lot_balance_until(report_end_exclusive, db)
+        movement_final_pond_lot = _once(_sum_pond_lot_balance_until, report_end_exclusive)
+        final_pond_lot = movement_final_pond_lot
     mortality_pond_lot = _sum_pond_lot_between(month_start, report_end_exclusive, "mortality", db)
     faena_pond_lot = _sum_pond_lot_between(month_start, report_end_exclusive, "faena", db)
     salidas_pond_lot = _sum_pond_lot_between(month_start, report_end_exclusive, "salidas", db)
@@ -1580,7 +1585,7 @@ def build_reports_payload(
     llegadas_pond_counts = _aggregate_pond_totals(llegadas_pond_lot)
 
     # Biomasa inicial de estanques: leer desde checkpoint si existe, si no calcular on-the-fly.
-    _, initial_pond_biomass_ck = _read_biomass_checkpoint(month_start.date(), "month_start", db)
+    _, initial_pond_biomass_ck = _once(_read_biomass_checkpoint, month_start.date(), "month_start")
     if initial_pond_biomass_ck:
         initial_pond_biomass = initial_pond_biomass_ck
     else:
@@ -1592,7 +1597,7 @@ def build_reports_payload(
         for (_pid, _lid), _bm in _pond_lot_proj.items():
             final_pond_biomass[_pid] += _bm
     else:
-        _, final_pond_biomass_ck = _read_biomass_checkpoint(report_end_snapshot.date(), "month_start", db)
+        _, final_pond_biomass_ck = _once(_read_biomass_checkpoint, report_end_snapshot.date(), "month_start")
         if final_pond_biomass_ck:
             final_pond_biomass = final_pond_biomass_ck
         else:
@@ -2854,27 +2859,10 @@ def _normalize_sex_value(value: Optional[str]) -> Optional[str]:
     return None
 
 
-def _parse_decimal_field(value: Optional[str], field_name: str) -> Optional[Decimal]:
-    if value is None:
-        return None
-    raw = value.strip().replace(",", ".")
-    if raw == "":
-        return None
-    try:
-        return Decimal(raw)
-    except (InvalidOperation, ValueError):
-        raise ValueError(f"{field_name} no es numérico.")
+_parse_decimal_field = require_decimal  # app/services/forms.py
 
 
-def _normalize_pit_tag(value: Optional[str]) -> str:
-    """Normaliza PIT tag como texto (nunca como número). Canonicaliza quitando
-    ceros a la izquierda (el lector los antepone: 0007CF009C ≡ 7CF009C, mismo
-    valor hex del tag)."""
-    if value is None:
-        return ""
-    s = str(value).strip().upper()
-    stripped = s.lstrip("0")
-    return stripped or s
+_normalize_pit_tag = canonical_pit  # regla única en app/services/pit.py
 
 
 def _canonical_drug_locked_pit_tag(value: Optional[str]) -> str:

@@ -1,6 +1,7 @@
 from sqlalchemy import Column, BigInteger, String, Text, TIMESTAMP, ForeignKey
 from sqlalchemy.orm import validates
 from app.db.session import Base
+from app.services.pit import canonical_pit
 
 class Fish(Base):
     __tablename__ = "fish"
@@ -26,15 +27,8 @@ class Fish(Base):
 
     @staticmethod
     def _normalize_pit_value(value):
-        if value is None:
-            return None
-        normalized = str(value).strip().upper()
-        if not normalized:
-            return None
-        # El lector de PIT antepone ceros (0007CF009C ≡ 7CF009C, mismo valor hex):
-        # canonicaliza quitándolos. Los sufijos de reuso (_N, _R) no llevan ceros.
-        stripped = normalized.lstrip("0")
-        return stripped or normalized
+        # Regla única en app/services/pit.py (quita los ceros que antepone el lector).
+        return canonical_pit(value) or None
 
     @validates("internal_id", "secondary_internal_id")
     def _normalize_pit_fields(self, _key, value):

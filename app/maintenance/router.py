@@ -18,7 +18,7 @@ from urllib.parse import quote_plus
 import segno
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from jinja2 import Environment, FileSystemLoader
+from app.core.templating import jinja_env
 
 from app.db.session import SessionLocal
 from app.maintenance import notify, rules, service, telegram_bot
@@ -31,8 +31,6 @@ from app.maintenance.service import ErrorValidacion
 
 PREFIX = "/views/ui/mantenimiento"
 router = APIRouter(prefix=PREFIX, tags=["mantenimiento"])
-template_dir = Path(__file__).parent.parent / "templates"
-jinja_env = Environment(loader=FileSystemLoader(str(template_dir)))
 
 
 def _render(nombre: str, request: Request, **ctx) -> HTMLResponse:

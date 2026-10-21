@@ -4,32 +4,23 @@ F2: vista principal `/views/ui/reproduccion` (Tabla A/B, solo lectura +
 expiración lazy). Las acciones (crear selección, fármacos, monitoreo, desove)
 llegan en F3/F4.
 """
-from pathlib import Path
 
 from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from jinja2 import Environment, FileSystemLoader
+from app.core.templating import jinja_env as _jinja
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.services import reproduccion as repro_service
 from app.services.reproduccion import ReproduccionError
 
 router = APIRouter(prefix="/views", tags=["reproduccion"])
 api_router = APIRouter(prefix="/api/reproduccion", tags=["reproduccion"])
 
-_template_dir = Path(__file__).resolve().parent.parent / "templates"
-_jinja = Environment(loader=FileSystemLoader(str(_template_dir)))
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def _back(next_url: str | None, *, msg: str | None = None, status: str | None = None,

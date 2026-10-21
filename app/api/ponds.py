@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.ponds import Pond
 from app.models.cultivation_units import CultivationUnit
 from app.models.pond_types import PondType
@@ -10,12 +10,6 @@ from app.schemas.ponds import PondCreate, PondRead
 
 router = APIRouter(prefix="/ponds", tags=["ponds"])
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.post("/", response_model=PondRead)
 def create_pond(pond: PondCreate, db: Session = Depends(get_db)):

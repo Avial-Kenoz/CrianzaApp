@@ -32,12 +32,6 @@ from app.api.water_quality import (
 router = APIRouter(prefix="/api/field/v1", tags=["field"])
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # Límites de las columnas Numeric de pond_oxygen_readings (precisión, escala).

@@ -6,8 +6,7 @@ destinos (que quedan bloqueados), trabaja offline, y luego sincroniza (PR-S2).
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
-from jinja2 import Environment, FileSystemLoader
-from pathlib import Path
+from app.core.templating import jinja_env as _jinja
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timedelta
@@ -22,7 +21,6 @@ from app.services import sexado_sessions as sx
 
 router = APIRouter(prefix="/api/field/v1/sexado", tags=["sexado"])
 admin_router = APIRouter(prefix="/views/ui/sexado", tags=["sexado-admin"])
-_jinja = Environment(loader=FileSystemLoader(str(Path(__file__).parent.parent / "templates")))
 
 # kinds que siempre van a reconciliación (no se aplican automático).
 # 'register' (alta de PIT desde saldo sin marca) SÍ se auto-aplica.

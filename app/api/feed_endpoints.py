@@ -1,13 +1,12 @@
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from jinja2 import Environment, FileSystemLoader
-from pathlib import Path
+from app.core.templating import jinja_env
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
 from decimal import Decimal
 import json
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.feed import (
     FeedType,
     FeedReceiptHeader,
@@ -27,15 +26,7 @@ from app.models.lots import Lot
 from app.models.fish import Fish
 
 router = APIRouter(prefix="/views", tags=["feed"])
-template_dir = Path(__file__).parent.parent / "templates"
-jinja_env = Environment(loader=FileSystemLoader(str(template_dir)))
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -110,6 +101,74 @@ def _bag_kg(feed_type_id: int, db: Session) -> Decimal:
     return Decimal(str(bag_kg)) if bag_kg else Decimal("0")
 
 
+def _parent_pond_rows(db: Session) -> list[dict]:
+    """Estanques padre con lotes activos (propios o de sus hijos), en el orden de
+    las planillas de alimentación: por unidad de cultivo y luego por estanque.
+
+    Cada fila trae `children` para que el llamador sume sacos de padre + hijos,
+    `lot_names` sin repetir y `biomass_kg` = biomasa proyectada de padre + hijos
+    (`ponds.biomass_projected_kg`, la salida oficial; `biomass_current` es el
+    criterio anterior a ago-2026 y no cuadra con /ui/ponds).
+    """
+    pond_rows_raw = (
+        db.query(Pond, CultivationUnit)
+        .outerjoin(CultivationUnit, CultivationUnit.id == Pond.cultivation_unit_id)
+        .filter(Pond.parent_pond_id.is_(None))
+        .order_by(func.coalesce(CultivationUnit.id, 999999), Pond.id)
+        .all()
+    )
+
+    children_map: dict[int, list] = {}
+    parent_ids = [pond.id for pond, _ in pond_rows_raw]
+    if parent_ids:
+        for child in db.query(Pond).filter(Pond.parent_pond_id.in_(parent_ids)).all():
+            children_map.setdefault(child.parent_pond_id, []).append(child)
+
+    def _lot_ids(src) -> list[int]:
+        if src.active_lot_ids:
+            return [int(lid) for lid in src.active_lot_ids if lid]
+        return [int(src.lot_id)] if src.lot_id else []
+
+    lot_ids = {
+        lid
+        for pond, _ in pond_rows_raw
+        for src in [pond] + children_map.get(pond.id, [])
+        for lid in _lot_ids(src)
+    }
+    lot_map = {}
+    if lot_ids:
+        lots = db.query(Lot).filter(Lot.id.in_(list(lot_ids))).all()
+        lot_map = {int(l.id): (l.internal_id or l.name) for l in lots}
+
+    rows = []
+    for pond, cu in pond_rows_raw:
+        children = children_map.get(pond.id, [])
+        lot_names: list[str] = []
+        for src in [pond] + children:
+            for lid in _lot_ids(src):
+                label = lot_map.get(lid)
+                if label and label not in lot_names:
+                    lot_names.append(label)
+        if not lot_names:
+            continue
+        rows.append({
+            "pond": pond,
+            "cultivation_unit_name": cu.name if cu else "Sin unidad",
+            "children": children,
+            "lot_names": lot_names,
+            "biomass_kg": sum(float(p.biomass_projected_kg or 0) for p in [pond] + children),
+        })
+    return rows
+
+
+def _sum_over_family(bags_map: dict, row: dict, feed_type_id: int) -> int:
+    """Sacos de un alimento en el estanque padre + todos sus hijos."""
+    return sum(
+        bags_map.get((int(p.id), int(feed_type_id)), 0)
+        for p in [row["pond"]] + row["children"]
+    )
+
+
 def _sum_executed_for_program(program_id: int, db: Session) -> dict:
     """Retorna {(pond_id, feed_type_id): total_confirmed_bags} para un programa."""
     events = db.query(FeedExecutionEvent).filter(
@@ -170,96 +229,14 @@ def ui_feed(
             FeedExecutionEvent.is_unplanned == 1,
         ).first() is not None
 
-    # --- Estanques padre con lotes activos (propios o de sus hijos) ---
-    pond_rows_raw = (
-        db.query(Pond, CultivationUnit)
-        .outerjoin(CultivationUnit, CultivationUnit.id == Pond.cultivation_unit_id)
-        .filter(Pond.parent_pond_id.is_(None))
-        .order_by(
-            func.coalesce(CultivationUnit.id, 999999),
-            Pond.id,
-        )
-        .all()
-    )
-
-    # Pre-cargar todos los hijos de los padres
-    parent_ids = [pond.id for pond, _ in pond_rows_raw]
-    children_map = {}  # parent_id -> [children]
-    if parent_ids:
-        all_children = db.query(Pond).filter(Pond.parent_pond_id.in_(parent_ids)).all()
-        for child in all_children:
-            if child.parent_pond_id not in children_map:
-                children_map[child.parent_pond_id] = []
-            children_map[child.parent_pond_id].append(child)
-
-    # Recopilar todos los lotes de padres + hijos
-    lot_ids = set()
-    for pond, _ in pond_rows_raw:
-        if pond.active_lot_ids:
-            for lid in pond.active_lot_ids:
-                if lid:
-                    lot_ids.add(int(lid))
-        elif pond.lot_id:
-            lot_ids.add(int(pond.lot_id))
-        
-        # Lotes de los hijos
-        for child in children_map.get(pond.id, []):
-            if child.active_lot_ids:
-                for lid in child.active_lot_ids:
-                    if lid:
-                        lot_ids.add(int(lid))
-            elif child.lot_id:
-                lot_ids.add(int(child.lot_id))
-
-    lot_map = {}
-    if lot_ids:
-        lots = db.query(Lot).filter(Lot.id.in_(list(lot_ids))).all()
-        lot_map = {int(l.id): (l.internal_id or l.name) for l in lots}
-
     pond_rows = []
-    for pond, cu in pond_rows_raw:
-        # Obtener hijos del mapa pre-cargado
-        children = children_map.get(pond.id, [])
-        # Recopilar nombres de lotes del padre + hijos
-        lot_names = []
-        
-        # Lotes del padre
-        if pond.active_lot_ids:
-            for lid in pond.active_lot_ids:
-                label = lot_map.get(int(lid))
-                if label:
-                    lot_names.append(label)
-        elif pond.lot_id and int(pond.lot_id) in lot_map:
-            lot_names.append(lot_map[int(pond.lot_id)])
-        
-        # Lotes de los hijos
-        for child in children:
-            if child.active_lot_ids:
-                for lid in child.active_lot_ids:
-                    label = lot_map.get(int(lid))
-                    if label and label not in lot_names:
-                        lot_names.append(label)
-            elif child.lot_id and int(child.lot_id) in lot_map:
-                label = lot_map[int(child.lot_id)]
-                if label not in lot_names:
-                    lot_names.append(label)
-
-        # Filtrar estanques sin lotes activos (pero SIEMPRE mostrar padres con hijos que tienen lotes)
-        if not lot_names:
-            continue
-
+    for row in _parent_pond_rows(db):
         feed_cells = []
         total_y = 0
         total_z = 0
         for ft in feed_types:
-            # Suma: padre + todos los hijos
-            z_bags = planned_map.get((int(pond.id), int(ft.id)), 0)
-            y_bags = executed_map.get((int(pond.id), int(ft.id)), 0)
-            
-            for child in children:
-                z_bags += planned_map.get((int(child.id), int(ft.id)), 0)
-                y_bags += executed_map.get((int(child.id), int(ft.id)), 0)
-            
+            z_bags = _sum_over_family(planned_map, row, ft.id)
+            y_bags = _sum_over_family(executed_map, row, ft.id)
             total_y += y_bags
             total_z += z_bags
             feed_cells.append({
@@ -277,11 +254,11 @@ def ui_feed(
             row_status = "partial"
 
         pond_rows.append({
-            "pond_id": pond.id,
-            "pond_name": pond.name,
-            "cultivation_unit_name": cu.name if cu else "Sin unidad",
-            "biomass_estimated": float(pond.biomass_current or pond.biomass or 0),
-            "lot_names": lot_names,
+            "pond_id": row["pond"].id,
+            "pond_name": row["pond"].name,
+            "cultivation_unit_name": row["cultivation_unit_name"],
+            "biomass_estimated": row["biomass_kg"],
+            "lot_names": row["lot_names"],
             "feed_cells": feed_cells,
             "total_y": total_y,
             "total_z": total_z,
@@ -346,66 +323,15 @@ def ui_feed_print(
 
     executed_map = _sum_executed_for_program(open_program.id, db)
 
-    # Estanques padre
-    pond_rows_raw = (
-        db.query(Pond, CultivationUnit)
-        .outerjoin(CultivationUnit, CultivationUnit.id == Pond.cultivation_unit_id)
-        .filter(Pond.parent_pond_id.is_(None))
-        .order_by(func.coalesce(CultivationUnit.id, 999999), Pond.id)
-        .all()
-    )
-
-    parent_ids = [pond.id for pond, _ in pond_rows_raw]
-    children_map = {}
-    if parent_ids:
-        all_children = db.query(Pond).filter(Pond.parent_pond_id.in_(parent_ids)).all()
-        for child in all_children:
-            children_map.setdefault(child.parent_pond_id, []).append(child)
-
-    lot_ids = set()
-    for pond, _ in pond_rows_raw:
-        for src in [pond] + children_map.get(pond.id, []):
-            if src.active_lot_ids:
-                lot_ids.update(int(lid) for lid in src.active_lot_ids if lid)
-            elif src.lot_id:
-                lot_ids.add(int(src.lot_id))
-
-    lot_map = {}
-    if lot_ids:
-        lots = db.query(Lot).filter(Lot.id.in_(list(lot_ids))).all()
-        lot_map = {int(l.id): (l.internal_id or l.name) for l in lots}
-
     rows = []
-    for pond, cu in pond_rows_raw:
-        children = children_map.get(pond.id, [])
-        lot_names = []
-        for src in [pond] + children:
-            if src.active_lot_ids:
-                for lid in src.active_lot_ids:
-                    label = lot_map.get(int(lid))
-                    if label and label not in lot_names:
-                        lot_names.append(label)
-            elif src.lot_id:
-                label = lot_map.get(int(src.lot_id))
-                if label and label not in lot_names:
-                    lot_names.append(label)
-
-        if not lot_names:
-            continue
-
-        bags_by_ft = {}
-        total_z = 0
-        for ft in feed_types:
-            z = planned_map.get((int(pond.id), int(ft.id)), 0)
-            for child in children:
-                z += planned_map.get((int(child.id), int(ft.id)), 0)
-            bags_by_ft[ft.id] = z
-            total_z += z
+    for row in _parent_pond_rows(db):
+        bags_by_ft = {ft.id: _sum_over_family(planned_map, row, ft.id) for ft in feed_types}
+        total_z = sum(bags_by_ft.values())
 
         rows.append({
-            "pond_name": pond.name,
-            "cultivation_unit_name": cu.name if cu else "Sin unidad",
-            "lot_names": lot_names,
+            "pond_name": row["pond"].name,
+            "cultivation_unit_name": row["cultivation_unit_name"],
+            "lot_names": row["lot_names"],
             "bags_by_ft": bags_by_ft,
             "total_z": total_z,
         })
@@ -1099,99 +1025,22 @@ def ui_feed_new_program(
             for line in lines:
                 prefill_map[(int(line.pond_id), int(line.feed_type_id))] = int(line.planned_bags or 0)
 
-    # Estanques padre con lotes activos (propios o de sus hijos)
-    pond_rows_raw = (
-        db.query(Pond, CultivationUnit)
-        .outerjoin(CultivationUnit, CultivationUnit.id == Pond.cultivation_unit_id)
-        .filter(Pond.parent_pond_id.is_(None))
-        .order_by(
-            func.coalesce(CultivationUnit.id, 999999),
-            Pond.id,
-        )
-        .all()
-    )
-
-    # Pre-cargar todos los hijos de los padres
-    parent_ids_np = [pond.id for pond, _ in pond_rows_raw]
-    children_map_np = {}
-    if parent_ids_np:
-        all_children_np = db.query(Pond).filter(Pond.parent_pond_id.in_(parent_ids_np)).all()
-        for child in all_children_np:
-            if child.parent_pond_id not in children_map_np:
-                children_map_np[child.parent_pond_id] = []
-            children_map_np[child.parent_pond_id].append(child)
-
-    # Recopilar todos los lotes
-    lot_ids = set()
-    for pond, _ in pond_rows_raw:
-        if pond.active_lot_ids:
-            for lid in pond.active_lot_ids:
-                if lid:
-                    lot_ids.add(int(lid))
-        elif pond.lot_id:
-            lot_ids.add(int(pond.lot_id))
-        
-        for child in children_map_np.get(pond.id, []):
-            if child.active_lot_ids:
-                for lid in child.active_lot_ids:
-                    if lid:
-                        lot_ids.add(int(lid))
-            elif child.lot_id:
-                lot_ids.add(int(child.lot_id))
-
-    lot_map = {}
-    if lot_ids:
-        lots = db.query(Lot).filter(Lot.id.in_(list(lot_ids))).all()
-        lot_map = {int(l.id): (l.internal_id or l.name) for l in lots}
-
     pond_rows = []
-    for pond, cu in pond_rows_raw:
-        # Recopilar nombres de lotes del padre + hijos
-        lot_names = []
-        
-        if pond.active_lot_ids:
-            for lid in pond.active_lot_ids:
-                label = lot_map.get(int(lid))
-                if label:
-                    lot_names.append(label)
-        elif pond.lot_id and int(pond.lot_id) in lot_map:
-            lot_names.append(lot_map[int(pond.lot_id)])
-        
-        # Lotes de los hijos
-        children = children_map_np.get(pond.id, [])
-        for child in children:
-            if child.active_lot_ids:
-                for lid in child.active_lot_ids:
-                    label = lot_map.get(int(lid))
-                    if label and label not in lot_names:
-                        lot_names.append(label)
-            elif child.lot_id and int(child.lot_id) in lot_map:
-                label = lot_map[int(child.lot_id)]
-                if label not in lot_names:
-                    lot_names.append(label)
-
-        if not lot_names:
-            continue
-
-        feed_cells = []
-        for ft in feed_types:
-            # Suma: padre + todos los hijos
-            prefill_bags = prefill_map.get((int(pond.id), int(ft.id)), 0)
-            for child in children:
-                prefill_bags += prefill_map.get((int(child.id), int(ft.id)), 0)
-            
-            feed_cells.append({
+    for row in _parent_pond_rows(db):
+        feed_cells = [
+            {
                 "feed_type_id": ft.id,
-                "prefill_bags": prefill_bags,
+                "prefill_bags": _sum_over_family(prefill_map, row, ft.id),
                 "available_bags": stock_by_feed[ft.id]["available_bags"],
-            })
-
+            }
+            for ft in feed_types
+        ]
         pond_rows.append({
-            "pond_id": pond.id,
-            "pond_name": pond.name,
-            "cultivation_unit_name": cu.name if cu else "Sin unidad",
-            "biomass_estimated": float(pond.biomass_current or pond.biomass or 0),
-            "lot_names": lot_names,
+            "pond_id": row["pond"].id,
+            "pond_name": row["pond"].name,
+            "cultivation_unit_name": row["cultivation_unit_name"],
+            "biomass_estimated": row["biomass_kg"],
+            "lot_names": row["lot_names"],
             "feed_cells": feed_cells,
         })
 

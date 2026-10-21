@@ -45,12 +45,6 @@ MAX_CLIENT_UUID_LEN = 64
 BOOTSTRAP_EVENT_LIMIT = 30
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def load_thresholds(db) -> dict:

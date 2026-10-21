@@ -14,10 +14,9 @@ desincronizado del histórico.
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
-from jinja2 import Environment, FileSystemLoader
-from pathlib import Path
+from app.core.templating import jinja_env
 from datetime import datetime, date, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Optional
 from urllib.parse import quote_plus
 import calendar
@@ -33,12 +32,11 @@ from app.models.silage_drum_dispatches import SilageDrumDispatch
 from app.models.silage_grinding_events import SilageGrindingEvent
 from app.models.silage_weekly_inspections import SilageWeeklyInspection
 from app.models.silage_acid import SilageAcidLot, SilageAcidMovement
-from app.models.silage_thresholds import SilageThreshold
 from app.services import silage as sg
+from app.services.forms import parse_decimal, parse_int
+from app.api.silage import load_thresholds  # una sola lectura de umbrales (BD + defaults)
 
 router = APIRouter(prefix="/views/ui/ensilaje", tags=["ensilaje-vistas"])
-template_dir = Path(__file__).parent.parent / "templates"
-jinja_env = Environment(loader=FileSystemLoader(str(template_dir)))
 
 DRUM_STATUS_LABELS = {
     "available": "Vacío / disponible",
@@ -48,35 +46,8 @@ DRUM_STATUS_LABELS = {
 }
 
 
-def _parse_decimal(value: Optional[str]) -> Optional[Decimal]:
-    if value is None:
-        return None
-    # OJO: no llamar `text` a esta variable; taparía el sqlalchemy.text importado
-    # arriba y el fallo aparecería recién en otra función.
-    raw = str(value).strip().replace(",", ".")
-    if raw == "":
-        return None
-    try:
-        return Decimal(raw)
-    except (InvalidOperation, ValueError):
-        return None
-
-
-def _parse_int(value: Optional[str]) -> Optional[int]:
-    try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        return None
-
-
-def load_thresholds(db) -> dict:
-    out: dict = {}
-    for row in db.query(SilageThreshold).filter(SilageThreshold.active.is_(True)).all():
-        if row.value is not None:
-            out[row.parameter] = float(row.value)
-    for key, value in sg.DEFAULT_THRESHOLDS.items():
-        out.setdefault(key, value)
-    return out
+_parse_decimal = parse_decimal  # app/services/forms.py
+_parse_int = parse_int
 
 
 def _redirect(path: str, msg: str, error: bool = False):

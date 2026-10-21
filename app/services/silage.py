@@ -33,6 +33,8 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Optional
 
+from app.services.forms import parse_decimal
+
 # --- Umbrales por defecto (replican el seed de silage_thresholds) ------------
 # Los valores de dosis y de cierre salen del procedimiento escrito del PC 03.2:
 # "1 litro de ácido por 4 kg de mortalidad molida" (= 0,25 lts/kg) y "cuando el
@@ -58,17 +60,9 @@ PLAUSIBLE_ACID_LTS = (0.0, 1000.0)
 ZERO = Decimal("0")
 
 
-def _dec(value: Any) -> Optional[Decimal]:
-    """Convierte a Decimal tolerando None, coma decimal y basura. None si no se
-    puede: los campos son opcionales y el motor no debe reventar por un typo."""
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, Decimal):
-        return value
-    try:
-        return Decimal(str(value).strip().replace(",", "."))
-    except (InvalidOperation, ValueError, AttributeError):
-        return None
+# Tolera None, coma decimal y basura (None): los campos son opcionales y el
+# motor no debe reventar por un typo.
+_dec = parse_decimal
 
 
 def _threshold(thresholds: Optional[dict], key: str) -> Decimal:

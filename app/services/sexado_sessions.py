@@ -19,6 +19,7 @@ from app.models.fish import Fish
 from app.models.fish_samplings import FishSampling
 from app.models.ponds_movements import PondMovement
 from app.models.lots import Lot
+from app.services.pit import canonical_pit, canonical_pit_column
 from app.models.sexado_offline_session import SexadoOfflineSession
 from app.models.sexing_offline_operation import SexingOfflineOperation
 
@@ -92,10 +93,7 @@ def resolve_fish_by_pit(db: Session, pit: str):
     # Canonicaliza el PIT quitando ceros a la izquierda (el lector los antepone:
     # 0007CF009C ≡ 7CF009C) en ambos lados: la entrada y la columna guardada,
     # así matchea tags padded ya existentes sin migrar datos.
-    s = str(pit).strip().upper()
-    canon = s.lstrip("0") or s
-    norm_col = func.upper(func.ltrim(func.trim(Fish.internal_id), "0"))
-    return db.query(Fish).filter(norm_col == canon).first()
+    return db.query(Fish).filter(canonical_pit_column(Fish.internal_id) == canonical_pit(pit)).first()
 
 
 def finalize_session(db: Session, session: SexadoOfflineSession, has_pending: bool = False) -> None:

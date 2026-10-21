@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 from pathlib import Path
@@ -97,7 +96,6 @@ def _stop_pond_cache_scheduler() -> None:
 def _stop_wq_alerts_scheduler() -> None:
     shutdown_wq_alerts_scheduler()
 
-templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
 class NoCacheStatic(StaticFiles):

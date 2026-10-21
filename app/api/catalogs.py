@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.species import Species
 from app.models.lots import Lot
 from app.models.cultivation_units import CultivationUnit
@@ -15,12 +15,6 @@ from app.schemas.lots import LotCreate, LotRead
 
 router = APIRouter(prefix="/catalogs", tags=["catalogs"])
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # Species endpoints
 @router.get("/species/", response_model=List[SpeciesRead])

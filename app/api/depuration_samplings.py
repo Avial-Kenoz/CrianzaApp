@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.depuration_periodic_samplings import DepurationPeriodicSampling
 from app.models.fish import Fish
 from app.models.ponds import Pond
@@ -9,12 +9,6 @@ from app.schemas.depuration_periodic_samplings import DepurationPeriodicSampling
 
 router = APIRouter(prefix="/depuration-samplings", tags=["depuration-samplings"])
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.get("/", response_model=List[DepurationPeriodicSamplingRead])
 def list_depuration_samplings(

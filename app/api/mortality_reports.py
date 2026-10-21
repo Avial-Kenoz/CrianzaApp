@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.mortality_reports import MortalityReport
 from app.models.marked_mortality_registries import MarkedMortalityRegistry
 from app.models.unmarked_mortality_registries import UnmarkedMortalityRegistry
@@ -14,12 +14,6 @@ from app.schemas.mortality_reports import (
 
 router = APIRouter(prefix="/mortality-reports", tags=["mortality-reports"])
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.get("/", response_model=List[MortalityReportRead])
 def list_mortality_reports(

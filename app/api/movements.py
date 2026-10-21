@@ -1,52 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from typing import List, Optional
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.models.ponds_movements import PondMovement
 from app.schemas.ponds_movements import PondMovementCreate, PondMovementRead
+from app.api.views import _get_unregistered_balances_by_lot
 
 router = APIRouter(prefix="/movements", tags=["movements"])
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
-def _get_unregistered_balances_by_lot(db: Session, pond_id: int) -> dict[int, int]:
-    """Saldo actual de peces sin PIT tag por lote en un estanque."""
-    incoming_rows = (
-        db.query(PondMovement.lot_id, func.coalesce(func.sum(PondMovement.fish_quantity), 0))
-        .filter(
-            PondMovement.fish_id.is_(None),
-            PondMovement.destiny_pond_id == pond_id,
-            PondMovement.lot_id.isnot(None),
-        )
-        .group_by(PondMovement.lot_id)
-        .all()
-    )
-
-    outgoing_rows = (
-        db.query(PondMovement.lot_id, func.coalesce(func.sum(PondMovement.fish_quantity), 0))
-        .filter(
-            PondMovement.fish_id.is_(None),
-            PondMovement.source_pond_id == pond_id,
-            PondMovement.lot_id.isnot(None),
-        )
-        .group_by(PondMovement.lot_id)
-        .all()
-    )
-
-    balances: dict[int, int] = {}
-    for lot_id, qty in incoming_rows:
-        balances[int(lot_id)] = int(qty or 0)
-    for lot_id, qty in outgoing_rows:
-        balances[int(lot_id)] = balances.get(int(lot_id), 0) - int(qty or 0)
-
-    return {lot_id: qty for lot_id, qty in balances.items() if qty > 0}
 
 @router.get("/", response_model=List[PondMovementRead])
 def list_movements(
@@ -55,7 +18,10 @@ def list_movements(
     to: Optional[str] = None,
     lot_id: Optional[int] = None,
     pond_id: Optional[int] = None,
-    reason: Optional[str] = None
+    reason: Optional[str] = None,
+    # Sin tope devolvía las ~180 mil filas (50 MB, 3 s): más recientes primero.
+    limit: int = Query(500, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
 ):
     query = db.query(PondMovement)
     if from_:
@@ -68,7 +34,7 @@ def list_movements(
         query = query.filter((PondMovement.source_pond_id == pond_id) | (PondMovement.destiny_pond_id == pond_id))
     if reason:
         query = query.filter(PondMovement.movement_reason == reason)
-    return query.all()
+    return query.order_by(PondMovement.id.desc()).offset(offset).limit(limit).all()
 
 @router.post("/", response_model=PondMovementRead)
 def create_movement(movement: PondMovementCreate, db: Session = Depends(get_db)):
@@ -142,7 +108,7 @@ def create_movement(movement: PondMovementCreate, db: Session = Depends(get_db))
                 detail="lot_id is required when fish_id is null (unregistered fish)",
             )
 
-        balances = _get_unregistered_balances_by_lot(db, movement.destiny_pond_id)
+        balances = _get_unregistered_balances_by_lot(movement.destiny_pond_id, db)
         active_unregistered_lots = set(balances.keys())
 
         if active_unregistered_lots and movement.lot_id not in active_unregistered_lots:

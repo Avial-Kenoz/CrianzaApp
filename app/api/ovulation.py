@@ -1,26 +1,17 @@
 """Vistas de ovulación: modelo del ciclo ovárico del esturión."""
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from jinja2 import Environment, FileSystemLoader
+from app.core.templating import jinja_env as _jinja
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
+from app.db.session import get_db
 from app.services import ovulation_cycle
 
 router = APIRouter(prefix="/views", tags=["ovulacion"])
 
-_template_dir = Path(__file__).resolve().parent.parent / "templates"
-_jinja = Environment(loader=FileSystemLoader(str(_template_dir)))
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.get("/ui/ovulacion/ciclo-ovarico", response_class=HTMLResponse)
