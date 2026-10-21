@@ -140,6 +140,13 @@
   .sidebar-item .s-icon { flex-shrink: 0; opacity: .65; }
   .sidebar-item:hover .s-icon, .sidebar-item.active .s-icon { opacity: 1; }
   .sidebar-item.disabled { pointer-events: none; opacity: .3; }
+  /* Punto de tarea pendiente (p. ej. ración por confirmar) */
+  .task-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #ef4444; flex-shrink: 0; vertical-align: middle; margin-left: 6px;
+  }
+  .sidebar-item .task-dot { margin-left: auto; box-shadow: 0 0 0 2px #1a1a2e; }
+  .app-shell.sidebar-collapsed .sidebar-item .task-dot { margin-left: -5px; align-self: flex-start; }
   .sidebar-footer {
     padding: 14px 18px;
     border-top: 1px solid rgba(255,255,255,.07);
@@ -340,6 +347,25 @@
         el.classList.add('active');
       }
     });
+  })();
+
+  // Ración diaria: punto si quedan días pasados por confirmar
+  (function() {
+    var targets = document.querySelectorAll('.sidebar-item[data-match="/views/ui/feed"], [data-racion-pendiente]');
+    if (!targets.length || !window.fetch) return;
+    fetch('/views/ui/feed/racion/pendientes').then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (!d || !d.n) return;
+        var msg = d.n === 1 ? 'Hay 1 día de ración por confirmar' : 'Hay ' + d.n + ' días de ración por confirmar';
+        targets.forEach(function(el) {
+          var dot = document.createElement('span');
+          dot.className = 'task-dot';
+          dot.setAttribute('aria-hidden', 'true');
+          el.appendChild(dot);
+          el.setAttribute('title', msg);
+          el.setAttribute('aria-label', (el.getAttribute('aria-label') || el.textContent.trim()) + ' — ' + msg);
+        });
+      }).catch(function() {});
   })();
 
   // Mobile sidebar toggle

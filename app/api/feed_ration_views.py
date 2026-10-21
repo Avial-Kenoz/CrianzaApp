@@ -173,6 +173,17 @@ def racion_diaria(request: Request, fecha: Optional[str] = None, msg: Optional[s
         db.close()
 
 
+@router.get("/ui/feed/racion/pendientes")
+def racion_pendientes():
+    """Días pasados por confirmar: el menú lateral marca la tarea con un punto."""
+    db = SessionLocal()
+    try:
+        pend = fr.pending_dates(db, date.today())
+        return JSONResponse({"n": len(pend), "fechas": [d.isoformat() for d in pend]})
+    finally:
+        db.close()
+
+
 def _kg(v) -> Optional[Decimal]:
     try:
         d = Decimal(str(v)).quantize(Decimal("0.01"))
