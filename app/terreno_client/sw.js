@@ -5,7 +5,7 @@
 
    OJO: al tocar el cliente hay que subir CACHE, APP_VERSION (core.js) y el ?v=
    de index.html juntos. Al sumar un módulo, agregar su .js a ASSETS. */
-const CACHE = "terreno-v5";
+const CACHE = "terreno-v6";
 const NET_TIMEOUT = 2500;
 const ASSETS = ["./", "./index.html", "./core.js", "./mod_dosificacion.js",
                 "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];

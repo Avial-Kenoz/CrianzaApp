@@ -16,7 +16,7 @@
 
    OJO al desplegar: subir APP_VERSION, CACHE en sw.js y ?v= en index.html. */
 
-const APP_VERSION = "v5";
+const APP_VERSION = "v6";
 const TICK_MS = 60000;
 
 // localStorage puede estar bloqueado (tablet Getac, jul-2026): fallback a memoria.
@@ -227,6 +227,23 @@ const Terreno = (() => {
     $("net").classList.toggle("off", !on);
     $("net-txt").textContent = on ? "en línea" : "sin red";
   }
+  // Pendientes por módulo (círculo rojo): en la pestaña, el total junto al
+  // título y, donde el sistema lo permite, en el ícono de la app instalada
+  // (Badging API: Chrome/Edge de escritorio; en Android no suele mostrarse).
+  const badges = {};
+  function setBadge(moduleId, n) {
+    badges[moduleId] = Math.max(0, n | 0);
+    const tab = $("tab-n-" + moduleId);
+    if (tab) { tab.textContent = badges[moduleId]; tab.classList.toggle("hidden", !badges[moduleId]); }
+    const total = Object.values(badges).reduce((a, b) => a + b, 0);
+    const t = $("total-n");
+    t.textContent = total; t.classList.toggle("hidden", !total);
+    try {
+      if (total && navigator.setAppBadge) navigator.setAppBadge(total).catch(() => {});
+      else if (!total && navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {});
+    } catch (e) { /* sin soporte */ }
+  }
+
   function show(id) {
     const mod = byId[id] || modules[0];
     if (!mod) return;
@@ -243,7 +260,7 @@ const Terreno = (() => {
 
   function buildShell() {
     const tabs = $("tabs"), main = $("modules");
-    tabs.innerHTML = modules.map((m) => `<button id="tab-${m.id}" data-tab="${m.id}">${esc(m.label)}</button>`).join("");
+    tabs.innerHTML = modules.map((m) => `<button id="tab-${m.id}" data-tab="${m.id}">${esc(m.label)}<span class="dot-n hidden" id="tab-n-${m.id}"></span></button>`).join("");
     tabs.classList.toggle("hidden", modules.length < 2);
     main.innerHTML = modules.map((m) => `<section class="mod hidden" id="mod-${m.id}"></section>`).join("");
   }
@@ -275,7 +292,7 @@ const Terreno = (() => {
     idbGet, idbPut, idbDel, toast, esc, uuid, fmtKg, fmtWhen, parseNum, localISO, todayStr,
     fetchJSON, isNetErr,
     enqueue: (moduleId, payload) => enqueue(moduleId, payload),
-    pendingFor, confirm: confirmBox,
+    pendingFor, confirm: confirmBox, setBadge: (id, n) => setBadge(id, n),
     persistent: () => canPersist,
   };
 

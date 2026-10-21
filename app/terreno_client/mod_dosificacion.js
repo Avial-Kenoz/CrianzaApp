@@ -121,6 +121,7 @@
     const { esc, fmtKg, fmtWhen } = C;
 
     if (!boot) {
+      C.setBadge("dosificacion", 0);
       root.innerHTML = `<div class="empty">Aún no hay instrucciones descargadas.<br>Conéctate a la red de la base; se descargan solas.</div>`;
       return;
     }
@@ -133,6 +134,7 @@
               `<span>Hoy</span><span style="text-align:center">Aplicar kg</span><span></span><span></span></div>`;
     }
     let lastUnit = null;
+    let pendientes = 0;
     for (const ins of list) {
       const first = ins.unit_name !== lastUnit;
       lastUnit = ins.unit_name;
@@ -145,10 +147,13 @@
       const val = ins.id in drafts ? drafts[ins.id] : (falta > 0.05 ? fmtKg(falta) : "");
       const isNew = !seen.has(ins.id);
       const noteOpen = ins.id in notes;
+      // Pendiente = aún bajo lo instruido hoy (una instrucción de 0 kg no queda pendiente).
+      const pend = target > 0 && done < target - 0.05;
+      if (pend) pendientes++;
       html += `
         <div class="dz-row ${first ? "first" : ""} ${isNew ? "is-new" : ""}" data-row="${ins.id}">
           <div class="dz-unit">${first ? esc(ins.unit_name) : ""}</div>
-          <div class="dz-prod">${esc(shortLabel(ins))}${isNew ? `<span class="nw">NUEVA</span>` : ""}
+          <div class="dz-prod">${pend ? `<span class="dz-pend" title="Pendiente"></span>` : ""}${esc(shortLabel(ins))}${isNew ? `<span class="nw">NUEVA</span>` : ""}
             ${ins.note ? `<span class="nt">${esc(ins.note)}</span>` : ""}</div>
           <div class="dz-ins">${target > 0 ? fmtKg(target) + " kg" : "No aplicar"}</div>
           <div class="dz-today ${over ? "over" : ""}">
@@ -168,6 +173,7 @@
     const pend = C.pendingFor("dosificacion").length;
     if (pend) html += `<div class="stale">${pend} registro(s) por subir</div>`;
     root.innerHTML = html;
+    C.setBadge("dosificacion", pendientes);
 
     if (focusIns && focusCls) {
       const sel = focusCls === "dz-in" ? `.dz-in[data-ins="${focusIns}"]` : `.dz-note input[data-ins="${focusIns}"]`;
