@@ -269,6 +269,11 @@ def theoretical_by_carril(db: Session, now: Optional[datetime] = None) -> dict:
 # =============================================================================
 HORIZON_DAYS = 4            # programar hasta 4 días adelante (fin de semana / feriado)
 PROGRAM_DAYS = 7            # el programa de bodega se piensa por semana
+# Desde este día todo día pasado se confirma, aunque no se haya programado:
+# un día sin registro en una unidad de la ración queda pendiente hasta que
+# alguien diga si se alimentó o no (antes no se distinguía "no se alimentó"
+# de "nadie lo registró").
+REQUIRED_SINCE = date(2026, 10, 25)
 
 
 def programmed_daily_kg(db: Session) -> dict:
@@ -320,13 +325,78 @@ def terreno_kg(db: Session, since: Optional[date]) -> dict:
     return out
 
 
-def pending_dates(db: Session, today: date) -> list:
-    """Días ya pasados con raciones programadas sin confirmar (más antiguo primero)."""
+def ration_units(db: Session) -> set:
+    """Unidades que están en la ración diaria: alguna vez programadas y con
+    carriles con peces hoy. Jaula y Tranque nunca se programan y quedan fuera
+    solas; una unidad vacía no tiene carriles que confirmar."""
     from app.models.feed import FeedRation
-    return [d for (d,) in (db.query(FeedRation.ration_date)
-                           .filter(FeedRation.ration_date < today,
-                                   FeedRation.status == "programado")
-                           .distinct().order_by(FeedRation.ration_date).all())]
+    alguna_vez = {uid for (uid,) in db.query(FeedRation.cultivation_unit_id)
+                  .filter(FeedRation.cultivation_unit_id.isnot(None)).distinct().all()}
+    return alguna_vez & {c["unit_id"] for c in carril_inputs(db).values()}
+
+
+def last_planner_by_unit(db: Session) -> dict:
+    """{unit_id: user_id} de quien programó la unidad por última vez.
+
+    No hay responsables fijos (vacaciones, permisos): la unidad "es" de quien
+    la viene programando, y cambia sola cuando otro toma el relevo.
+    """
+    from app.models.feed import FeedRation
+    ultimo = (db.query(FeedRation.cultivation_unit_id,
+                       func.max(FeedRation.planned_at).label("at"))
+              .filter(FeedRation.planned_by.isnot(None))
+              .group_by(FeedRation.cultivation_unit_id).subquery())
+    return {uid: by for uid, by in
+            db.query(FeedRation.cultivation_unit_id, FeedRation.planned_by)
+            .join(ultimo, (ultimo.c.cultivation_unit_id == FeedRation.cultivation_unit_id)
+                  & (ultimo.c.at == FeedRation.planned_at))
+            .distinct().all()}
+
+
+def missing_dates_by_unit(db: Session, today: date) -> dict:
+    """{unit_id: [días pasados sin ninguna ración]} desde REQUIRED_SINCE,
+    para las unidades de la ración (ver ration_units)."""
+    from app.models.feed import FeedRation
+    if today <= REQUIRED_SINCE:
+        return {}
+    unidades = ration_units(db)
+    hay = set(db.query(FeedRation.cultivation_unit_id, FeedRation.ration_date)
+              .filter(FeedRation.ration_date >= REQUIRED_SINCE,
+                      FeedRation.ration_date < today,
+                      FeedRation.cultivation_unit_id.in_(unidades))
+              .distinct().all())
+    out: dict = {}
+    for uid in unidades:
+        d = REQUIRED_SINCE
+        while d < today:
+            if (uid, d) not in hay:
+                out.setdefault(uid, []).append(d)
+            d += timedelta(days=1)
+    return out
+
+
+def pending_dates_by_unit(db: Session, today: date) -> dict:
+    """{unit_id: [días pasados por confirmar]} (None = carriles sin unidad).
+
+    Pendiente = programado sin confirmar, o (desde REQUIRED_SINCE) sin ningún
+    registro. Cada unidad se confirma por separado: lo pendiente de una
+    unidad no frena programar las demás.
+    """
+    from app.models.feed import FeedRation
+    out: dict = {}
+    for uid, d in (db.query(FeedRation.cultivation_unit_id, FeedRation.ration_date)
+                   .filter(FeedRation.ration_date < today,
+                           FeedRation.status == "programado")
+                   .distinct().all()):
+        out.setdefault(uid, set()).add(d)
+    for uid, dias in missing_dates_by_unit(db, today).items():
+        out.setdefault(uid, set()).update(dias)
+    return {uid: sorted(ds) for uid, ds in out.items()}
+
+
+def pending_dates(db: Session, today: date) -> list:
+    """Días ya pasados con algo por confirmar en alguna unidad (más antiguo primero)."""
+    return sorted({d for ds in pending_dates_by_unit(db, today).values() for d in ds})
 
 
 def split_kg(total_kg: float, carriles: list, mode: str) -> dict:

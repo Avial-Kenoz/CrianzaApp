@@ -89,6 +89,10 @@
     .badge { font-size: .72rem; font-weight: 700; padding: 2px 8px; border-radius: 9px; }
     .badge.alimentado { background: #dcfce7; color: #166534; }
     .badge.no_alimentado { background: #f3f4f6; color: #4b5563; }
+    .resp { font-size: .76rem; color: #6b7280; display: inline-flex; align-items: center; gap: 4px; }
+    .unit-pend { font-size: .76rem; color: #b91c1c; font-weight: 700; }
+    .unit-pend a { color: #b91c1c; }
+    .unit-confirm { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-top: 1px solid #f0f2f5; background: #fafafa; }
     .empty { background: #fff; border-radius: 12px; padding: 28px; text-align: center; color: #6b7280; }
 
     .toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 18px; border-radius: 10px; font-size: .87rem; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.18); z-index: 9999; display: none; color: #fff; }
@@ -121,7 +125,6 @@
     </a>
     {% endfor %}
     <div class="day-actions">
-      {% if modo == 'programar' and not bloqueado and anterior_n %}<button class="btn btn-fast" onclick="copiarAnterior(this)">Igual que {{ anterior_label }}</button>{% endif %}
       {% if modo == 'programar' %}<a class="btn btn-print" href="/views/ui/feed/racion/imprimir?fecha={{ fecha_iso }}" target="_blank">Imprimir {{ fecha_label }}</a>{% endif %}
     </div>
   </div>
@@ -129,20 +132,23 @@
   {% if modo == 'confirmar' %}
   {# ====================== CONFIRMAR UN DÍA PASADO ====================== #}
     {% set hay = namespace(n=0, pend=0) %}
-    {% for u in unidades %}{% for c in u.carriles %}{% if c.racion %}{% set hay.n = hay.n + 1 %}{% if c.racion.status == 'programado' %}{% set hay.pend = hay.pend + 1 %}{% endif %}{% endif %}{% endfor %}{% endfor %}
+    {% for u in unidades %}{% if u.sin_registro %}{% set hay.n = hay.n + 1 %}{% set hay.pend = hay.pend + 1 %}{% endif %}{% for c in u.carriles %}{% if c.racion %}{% set hay.n = hay.n + 1 %}{% if c.racion.status == 'programado' %}{% set hay.pend = hay.pend + 1 %}{% endif %}{% endif %}{% endfor %}{% endfor %}
     {% if hay.n == 0 %}
-      <div class="empty">No hubo raciones programadas para {{ fecha_label }}.</div>
+      <div class="empty">No hay nada que confirmar para {{ fecha_label }}.</div>
     {% else %}
       <div class="flash {{ 'warn' if hay.pend else 'info' }}">
-        {% if hay.pend %}Confirma lo que se dio el <strong>{{ fecha_label }}</strong>: marca cada carril alimentado (y corrige los kg si se dio otra cantidad) o desmárcalo si no se alimentó.
+        {% if hay.pend %}Confirma lo que se dio el <strong>{{ fecha_label }}</strong> en tus unidades: marca cada carril alimentado (y corrige los kg si se dio otra cantidad) o desmárcalo si no se alimentó. Cada unidad se confirma por separado.
         {% else %}{{ fecha_label }} ya está confirmado.{% endif %}
       </div>
       {% for u in unidades %}
-        {% set rows = u.carriles|selectattr('racion')|list %}
+        {% set rows = u.carriles if u.sin_registro else u.carriles|selectattr('racion')|list %}
         {% if rows %}
-        <div class="unit expanded">
+        {% set por_confirmar = u.sin_registro or 'programado' in rows|map(attribute='racion.status')|list %}
+        <div class="unit expanded" data-unit="{{ u.unit_id }}">
           <div class="unit-head"><span class="unit-name">{{ u.name }}</span>
-            <span class="hint">programado {{ n(rows|map(attribute='racion.kg_planned')|sum, 1) }} kg</span>
+            {% if u.responsable %}<span class="resp">· programa {{ u.responsable }}</span>{% endif %}
+            {% if u.sin_registro %}<span class="unit-pend">No se programó: ¿se alimentó?</span>
+            {% else %}<span class="hint">programado {{ n(rows|map(attribute='racion.kg_planned')|sum, 1) }} kg</span>{% endif %}
             {% if 'programado' in rows|map(attribute='racion.status')|list %}<button class="btn btn-link btn-anular" onclick="anular(this, {{ u.unit_id }}, '{{ u.name }}')">Anular lo programado</button>{% endif %}</div>
           <table>
             <thead><tr><th class="l">Alimentado</th><th class="l">Carril</th><th class="l">Alimento</th><th>Programado kg</th><th>Se dio kg</th></tr></thead>
@@ -150,7 +156,12 @@
             {% for c in rows %}
               {% set r = c.racion %}
               <tr class="conf-row" data-pond="{{ c.pond_id }}">
-                {% if r.status == 'programado' %}
+                {% if not r %}
+                <td class="l"><input type="checkbox" class="fed" onchange="toggleFed(this)"></td>
+                <td class="l">{{ c.name }}</td><td class="l">{{ c.feed_name or '—' }}</td>
+                <td class="muted">no se programó</td>
+                <td><input class="kg-real" type="number" min="0" step="0.1" value="" disabled></td>
+                {% elif r.status == 'programado' %}
                 <td class="l"><input type="checkbox" class="fed" {% if r.kg_planned > 0 %}checked{% endif %} onchange="toggleFed(this)"></td>
                 <td class="l">{{ c.name }}</td><td class="l">{{ c.feed_name or '—' }}</td>
                 <td>{{ n(r.kg_planned, 1) if r.kg_planned > 0 else 'ayuno' }}</td>
@@ -164,36 +175,45 @@
             {% endfor %}
             </tbody>
           </table>
+          {% if por_confirmar %}
+          <div class="unit-confirm">
+            <span class="hint">Se registra a nombre de quien aparece en <strong>Registra</strong>.</span>
+            <span class="spacer"></span>
+            {% if u.sin_registro %}<button class="btn btn-fast" onclick="confirmarUnidad(this, true)">No se alimentó</button>{% endif %}
+            <button class="btn btn-primary" onclick="confirmarUnidad(this)">Confirmar {{ u.name }}</button>
+          </div>
+          {% endif %}
         </div>
         {% endif %}
       {% endfor %}
-      {% if hay.pend %}
-      <div class="confirm-bar">
-        <span class="hint">Se registra a nombre de quien aparece en <strong>Registra</strong>.</span>
-        <span class="spacer"></span>
-        <button class="btn btn-primary" onclick="confirmarDia(this)">Confirmar {{ fecha_label }}</button>
-      </div>
-      {% endif %}
     {% endif %}
 
   {% else %}
   {# ====================== PROGRAMAR ====================== #}
-    {% if bloqueado %}
-      <div class="flash error">Hay {{ pendientes|length }} día{{ 's' if pendientes|length > 1 else '' }} sin confirmar
-        ({% for d in pendientes %}<a href="?fecha={{ d.isoformat() }}">{{ d.strftime('%d-%m') }}</a>{{ ', ' if not loop.last }}{% endfor %}).
-        Confírmalos antes de programar.</div>
-    {% else %}
+    {% if bloqueadas %}
+      <div class="flash error">Con días sin confirmar (no se pueden programar hasta confirmarlos):
+        {% for u in bloqueadas %}{{ u.name }}{% if u.responsable %} ({{ u.responsable }}){% endif %} —
+          {% for d in u.pendientes %}<a href="?fecha={{ d.isoformat() }}">{{ d.strftime('%d-%m') }}</a>{{ ', ' if not loop.last }}{% endfor %}{{ '; ' if not loop.last }}{% endfor %}.</div>
+    {% endif %}
+    {% if faltan %}
+      <div class="flash warn">Falta programar {{ fecha_label }}:
+        {% for u in faltan %}{{ u.name }}{% if u.responsable %} ({{ u.responsable }}){% endif %}{{ ', ' if not loop.last }}{% endfor %}.</div>
+    {% endif %}
       <div class="flash info">Programando <strong>{{ fecha_label }}</strong>. El kg/día parte de la dosis del programa de bodega (sacos ÷ 7);
         ajústalo con la dieta teórica y el techo del biofiltro.{% if terreno_desde %} En terreno = sacado de bodega − alimentado desde el {{ terreno_desde.strftime("%d-%m") }}.{% else %} En terreno se empieza a contar con la próxima salida de bodega.{% endif %}</div>
-    {% endif %}
+
 
     {% for u in unidades %}
     {% set prog = u.racion_kg %}
+    {% set bloqueado = u.bloqueado %}
     <div class="unit{% if prog is not none %}{{ ' is-programado' if prog > 0 else ' is-ayuno' }}{% endif %}" data-unit="{{ u.unit_id }}" data-techo="{{ u.techo_kg or '' }}">
       <div class="unit-head">
         <span class="unit-name">{{ u.name }}</span>
         {% if prog is not none %}<span class="unit-state ok">{{ 'programado ' ~ n(prog, 1) ~ ' kg' if prog > 0 else 'ayuno programado' }}</span>{% endif %}
         <span class="hint">{{ u.carriles|length }} carril{{ 'es' if u.carriles|length != 1 else '' }}</span>
+        {% if u.responsable %}<span class="resp">· programa {{ u.responsable }}</span>{% endif %}
+        {% if bloqueado %}<span class="unit-pend">sin confirmar: {% for d in u.pendientes %}<a href="?fecha={{ d.isoformat() }}">{{ d.strftime('%d-%m') }}</a>{{ ', ' if not loop.last }}{% endfor %}</span>{% endif %}
+        {% if u.anterior and not bloqueado and 'programado' not in u.racion_status and 'alimentado' not in u.racion_status and 'no_alimentado' not in u.racion_status %}<button class="btn btn-link" onclick="copiarAnterior(this, {{ u.unit_id }}, '{{ u.name }}')">Igual que {{ anterior_label }}</button>{% endif %}
         {% if 'programado' in u.racion_status and not bloqueado %}<button class="btn btn-link btn-anular" onclick="anular(this, {{ u.unit_id }}, '{{ u.name }}')">Anular lo programado</button>{% endif %}
       </div>
       <div class="chips">
@@ -368,13 +388,12 @@
     try { await post('/views/ui/feed/racion/anular', {fecha: FECHA, unit_id: unitId}); location.reload(); }
     catch (e) { toast(e.message, false); btn.disabled = false; }
   }
-  async function copiarAnterior(btn) {
+  async function copiarAnterior(btn, unitId, nombre) {
     const uid = needWho(); if (!uid) return;
-    if (FECHA_N && !confirm('Ya hay unidades programadas para ' + FECHA_LABEL + '. ¿Reemplazarlas por lo del día anterior?')) return;
     btn.disabled = true;
     try {
-      const j = await post('/views/ui/feed/racion/copiar', {fecha: FECHA, user_id: uid});
-      toast(j.copiadas + ' carriles programados igual que el día anterior', true);
+      const j = await post('/views/ui/feed/racion/copiar', {fecha: FECHA, user_id: uid, unit_id: unitId});
+      toast(nombre + ': ' + j.copiadas + ' carriles programados igual que el día anterior', true);
       setTimeout(() => location.reload(), 600);
     } catch (e) { toast(e.message, false); btn.disabled = false; }
   }
@@ -384,9 +403,14 @@
     inp.disabled = !cb.checked;
     if (cb.checked && !(parseFloat(inp.value) > 0)) inp.focus();
   }
-  async function confirmarDia(btn) {
+  async function confirmarUnidad(btn, ayuno) {
     const uid = needWho(); if (!uid) return;
-    const items = [...document.querySelectorAll('tr.conf-row')].filter(r => r.querySelector('.fed')).map(r => ({
+    const unit = btn.closest('.unit');
+    if (ayuno) {
+      if (!confirm('¿Registrar que ' + unit.querySelector('.unit-name').textContent + ' no se alimentó el ' + FECHA_LABEL + '?')) return;
+      unit.querySelectorAll('.fed').forEach(cb => { cb.checked = false; });
+    }
+    const items = [...unit.querySelectorAll('tr.conf-row')].filter(r => r.querySelector('.fed')).map(r => ({
       pond_id: r.dataset.pond, fed: r.querySelector('.fed').checked,
       kg: parseFloat(r.querySelector('.kg-real').value) || 0,
     }));
@@ -394,12 +418,13 @@
     if (malo) { toast('Hay un carril marcado como alimentado sin kg', false); return; }
     btn.disabled = true;
     try {
-      const j = await post('/views/ui/feed/racion/confirmar', {fecha: FECHA, user_id: uid, items});
-      location.href = j.pendientes.length ? ('?fecha=' + j.pendientes[0]) : '?';
+      const j = await post('/views/ui/feed/racion/confirmar', {fecha: FECHA, user_id: uid, unit_id: unit.dataset.unit, items});
+      if (j.queda_en_fecha) location.reload();
+      else location.href = j.pendientes.length ? ('?fecha=' + j.pendientes[0]) : '?';
     } catch (e) { toast(e.message, false); btn.disabled = false; }
   }
 
-  document.querySelectorAll('.unit[data-unit]').forEach(u => recalc(u.querySelector('.kg-input')));
+  document.querySelectorAll('.unit[data-techo]').forEach(u => recalc(u.querySelector('.kg-input')));
 </script>
 </body>
 </html>

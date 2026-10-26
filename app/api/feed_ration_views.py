@@ -60,6 +60,28 @@ def _build_context(db, fecha: date, today: date) -> dict:
     raciones = {r.pond_id: r for r in
                 db.query(FeedRation).filter(FeedRation.ration_date == fecha).all()}
     units = {u.id: u for u in db.query(CultivationUnit).all()}
+    modo = "confirmar" if fecha < today else "programar"
+    users = _users(db)
+    user_label = {u["id"]: u["label"] for u in users}
+    en_racion = {(k or SIN_UNIDAD) for k in fr.ration_units(db)}
+    planner = {(k or SIN_UNIDAD): v for k, v in fr.last_planner_by_unit(db).items()}
+    pend_unit = {(k or SIN_UNIDAD): v for k, v in fr.pending_dates_by_unit(db, today).items()}
+    sin_registro = ({(k or SIN_UNIDAD) for k, v in fr.missing_dates_by_unit(db, today).items() if fecha in v}
+                    if modo == "confirmar" else set())
+
+    # Carriles con ración ese día que ya no tienen peces (se vaciaron después
+    # de programar): igual hay que verlos para poder confirmarlos.
+    huerfanos = [pid for pid in raciones if pid not in carriles] if fecha < today else []
+    if huerfanos:
+        feeds = {f.id: f.name for f in db.query(FeedType).all()}
+        for p in db.query(Pond).filter(Pond.id.in_(huerfanos)).all():
+            r = raciones[p.id]
+            carriles[p.id] = {
+                "pond_id": p.id, "name": "{} (sin peces)".format(p.name),
+                "unit_id": r.cultivation_unit_id, "biomass_kg": 0.0, "weight_g": None,
+                "feed_name": feeds.get(r.feed_type_id), "teorica": None,
+                "temp_c": None, "temp_fuente": None,
+            }
 
     por_unidad: dict = {}
     for c in carriles.values():
@@ -97,9 +119,17 @@ def _build_context(db, fecha: date, today: date) -> dict:
                      if (cr["unit_id"] or SIN_UNIDAD) == uid and cr["temp_c"] is not None), None)
         temp_fuente = next((cr["temp_fuente"] for cr in carriles.values()
                             if (cr["unit_id"] or SIN_UNIDAD) == uid and cr["temp_fuente"]), None)
+        resp = planner.get(uid)
         unidades.append({
             "unit_id": uid,
             "name": u.name if u else "Sin unidad",
+            # Quien la programó por última vez (solo informativo).
+            "responsable_id": resp,
+            "responsable": user_label.get(resp) if resp else None,
+            "en_racion": uid in en_racion,
+            "pendientes": pend_unit.get(uid, []),
+            "bloqueado": modo == "programar" and bool(pend_unit.get(uid)),
+            "sin_registro": uid in sin_registro,
             "carriles": cs,
             "biomass_kg": sum(c["biomass_kg"] for c in cs),
             "temp_c": temp,
@@ -118,7 +148,7 @@ def _build_context(db, fecha: date, today: date) -> dict:
         })
     unidades.sort(key=lambda x: (x["unit_id"] == SIN_UNIDAD, x["name"]))
 
-    pendientes = fr.pending_dates(db, today)
+    pendientes = sorted({d for ds in pend_unit.values() for d in ds})
     dias = ([{"fecha": d, "label": _day_label(d, today), "pendiente": True} for d in pendientes]
             + [{"fecha": today + timedelta(days=i), "label": _day_label(today + timedelta(days=i), today),
                 "pendiente": False} for i in range(fr.HORIZON_DAYS + 1)])
@@ -130,8 +160,11 @@ def _build_context(db, fecha: date, today: date) -> dict:
         d["programado"] = d["fecha"] in programados or d["pendiente"]
         d["iso"] = d["fecha"].isoformat()
 
-    modo = "confirmar" if fecha < today else "programar"
     anterior = fecha - timedelta(days=1)
+    anterior_units = {(k or SIN_UNIDAD) for (k,) in db.query(FeedRation.cultivation_unit_id)
+                      .filter(FeedRation.ration_date == anterior).distinct().all()}
+    for u in unidades:
+        u["anterior"] = u["unit_id"] in anterior_units
     return {
         "anterior_label": _day_label(anterior, today),
         "anterior_n": db.query(FeedRation.id).filter(FeedRation.ration_date == anterior).count(),
@@ -140,10 +173,13 @@ def _build_context(db, fecha: date, today: date) -> dict:
         "fecha_label": _day_label(fecha, today),
         "today": today, "modo": modo,
         "dias": dias, "pendientes": pendientes,
-        "bloqueado": modo == "programar" and bool(pendientes),
+        "bloqueadas": [u for u in unidades if u["bloqueado"]],
+        # Solo unidades de la ración: Jaula y Tranque no se programan.
+        "faltan": ([u for u in unidades if u["racion_kg"] is None and u["en_racion"]]
+                   if modo == "programar" else []),
         "unidades": unidades,
         "terreno_desde": since,
-        "users": _users(db),
+        "users": users,
         "horizon": fr.HORIZON_DAYS,
     }
 
@@ -197,6 +233,27 @@ def _user_id(db, v) -> Optional[int]:
     return uid if db.query(User.id).filter(User.id == uid, User.active.is_(True)).first() else None
 
 
+def _unit_id_param(v) -> Optional[int]:
+    """unit_id del payload; SIN_UNIDAD (0) son los carriles sin unidad."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pendiente_msg(db, today, unit_ids) -> Optional[str]:
+    """Error si alguna de las unidades tiene días pasados sin confirmar."""
+    pend = fr.pending_dates_by_unit(db, today)
+    for uid in unit_ids:
+        dias = pend.get(uid or None)
+        if dias:
+            nombre = (db.query(CultivationUnit.name).filter(CultivationUnit.id == uid).scalar()
+                      if uid else "Sin unidad")
+            return "{}: primero confirma {}".format(
+                nombre, ", ".join(d.strftime("%d-%m") for d in dias))
+    return None
+
+
 @router.post("/ui/feed/racion/programar")
 async def racion_programar(request: Request):
     """Programa la ración de una unidad para un día: kg por carril (0 = ayuno)."""
@@ -210,8 +267,6 @@ async def racion_programar(request: Request):
             return JSONResponse({"ok": False, "error": "Fecha inválida"}, status_code=400)
         if not (today <= fecha <= today + timedelta(days=fr.HORIZON_DAYS)):
             return JSONResponse({"ok": False, "error": "Solo se programa desde hoy hasta {} días adelante".format(fr.HORIZON_DAYS)}, status_code=400)
-        if fr.pending_dates(db, today):
-            return JSONResponse({"ok": False, "error": "Primero confirma los días pasados que quedaron programados"}, status_code=409)
         uid = _user_id(db, payload.get("user_id"))
         if uid is None:
             return JSONResponse({"ok": False, "error": "Indica quién programa"}, status_code=400)
@@ -222,6 +277,13 @@ async def racion_programar(request: Request):
         items = payload.get("items") or []
         if not items:
             return JSONResponse({"ok": False, "error": "Sin carriles"}, status_code=400)
+        try:
+            unidades = {carriles[int(it.get("pond_id"))]["unit_id"] for it in items}
+        except (KeyError, TypeError, ValueError):
+            return JSONResponse({"ok": False, "error": "Carril inválido"}, status_code=400)
+        err = _pendiente_msg(db, today, unidades)
+        if err:
+            return JSONResponse({"ok": False, "error": err}, status_code=409)
         now = datetime.now()
         for it in items:
             try:
@@ -257,7 +319,9 @@ async def racion_programar(request: Request):
 
 @router.post("/ui/feed/racion/confirmar")
 async def racion_confirmar(request: Request):
-    """Confirma un día ya pasado: por carril, alimentado (con kg reales) o no."""
+    """Confirma una unidad en un día ya pasado: por carril, alimentado (con kg
+    reales) o no. Por unidad: cada uno confirma lo que sabe sin registrar las
+    demás; puede confirmar quien no la programó."""
     payload = await request.json()
     db = SessionLocal()
     try:
@@ -271,14 +335,30 @@ async def racion_confirmar(request: Request):
         uid = _user_id(db, payload.get("user_id"))
         if uid is None:
             return JSONResponse({"ok": False, "error": "Indica quién confirma"}, status_code=400)
+        unit_id = _unit_id_param(payload.get("unit_id"))
+        if unit_id is None:
+            return JSONResponse({"ok": False, "error": "Unidad inválida"}, status_code=400)
         items = {}
         for it in payload.get("items") or []:
             try:
                 items[int(it.get("pond_id"))] = it
             except (TypeError, ValueError):
                 return JSONResponse({"ok": False, "error": "Carril inválido"}, status_code=400)
-        rows = (db.query(FeedRation)
+        rows = (_unit_filter(db.query(FeedRation), unit_id)
                 .filter(FeedRation.ration_date == fecha, FeedRation.status == "programado").all())
+        if not rows:
+            # Día sin registro: no se programó, pero igual se confirma qué
+            # pasó. Se crean las filas sin programador (kg_planned = 0).
+            if _unit_filter(db.query(FeedRation.id), unit_id).filter(FeedRation.ration_date == fecha).first():
+                return JSONResponse({"ok": False, "error": "Esa unidad ya está confirmada ese día"}, status_code=409)
+            carriles = [c for c in fr.carril_inputs(db).values() if (c["unit_id"] or SIN_UNIDAD) == unit_id]
+            if not carriles:
+                return JSONResponse({"ok": False, "error": "Esa unidad no tiene carriles"}, status_code=404)
+            for c in carriles:
+                r = FeedRation(ration_date=fecha, pond_id=c["pond_id"], cultivation_unit_id=c["unit_id"],
+                               feed_type_id=c["feed_type_id"], kg_planned=Decimal("0"), status="programado")
+                db.add(r)
+                rows.append(r)
         faltan = [r for r in rows if r.pond_id not in items]
         if faltan:
             return JSONResponse({"ok": False, "error": "Faltan carriles por confirmar"}, status_code=400)
@@ -297,7 +377,9 @@ async def racion_confirmar(request: Request):
             note = (it.get("note") or "").strip()
             r.note = note or None
         db.commit()
-        return JSONResponse({"ok": True, "pendientes": [d.isoformat() for d in fr.pending_dates(db, today)]})
+        pend = fr.pending_dates(db, today)
+        return JSONResponse({"ok": True, "queda_en_fecha": fecha in pend,
+                             "pendientes": [d.isoformat() for d in pend]})
     except Exception as e:
         db.rollback()
         return JSONResponse({"ok": False, "error": "Error: {}".format(e)}, status_code=500)
@@ -343,12 +425,12 @@ async def racion_anular(request: Request):
 
 @router.post("/ui/feed/racion/copiar")
 async def racion_copiar(request: Request):
-    """Programa un día igual que el anterior, en todas las unidades.
+    """Programa una unidad igual que el día anterior.
 
     Del día anterior se toma lo que se dio si ya está confirmado (kg reales;
-    no alimentado = 0) y lo programado si no. Sobrescribe lo programado del
-    día destino; lo ya confirmado no se toca. El alimento de cada carril es el
-    de hoy (el último que salió de bodega para él).
+    no alimentado = 0) y lo programado si no. Solo llena carriles sin nada
+    ese día: nunca pisa lo que otro ya programó. El alimento de cada carril
+    es el de hoy (el último que salió de bodega para él).
     """
     payload = await request.json()
     db = SessionLocal()
@@ -360,15 +442,19 @@ async def racion_copiar(request: Request):
             return JSONResponse({"ok": False, "error": "Fecha inválida"}, status_code=400)
         if not (today <= fecha <= today + timedelta(days=fr.HORIZON_DAYS)):
             return JSONResponse({"ok": False, "error": "Solo se programa desde hoy hasta {} días adelante".format(fr.HORIZON_DAYS)}, status_code=400)
-        if fr.pending_dates(db, today):
-            return JSONResponse({"ok": False, "error": "Primero confirma los días pasados que quedaron programados"}, status_code=409)
         uid = _user_id(db, payload.get("user_id"))
         if uid is None:
             return JSONResponse({"ok": False, "error": "Indica quién programa"}, status_code=400)
-        origen = (db.query(FeedRation)
+        unit_id = _unit_id_param(payload.get("unit_id"))
+        if unit_id is None:
+            return JSONResponse({"ok": False, "error": "Unidad inválida"}, status_code=400)
+        err = _pendiente_msg(db, today, [unit_id or None])
+        if err:
+            return JSONResponse({"ok": False, "error": err}, status_code=409)
+        origen = (_unit_filter(db.query(FeedRation), unit_id)
                   .filter(FeedRation.ration_date == fecha - timedelta(days=1)).all())
         if not origen:
-            return JSONResponse({"ok": False, "error": "El día anterior no tiene nada programado"}, status_code=404)
+            return JSONResponse({"ok": False, "error": "El día anterior no tiene nada programado para esta unidad"}, status_code=404)
         carriles = fr.carril_inputs(db)
         destino = {r.pond_id: r for r in
                    db.query(FeedRation).filter(FeedRation.ration_date == fecha).all()}
@@ -378,12 +464,10 @@ async def racion_copiar(request: Request):
             c = carriles.get(o.pond_id)
             if c is None:
                 continue                       # el carril ya no tiene peces
-            r = destino.get(o.pond_id)
-            if r is not None and r.status != "programado":
-                continue                       # confirmado: no se pisa
-            if r is None:
-                r = FeedRation(ration_date=fecha, pond_id=o.pond_id)
-                db.add(r)
+            if o.pond_id in destino:
+                continue                       # ya tiene algo ese día: no se pisa
+            r = FeedRation(ration_date=fecha, pond_id=o.pond_id)
+            db.add(r)
             if o.status == "alimentado":
                 kg = o.kg_fed
             elif o.status == "no_alimentado":
