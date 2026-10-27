@@ -151,6 +151,46 @@ async def terreno_anular(request: Request, count_id: int):
         db.close()
 
 
+@router.post("/ui/feed/terreno/reparto")
+async def terreno_reparto(request: Request):
+    p = await request.json()
+    db = SessionLocal()
+    try:
+        uid, _ = _who(db, p.get("user_id"))
+        if uid is None:
+            return JSONResponse({"ok": False, "error": "Elige quién registra"}, status_code=422)
+        try:
+            ft.repartir(db, pond_id=int(p.get("pond_id")), feed_type_id=p.get("feed_type_id") or None,
+                        fecha=_fecha(p.get("fecha"), date.today()), destinos=p.get("destinos") or [],
+                        user_id=uid, note=p.get("note"))
+        except (ft.ConteoError, TypeError, ValueError) as e:
+            db.rollback()
+            return JSONResponse({"ok": False, "error": str(e) or "Datos inválidos"}, status_code=422)
+        db.commit()
+        return JSONResponse({"ok": True})
+    finally:
+        db.close()
+
+
+@router.post("/ui/feed/terreno/reparto/{move_id}/anular")
+async def terreno_reparto_anular(request: Request, move_id: int):
+    p = await request.json()
+    db = SessionLocal()
+    try:
+        uid, _ = _who(db, p.get("user_id"))
+        if uid is None:
+            return JSONResponse({"ok": False, "error": "Elige quién registra"}, status_code=422)
+        try:
+            ft.anular_reparto(db, move_id)
+        except ft.ConteoError as e:
+            db.rollback()
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=422)
+        db.commit()
+        return JSONResponse({"ok": True})
+    finally:
+        db.close()
+
+
 @router.post("/ui/feed/terreno/tope")
 async def terreno_tope(request: Request):
     p = await request.json()
@@ -184,7 +224,7 @@ def terreno_inicial(request: Request):
     try:
         today = date.today()
         fecha = _fecha(request.query_params.get("fecha"), today)
-        momento = request.query_params.get("momento") or "antes"
+        momento = request.query_params.get("momento") or "despues"
         st = ft.estado(db, today)
         evs = ft.events(db)
         filas = []
@@ -219,7 +259,7 @@ async def terreno_inicial_save(request: Request):
                                                  FeedTerrenoCount.annulled_at.is_(None)).first():
             return JSONResponse({"ok": False, "error": "El conteo inicial ya se hizo"}, status_code=409)
         fecha = _fecha(p.get("fecha"), date.today())
-        momento = p.get("momento") or "antes"
+        momento = p.get("momento") or "despues"
         n = 0
         for f in p.get("filas") or []:
             if f.get("counted_kg") in (None, ""):

@@ -51,8 +51,11 @@
     .btn-light { background: #fff; color: #374151; border: 1px solid #d1d5db; }
     .btn-light:hover { border-color: #0f766e; }
 
-    dialog { border: none; border-radius: 14px; padding: 0; width: min(560px, 94vw); box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+    dialog { border: none; border-radius: 14px; padding: 0; width: min(560px, 94vw); box-shadow: 0 10px 40px rgba(0,0,0,.25); margin: auto; max-height: 92vh; }
     dialog::backdrop { background: rgba(17,24,39,.45); }
+    #dlg-rep { width: min(920px, 96vw); }
+    #dlg-rep td, #dlg-rep th { padding: 8px 12px; }
+    #dlg-rep td { font-size: .86rem; }
     .dlg-head { padding: 14px 18px; border-bottom: 1px solid #e5e7eb; font-weight: 700; }
     .dlg-head small { display: block; font-weight: 400; color: #6b7280; font-size: .78rem; margin-top: 2px; }
     .dlg-body { padding: 14px 18px; display: grid; gap: 10px; font-size: .84rem; }
@@ -144,6 +147,7 @@
             {% if a %}
               <button class="btn btn-primary" onclick='abrirConteo({{ {"pond_id": c.pond_id, "name": c.name, "feed_type_id": a.feed_type_id, "feed_name": a.feed_name, "bag_kg": a.bag_kg}|tojson }}, false)'>Contar</button>
               <button class="btn btn-light" onclick='abrirConteo({{ {"pond_id": c.pond_id, "name": c.name, "feed_type_id": a.feed_type_id, "feed_name": a.feed_name, "bag_kg": a.bag_kg}|tojson }}, true)' title="Registrar que el tarro quedó vacío y adónde se fue lo que tenía">Vaciar</button>
+              {% if a.saldo_kg > 0.5 %}<button class="btn btn-light" onclick='abrirReparto({{ c.pond_id }}, {{ a.feed_type_id|tojson }}, {{ a.feed_name|tojson }})' title="Pasar parte de este alimento a otros tarros de la unidad (no es un conteo)">Repartir</button>{% endif %}
             {% endif %}
             {% if loop.first %}<a class="btn btn-light" href="/views/ui/feed/terreno/carril/{{ c.pond_id }}">Movimientos</a>{% endif %}
             </div>
@@ -185,6 +189,32 @@
     <button class="btn btn-primary" id="c-save" onclick="guardarConteo()">Guardar</button>
   </div>
 </dialog>
+<dialog id="dlg-rep">
+  <div class="dlg-head"><span id="rep-title">Repartir</span><small id="rep-sub"></small></div>
+  <div class="dlg-body">
+    <div class="row">
+      <label for="rep-fecha">Fecha</label><input type="date" id="rep-fecha" max="{{ today.isoformat() }}" min="{{ since.isoformat() if since }}">
+      <span style="flex:1"></span>
+      <button class="btn btn-light" type="button" onclick="repIgualar()" title="Que todos los tarros alcancen los mismos días según lo que come cada uno">Igualar días</button>
+      <button class="btn btn-light" type="button" onclick="repIguales()" title="Repartir todo el alimento en partes iguales">Partes iguales</button>
+      <button class="btn btn-light" type="button" onclick="repLimpiar()">Limpiar</button>
+    </div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th class="l">Carril</th><th>Tiene de este alimento</th><th>Tarro total</th><th>Ritmo kg/d</th><th>Alcanza</th><th>Recibe kg</th></tr></thead>
+      <tbody id="rep-dest"></tbody>
+    </table></div>
+    <div class="kpis">
+      <div class="kpi">Tiene el origen<b id="rep-hay">—</b></div>
+      <div class="kpi">Se reparte<b id="rep-sale">—</b></div>
+      <div class="kpi" id="rep-queda-box">Queda en el origen<b id="rep-queda">—</b></div>
+    </div>
+    <div class="row"><label for="rep-note">Nota</label><textarea id="rep-note" placeholder="opcional"></textarea></div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn btn-light" onclick="document.getElementById('dlg-rep').close()">Cancelar</button>
+    <button class="btn btn-primary" id="rep-save" onclick="guardarReparto()">Repartir</button>
+  </div>
+</dialog>
 <div id="toast" class="toast"></div>
 
 {% include '_terreno_motivos.html' %}
@@ -192,6 +222,12 @@
   const TODAY = "{{ today.isoformat() }}";
   const MOTIVOS = {{ motivos|tojson }};
   const CARRILES = {{ carriles_destino|tojson }};
+  // Tarros para repartir: saldo por alimento, ritmo y grupo (misma unidad, o las salas de Hatchery).
+  const TARROS = [{% for u in unidades %}{% for c in u.carriles %}
+    {pond_id: {{ c.pond_id }}, name: {{ c.name|tojson }}, unit: {{ u.name|tojson }}, grupo: {{ u.grupo|tojson }},
+     ritmo: {{ c.ritmo_kg or 0 }}, total: {{ c.total_kg }}, con_peces: {{ 'true' if c.con_peces else 'false' }},
+     saldos: { {% for a in c.alimentos %}"{{ a.feed_type_id }}": {{ a.saldo_kg }}{{ ", " if not loop.last }}{% endfor %} } },{% endfor %}{% endfor %}
+  ];
   const who = document.getElementById('who');
   try { const v = localStorage.getItem('racion_who'); if (v && [...who.options].some(o => o.value === v)) who.value = v; } catch (e) {}
   who.addEventListener('change', () => { try { localStorage.setItem('racion_who', who.value); } catch (e) {} });
@@ -268,6 +304,71 @@
         momento: $('c-momento').value, counted_kg: parseFloat($('c-kg').value.replace(',', '.')),
         lineas: editor.payload(), note: $('c-note').value});
       toast(cur.name + ': ' + (cur.vaciar ? 'tarro vaciado' : 'conteo registrado'), true);
+      setTimeout(() => location.reload(), 600);
+    } catch (e) { toast(e.message, false); btn.disabled = false; }
+  }
+
+  // ---- Repartir: mover alimento entre tarros (no es un conteo) ----
+  let rep = null;
+  function r1(v) { return Math.round(v * 10) / 10; }
+  function abrirReparto(pondId, feedId, feedName) {
+    const o = TARROS.find(t => t.pond_id === pondId);
+    const hay = o.saldos[String(feedId)] || 0;
+    const dest = TARROS.filter(t => t.grupo === o.grupo && t.pond_id !== pondId && (t.con_peces || t.total > 0));
+    rep = {o, feedId, hay, dest};
+    $('rep-title').textContent = 'Repartir ' + (feedName || 'alimento') + ' de ' + o.name;
+    $('rep-sub').textContent = o.unit + ' · no es un conteo: el total no cambia ni toca la bodega';
+    $('rep-fecha').value = TODAY; $('rep-note').value = '';
+    const varias = new Set(dest.map(t => t.unit)).size > 1 || dest.some(t => t.unit !== o.unit);
+    $('rep-dest').innerHTML = dest.map(t => {
+      const tiene = t.saldos[String(feedId)] || 0;
+      const alc = t.ritmo > 0 ? r1(t.total / t.ritmo) : null;
+      return '<tr data-pond="' + t.pond_id + '"><td class="l">' + (varias ? '<span class="muted">' + t.unit + ' · </span>' : '') + t.name + '</td>' +
+             '<td>' + fmt(tiene) + '</td><td>' + fmt(t.total) + '</td><td>' + (t.ritmo ? r1(t.ritmo) : '—') + '</td>' +
+             '<td>' + (alc === null ? '—' : alc + ' d') + '</td>' +
+             '<td><input class="rep-kg" type="number" min="0" step="0.1" style="width:80px;padding:5px 7px;border:1px solid #d1d5db;border-radius:7px;text-align:right;font-weight:700"></td></tr>';
+    }).join('') || '<tr><td class="l muted" colspan="6">No hay otros tarros en esta unidad.</td></tr>';
+    document.querySelectorAll('#rep-dest .rep-kg').forEach(i => i.addEventListener('input', repResumen));
+    repResumen();
+    $('dlg-rep').showModal();
+  }
+  function repInputs() { return [...document.querySelectorAll('#rep-dest tr[data-pond]')].map(tr => ({tr, t: rep.dest.find(x => x.pond_id === +tr.dataset.pond), i: tr.querySelector('.rep-kg')})); }
+  function repSale() { return repInputs().reduce((s, x) => s + (parseFloat((x.i.value || '0').replace(',', '.')) || 0), 0); }
+  function repResumen() {
+    const sale = repSale(), queda = rep.hay - sale;
+    $('rep-hay').textContent = fmt(rep.hay); $('rep-sale').textContent = fmt(sale); $('rep-queda').textContent = fmt(queda);
+    $('rep-queda-box').className = 'kpi' + (queda < -0.05 ? ' dif-neg' : '');
+  }
+  function repLimpiar() { repInputs().forEach(x => { x.i.value = ''; }); repResumen(); }
+  function repIguales() {
+    const xs = repInputs(); if (!xs.length) return;
+    const parte = Math.floor(rep.hay / xs.length * 10) / 10;
+    xs.forEach(x => { x.i.value = parte || ''; }); repResumen();
+  }
+  // Igualar días: todos los tarros (origen incluido) quedan con los mismos días según su ritmo;
+  // nunca se reparte más de lo que tiene el origen de este alimento.
+  function repIgualar() {
+    const xs = repInputs().filter(x => x.t.ritmo > 0);
+    const todos = [rep.o, ...xs.map(x => x.t)].filter(t => t.ritmo > 0);
+    if (!xs.length || !todos.length) { toast('Ningún tarro de destino tiene ración: usa Partes iguales o escribe los kg', false); return; }
+    const dias = todos.reduce((s, t) => s + t.total, 0) / todos.reduce((s, t) => s + t.ritmo, 0);
+    let pide = xs.map(x => Math.max(0, dias * x.t.ritmo - x.t.total));
+    const suma = pide.reduce((s, v) => s + v, 0);
+    if (suma > rep.hay) pide = pide.map(v => v * rep.hay / suma);
+    repLimpiar();
+    xs.forEach((x, k) => { const v = Math.floor(pide[k] * 10) / 10; x.i.value = v > 0 ? v : ''; });
+    repResumen();
+  }
+  async function guardarReparto() {
+    const uid = needWho(); if (!uid) return;
+    const destinos = repInputs().map(x => ({pond_id: x.t.pond_id, kg: parseFloat((x.i.value || '0').replace(',', '.')) || 0})).filter(d => d.kg > 0);
+    if (!destinos.length) { toast('Indica cuántos kg van a cada carril', false); return; }
+    if (repSale() > rep.hay + 0.05) { toast('Se reparte más de lo que tiene el tarro', false); return; }
+    const btn = $('rep-save'); btn.disabled = true;
+    try {
+      await post('/views/ui/feed/terreno/reparto', {user_id: uid, pond_id: rep.o.pond_id, feed_type_id: rep.feedId,
+                                                    fecha: $('rep-fecha').value, destinos, note: $('rep-note').value});
+      toast(rep.o.name + ': repartido a ' + destinos.length + ' tarro' + (destinos.length > 1 ? 's' : ''), true);
       setTimeout(() => location.reload(), 600);
     } catch (e) { toast(e.message, false); btn.disabled = false; }
   }

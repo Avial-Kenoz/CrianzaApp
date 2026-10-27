@@ -54,8 +54,14 @@ MOTIVOS = {
     "saldo_previo": {"label": "Saldo anterior al sistema", "sign": +1, "solo_inicial": True},
 }
 TRASPASO_RECIBIDO = "traspaso_recibido"
+# Conteo inicial: el tarro queda en lo contado sin explicar cada diferencia;
+# el cuadre se lee por alimento contra el descuadre de la bodega principal.
+CONTEO_INICIAL = "conteo_inicial"
 MOTIVO_LABEL = dict({k: v["label"] for k, v in MOTIVOS.items()},
-                    **{TRASPASO_RECIBIDO: "Recibido de otro carril"})
+                    **{TRASPASO_RECIBIDO: "Recibido de otro carril",
+                       CONTEO_INICIAL: "Diferencia del conteo inicial",
+                       "reparto": "Repartido a otros carriles",
+                       "reparto_recibido": "Recibido por reparto"})
 
 
 def motivos_para(inicial: bool) -> list:
@@ -313,6 +319,7 @@ def estado(db: Session, today: date) -> dict:
     for uid, cs in por_unidad.items():
         cs.sort(key=lambda c: c["name"])
         unidades.append({"unit_id": uid, "name": units.get(uid, "Sin unidad"),
+                         "grupo": grupo_reparto(uid, units.get(uid)),
                          "carriles": cs, "total_kg": round(sum(c["total_kg"] for c in cs), 1),
                          "pendientes": pend.get(uid or None, [])})
     unidades.sort(key=lambda u: (u["unit_id"] == 0, u["unit_id"]))
@@ -452,6 +459,9 @@ def registrar_conteo(db: Session, *, pond_id: int, feed_type_id: Optional[int], 
         plan.append((key, m, kg, sacos, consumo, destino, (ln.get("note") or "").strip() or None))
         suma += m["sign"] * kg
 
+    if is_initial and not plan and abs(dif) > TOL_KG:
+        plan.append((CONTEO_INICIAL, {"sign": 1}, dif, None, None, None, None))
+        suma = dif
     if abs(round(suma, 2) - dif) > TOL_KG:
         raise ConteoError("Los motivos suman {:+.1f} kg y la diferencia es {:+.1f} kg".format(suma, dif))
 
@@ -517,6 +527,84 @@ def anular_conteo(db: Session, count_id: int, user_id: Optional[int]) -> FeedTer
     cnt.annulled_by = user_id
     db.flush()
     return cnt
+
+
+# ---------------------------------------------------------------------------
+# Reparto: mover alimento entre tarros de la misma unidad (no es un conteo)
+# ---------------------------------------------------------------------------
+def grupo_reparto(unit_id: Optional[int], unit_name: Optional[str]):
+    """Entre qué tarros se puede repartir: los de la misma unidad, y las salas
+    de Hatchery (Incubación, Sala 2, Alevinaje) entre sí."""
+    if unit_name and unit_name.lower().startswith("hatchery"):
+        return "hatchery"
+    return unit_id or 0
+
+
+def repartir(db: Session, *, pond_id: int, feed_type_id: Optional[int], fecha: date, destinos: list,
+             user_id: Optional[int], note: Optional[str] = None, today: Optional[date] = None) -> FeedTerrenoMove:
+    """Pasa kg de un alimento del tarro de un carril a otros de su grupo
+    (misma unidad, o cualquier sala de Hatchery; ver grupo_reparto).
+
+    destinos: [{pond_id, kg}]. El total no cambia ni toca la bodega: el origen
+    baja (motivo 'reparto') y cada destino sube ('reparto_recibido', enlazado
+    al origen por related_move_id). No hace commit.
+    """
+    today = today or date.today()
+    since = start_date(db)
+    if since is None or fecha < since or fecha > today:
+        raise ConteoError("La fecha del reparto debe estar entre el {} y hoy".format(since.strftime("%d-%m") if since else "—"))
+    carril = _carril_of(db)
+    origen = db.get(Pond, pond_id)
+    if origen is None or carril.get(pond_id, pond_id) != pond_id:
+        raise ConteoError("El reparto sale del tarro de un carril (estanque padre)")
+    unames = {u.id: u.name for u in db.query(CultivationUnit).all()}
+    grupo = grupo_reparto(origen.cultivation_unit_id, unames.get(origen.cultivation_unit_id))
+    plan, total = [], 0.0
+    for d in destinos or []:
+        try:
+            pid, kg = int(d.get("pond_id")), round(float(d.get("kg") or 0), 2)
+        except (TypeError, ValueError):
+            raise ConteoError("Destino inválido")
+        if kg <= 0:
+            continue
+        p = db.get(Pond, pid)
+        if p is None or pid == pond_id or carril.get(pid, pid) != pid:
+            raise ConteoError("Destino inválido")
+        if grupo_reparto(p.cultivation_unit_id, unames.get(p.cultivation_unit_id)) != grupo:
+            raise ConteoError("{} no es de la misma unidad".format(p.name))
+        plan.append((pid, kg))
+        total += kg
+    if not plan:
+        raise ConteoError("Indica cuántos kg van a cada carril")
+    hay = simular(events(db).get(pond_id, []), fecha)["saldos"].get(feed_type_id, 0.0)
+    if total > hay + TOL_KG:
+        raise ConteoError("Se reparten {:.1f} kg y el tarro tiene {:.1f} kg".format(total, hay))
+    now = datetime.utcnow()
+    nota = (note or "").strip() or None
+    src = FeedTerrenoMove(move_date=fecha, pond_id=pond_id, feed_type_id=feed_type_id,
+                          kg=Decimal(str(-round(total, 2))), motivo="reparto", note=nota,
+                          created_by=user_id, created_at=now)
+    db.add(src)
+    db.flush()
+    for pid, kg in plan:
+        db.add(FeedTerrenoMove(move_date=fecha, pond_id=pid, feed_type_id=feed_type_id,
+                               kg=Decimal(str(kg)), motivo="reparto_recibido", related_move_id=src.id,
+                               note=nota, created_by=user_id, created_at=now))
+    db.flush()
+    return src
+
+
+def anular_reparto(db: Session, move_id: int) -> None:
+    """Deshace un reparto completo (origen y destinos). No hace commit."""
+    src = db.get(FeedTerrenoMove, move_id)
+    if src is None or src.motivo not in ("reparto", "reparto_recibido"):
+        raise ConteoError("Ese movimiento no es un reparto")
+    if src.motivo == "reparto_recibido":
+        src = db.get(FeedTerrenoMove, src.related_move_id)
+    db.query(FeedTerrenoMove).filter(FeedTerrenoMove.related_move_id == src.id,
+                                     FeedTerrenoMove.motivo == "reparto_recibido").delete(synchronize_session=False)
+    db.delete(src)
+    db.flush()
 
 
 def ajustar_bodega(db: Session, feed_type_id: int, real_bags: int, comentario: str, who: str) -> Optional[int]:

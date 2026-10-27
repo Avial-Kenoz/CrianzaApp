@@ -26,7 +26,6 @@
     th { text-align: right; font-size: .7rem; text-transform: uppercase; color: #6b7280; font-weight: 700; padding: 6px 10px; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
     td { text-align: right; padding: 6px 10px; border-bottom: 1px solid #f3f4f6; white-space: nowrap; vertical-align: top; }
     th.l, td.l { text-align: left; }
-    td.mot { text-align: left; white-space: normal; min-width: 340px; }
     tr.unit-row td { background: #f9fafb; font-weight: 700; color: #374151; font-size: .78rem; }
     input.kg { width: 86px; padding: 5px 7px; border: 1px solid #d1d5db; border-radius: 7px; text-align: right; font-size: .84rem; font-weight: 700; }
     .neg { color: #b91c1c; font-weight: 700; } .pos { color: #b45309; font-weight: 700; } .okc { color: #0f766e; font-weight: 700; }
@@ -63,16 +62,16 @@
   <div class="flash info">Todavía no hay salidas de bodega desde que existe la ración: no hay saldo que contar.</div>
 {% else %}
   <p class="note">
-    El mismo día se cuentan <b>todos los tarros</b> y la <b>bodega principal</b>. La diferencia de cada tarro se explica con motivos.
-    Los que son errores de ingreso de bodega (<i>salida registrada de más</i> / <i>no registrada</i>) mueven sacos de la bodega principal,
-    y deberían cuadrar con lo que falta o sobra al contarla: el resumen por alimento lo muestra.
-    Lo que sobre en la bodega sin explicación queda como ajuste de inventario.
+    El mismo día se cuentan <b>todos los tarros</b> y la <b>bodega principal</b>, y ambos quedan en lo contado.
+    Un saco que el sistema dio por salido pero sigue en bodega sobra en bodega y falta en los tarros: por alimento, los dos
+    descuadres se compensan. Lo que no se compensa (<b>neto</b>) es alimento que realmente falta o sobra
+    (dado sin registrar, merma, error de conteo). Lo que escribes se guarda en este navegador hasta que guardes.
   </p>
   <form class="bar" method="get">
     <label>Fecha del conteo <input type="date" name="fecha" value="{{ fecha.isoformat() }}" min="{{ since.isoformat() }}" max="{{ today.isoformat() }}"></label>
     <select name="momento">
-      <option value="antes" {{ 'selected' if momento == 'antes' }}>antes de alimentar</option>
       <option value="despues" {{ 'selected' if momento == 'despues' }}>al cierre (ya se alimentó)</option>
+      <option value="antes" {{ 'selected' if momento == 'antes' }}>antes de alimentar</option>
     </select>
     <button class="btn btn-light" type="submit">Recalcular</button>
     <span class="muted">Cambiar la fecha recalcula el saldo según el sistema (los kg ingresados se pierden).</span>
@@ -82,7 +81,7 @@
     <h2>1 · Bodega principal</h2>
     <p>Sacos cerrados que hay físicamente en la bodega. Vacío = no se contó ese alimento.</p>
     <div class="tbl-wrap"><table>
-      <thead><tr><th class="l">Alimento</th><th>Sistema (sacos)</th><th>Contados</th><th>Diferencia</th><th>Explicado por tarros</th><th>Sin explicar</th></tr></thead>
+      <thead><tr><th class="l">Alimento</th><th>Sistema (sacos)</th><th>Contados</th><th>Diferencia bodega</th><th>Diferencia tarros (sacos)</th><th>Neto</th></tr></thead>
       <tbody>
       {% for b in bodega %}
         <tr class="bod" data-feed="{{ b.feed_type_id }}" data-papel="{{ b.papel }}">
@@ -100,7 +99,7 @@
     <h2>2 · Tarros</h2>
     <p>Kg que hay en cada tarro. Vacío = ese tarro no se contó (sigue con el saldo del sistema).</p>
     <div class="tbl-wrap"><table>
-      <thead><tr><th class="l">Carril</th><th class="l">Alimento</th><th>Sistema kg</th><th>Contado kg</th><th>Diferencia</th><th class="l">Motivos</th></tr></thead>
+      <thead><tr><th class="l">Carril</th><th class="l">Alimento</th><th>Sistema kg</th><th>Contado kg</th><th>Diferencia kg</th><th>≈ sacos</th></tr></thead>
       <tbody>
       {% set ns = namespace(u=None) %}
       {% for f in filas %}
@@ -111,7 +110,7 @@
           <td class="{{ 'neg' if f.paper_kg < -1 }}">{{ n(f.paper_kg) }}</td>
           <td><input class="kg cnt" type="number" min="0" step="0.1"></td>
           <td class="dif">—</td>
-          <td class="mot"></td>
+          <td class="sacos muted">—</td>
         </tr>
       {% endfor %}
       </tbody>
@@ -125,9 +124,7 @@
 </div>
 <div id="toast" class="toast"></div>
 
-{% include '_terreno_motivos.html' %}
 <script>
-  const MOTIVOS = {{ motivos|tojson }};
   const who = document.getElementById('who');
   try { const v = localStorage.getItem('racion_who'); if (v && [...who.options].some(o => o.value === v)) who.value = v; } catch (e) {}
   who.addEventListener('change', () => { try { localStorage.setItem('racion_who', who.value); } catch (e) {} });
@@ -136,46 +133,57 @@
   function fmt(v, sign) { return v === null ? '—' : (sign && v > 0 ? '+' : '') + v.toLocaleString('es-CL', {maximumFractionDigits: 1}); }
   function cls(td, v) { td.className = td.className.replace(/ ?(neg|pos|okc)/g, '') + (v === null ? '' : v < -0.05 ? ' neg' : v > 0.05 ? ' pos' : ' okc'); }
 
-  // Sin traspasos en el conteo inicial: cada tarro se explica por sí mismo.
-  const SIN_TRASPASO = MOTIVOS.filter(m => !m.destino);
-  MOTIVOS.length = 0; SIN_TRASPASO.forEach(m => MOTIVOS.push(m));
-
+  const BORRADOR = 'conteo_inicial_{{ fecha.isoformat() }}_{{ momento }}';
   let listo = false;   // resumen() solo cuando ya están todos los tarros
   const tarros = [...document.querySelectorAll('tr.tarro')].map(tr => {
     const t = {tr, pond: +tr.dataset.pond, feed: tr.dataset.feed ? +tr.dataset.feed : null, papel: +tr.dataset.papel,
-               name: tr.dataset.name, feedname: tr.dataset.feedname};
-    t.ed = MotivoEditor(tr.querySelector('.mot'), {motivos: MOTIVOS, carriles: [], bagKg: tr.dataset.bag ? +tr.dataset.bag : null,
-                                                   pondId: t.pond, onChange: resumen});
-    tr.querySelector('.cnt').addEventListener('input', () => {
-      const kg = num(tr.querySelector('.cnt').value);
-      const td = tr.querySelector('.dif');
-      if (kg === null) { td.textContent = '—'; cls(td, null); t.ed.clear(); return; }
-      const d = Math.round((kg - t.papel) * 100) / 100;
-      td.textContent = fmt(d, true); cls(td, d); t.ed.clear(); t.ed.setDif(d);
-    });
-    t.ed.clear();
+               bag: tr.dataset.bag ? +tr.dataset.bag : null, name: tr.dataset.name, feedname: tr.dataset.feedname};
+    tr.querySelector('.cnt').addEventListener('input', () => { fila(t); resumen(); guardarBorrador(); });
     return t;
   });
+  function fila(t) {
+    const kg = num(t.tr.querySelector('.cnt').value);
+    const td = t.tr.querySelector('.dif'), sc = t.tr.querySelector('.sacos');
+    if (kg === null) { td.textContent = '—'; cls(td, null); sc.textContent = '—'; t.dif = null; return; }
+    t.dif = Math.round((kg - t.papel) * 100) / 100;
+    td.textContent = fmt(t.dif, true); cls(td, t.dif);
+    sc.textContent = t.bag ? fmt(Math.round(t.dif / t.bag * 10) / 10, true) : '—';
+  }
 
-  document.querySelectorAll('tr.bod .real').forEach(i => i.addEventListener('input', resumen));
+  document.querySelectorAll('tr.bod .real').forEach(i => i.addEventListener('input', () => { resumen(); guardarBorrador(); }));
 
   function resumen() {
     if (!listo) return;
-    const expl = {};
-    tarros.forEach(t => { if (t.feed && num(t.tr.querySelector('.cnt').value) !== null) expl[t.feed] = (expl[t.feed] || 0) + t.ed.bodegaSacos(); });
+    const ter = {};   // diferencia de los tarros en sacos, por alimento
+    tarros.forEach(t => { if (t.feed && t.bag && t.dif !== null && t.dif !== undefined) ter[t.feed] = (ter[t.feed] || 0) + t.dif / t.bag; });
     document.querySelectorAll('tr.bod').forEach(tr => {
-      const real = num(tr.querySelector('.real').value), papel = +tr.dataset.papel, e = expl[+tr.dataset.feed] || 0;
+      const real = num(tr.querySelector('.real').value), papel = +tr.dataset.papel;
+      const e = ter[+tr.dataset.feed];
       const dif = real === null ? null : real - papel;
       tr.querySelector('.dif').textContent = fmt(dif, true); cls(tr.querySelector('.dif'), dif);
-      tr.querySelector('.expl').textContent = e ? fmt(e, true) : '—';
-      const s = dif === null ? null : dif - e;
-      tr.querySelector('.sinexp').textContent = s === null ? '—' : (Math.abs(s) < 0.5 ? 'cuadra' : fmt(s, true) + ' sacos');
-      cls(tr.querySelector('.sinexp'), s === null ? null : (Math.abs(s) < 0.5 ? 0 : s));
+      tr.querySelector('.expl').textContent = e === undefined ? '—' : fmt(Math.round(e * 10) / 10, true);
+      const neto = (dif === null && e === undefined) ? null : Math.round(((dif || 0) + (e || 0)) * 10) / 10;
+      tr.querySelector('.sinexp').textContent = neto === null ? '—' : (Math.abs(neto) < 1 ? 'cuadra' : fmt(neto, true) + ' sacos');
+      cls(tr.querySelector('.sinexp'), neto === null ? null : (Math.abs(neto) < 1 ? 0 : neto));
     });
-    const contados = tarros.filter(t => num(t.tr.querySelector('.cnt').value) !== null);
-    const falta = contados.filter(t => Math.abs(t.ed.restante()) >= 0.05).length;
-    document.getElementById('estado').textContent = contados.length + ' tarros contados' + (falta ? ' · ' + falta + ' con diferencia sin explicar' : '');
+    const contados = tarros.filter(t => t.dif !== null && t.dif !== undefined);
+    document.getElementById('estado').textContent = contados.length + ' de ' + tarros.length + ' tarros contados';
   }
+
+  function guardarBorrador() {
+    const d = {t: {}, b: {}};
+    tarros.forEach(t => { const v = t.tr.querySelector('.cnt').value; if (v !== '') d.t[t.pond + '_' + t.feed] = v; });
+    document.querySelectorAll('tr.bod').forEach(tr => { const v = tr.querySelector('.real').value; if (v !== '') d.b[tr.dataset.feed] = v; });
+    try { localStorage.setItem(BORRADOR, JSON.stringify(d)); } catch (e) {}
+  }
+  try {
+    const d = JSON.parse(localStorage.getItem(BORRADOR) || 'null');
+    if (d) {
+      tarros.forEach(t => { const v = d.t[t.pond + '_' + t.feed]; if (v !== undefined) t.tr.querySelector('.cnt').value = v; });
+      document.querySelectorAll('tr.bod').forEach(tr => { const v = d.b[tr.dataset.feed]; if (v !== undefined) tr.querySelector('.real').value = v; });
+    }
+  } catch (e) {}
+  tarros.forEach(fila);
   listo = true;
   resumen();
 
@@ -183,8 +191,6 @@
     if (!who.value) { toast('Elige quién registra (arriba a la derecha)', false); who.focus(); return; }
     const contados = tarros.filter(t => num(t.tr.querySelector('.cnt').value) !== null);
     if (!contados.length) { toast('No hay ningún tarro contado', false); return; }
-    const malo = contados.find(t => Math.abs(t.ed.restante()) >= 0.05);
-    if (malo) { toast(malo.name + ' · ' + malo.feedname + ': falta explicar la diferencia', false); malo.tr.scrollIntoView({block: 'center'}); return; }
     const bodega = [...document.querySelectorAll('tr.bod')].map(tr => ({feed_type_id: +tr.dataset.feed, real_bags: tr.querySelector('.real').value.trim()}))
                    .filter(b => b.real_bags !== '');
     if (!confirm('Se registran ' + contados.length + ' tarros' + (bodega.length ? ' y el cuadre de ' + bodega.length + ' alimentos de la bodega principal' : '') + '. ¿Seguir?')) return;
@@ -193,10 +199,11 @@
       const r = await fetch('/views/ui/feed/terreno/inicial', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
         user_id: who.value, fecha: "{{ fecha.isoformat() }}", momento: "{{ momento }}", bodega,
         filas: contados.map(t => ({pond_id: t.pond, feed_type_id: t.feed, name: t.name, feed_name: t.feedname,
-                                   counted_kg: num(t.tr.querySelector('.cnt').value), lineas: t.ed.payload()}))})});
+                                   counted_kg: num(t.tr.querySelector('.cnt').value), lineas: []}))})});
       let j = {}; try { j = await r.json(); } catch (e) {}
       if (!r.ok || !j.ok) throw new Error(j.error || ('Error ' + r.status));
       toast(j.conteos + ' tarros registrados' + (j.ajustes_bodega ? ', ' + j.ajustes_bodega + ' ajustes de bodega' : ''), true);
+      try { localStorage.removeItem(BORRADOR); } catch (e) {}
       setTimeout(() => { location.href = '/views/ui/feed/terreno'; }, 1200);
     } catch (e) { toast(e.message, false); btn.disabled = false; }
   }

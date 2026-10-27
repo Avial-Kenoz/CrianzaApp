@@ -58,7 +58,7 @@
       {% for f in hist.filas %}
         <tr class="{{ f.tipo }}">
           <td class="l">{{ f.fecha.strftime("%d-%m") }}</td>
-          <td class="l wrap">{% if f.tipo == 'salida' %}Salida de bodega{% elif f.tipo == 'racion' %}Ración{% if f.estimado %} <span class="muted">(programada, sin confirmar)</span>{% endif %}{% else %}Ajuste: {{ f.motivo_label or f.motivo }}{% endif %}</td>
+          <td class="l wrap">{% if f.tipo == 'salida' %}Salida de bodega{% elif f.tipo == 'racion' %}Ración{% if f.estimado %} <span class="muted">(programada, sin confirmar)</span>{% endif %}{% else %}Ajuste: {{ f.motivo_label or f.motivo }}{% if f.motivo in ('reparto', 'reparto_recibido') %} <button class="btn" onclick="anularReparto({{ f.id }})">Anular reparto</button>{% endif %}{% endif %}</td>
           <td class="l">{{ f.feed_name }}{% if f.tipo == 'racion' %} <span class="muted">(programado)</span>{% endif %}</td>
           <td class="{{ 'pos' if f.kg > 0 else 'neg' }}">{{ n(f.kg, 1, true) }}</td>
           <td class="l wrap muted">{{ f.uso_txt if f.kg < 0 else '' }}</td>
@@ -101,6 +101,13 @@
   try { const v = localStorage.getItem('racion_who'); if (v && [...who.options].some(o => o.value === v)) who.value = v; } catch (e) {}
   who.addEventListener('change', () => { try { localStorage.setItem('racion_who', who.value); } catch (e) {} });
   function toast(msg, ok) { const t = document.getElementById('toast'); t.textContent = msg; t.className = 'toast ' + (ok ? 'ok' : 'err'); t.style.display = 'block'; setTimeout(() => { t.style.display = 'none'; }, 4000); }
+  async function anularReparto(id) {
+    if (!who.value) { toast('Elige quién registra (arriba a la derecha)', false); return; }
+    if (!confirm('¿Anular este reparto? Se deshace en el origen y en todos los tarros que recibieron.')) return;
+    const r = await fetch('/views/ui/feed/terreno/reparto/' + id + '/anular', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({user_id: who.value})});
+    let j = {}; try { j = await r.json(); } catch (e) {}
+    if (r.ok && j.ok) { toast('Reparto anulado', true); setTimeout(() => location.reload(), 600); } else toast(j.error || 'Error', false);
+  }
   async function anular(id) {
     if (!who.value) { toast('Elige quién registra (arriba a la derecha)', false); return; }
     if (!confirm('¿Anular este conteo? Se borran sus ajustes y lo que movió en la bodega principal.')) return;
