@@ -1,0 +1,22 @@
+{# Selector "Registra" (recordado en el navegador, compartido con la ración) + utilidades. #}
+<div id="toast" class="toast"></div>
+<script>
+  const who = document.getElementById('who');
+  try { const v = localStorage.getItem('racion_who'); if (v && [...who.options].some(o => o.value === v)) who.value = v; } catch (e) {}
+  who.addEventListener('change', () => { try { localStorage.setItem('racion_who', who.value); } catch (e) {} });
+  function toast(msg, ok) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'toast ' + (ok ? 'ok' : 'err'); t.style.display = 'block';
+    setTimeout(() => { t.style.display = 'none'; }, 4500);
+  }
+  function needWho() {
+    if (!who.value) { toast('Elige quién registra (arriba a la derecha)', false); who.focus(); return null; }
+    return who.value;
+  }
+  async function post(url, body) {
+    const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    let j = {}; try { j = await r.json(); } catch (e) {}
+    if (!r.ok || !j.ok) throw new Error(j.error || ('Error ' + r.status));
+    return j;
+  }
+</script>

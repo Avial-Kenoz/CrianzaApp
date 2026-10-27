@@ -152,8 +152,10 @@ class FeedExecutionEvent(Base):
     __tablename__ = "feed_execution_events"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    feed_program_id = Column(BigInteger, ForeignKey("feed_programs.id"), nullable=False)
+    # Una salida viene de un programa semanal (antiguo) o de un pedido de reposición.
+    feed_program_id = Column(BigInteger, ForeignKey("feed_programs.id"), nullable=True)
     feed_program_line_id = Column(BigInteger, ForeignKey("feed_program_lines.id"), nullable=True)
+    feed_pedido_line_id = Column(BigInteger, ForeignKey("feed_pedido_lines.id"), nullable=True, index=True)
     pond_id = Column(BigInteger, ForeignKey("ponds.id"), nullable=False)
     feed_type_id = Column(BigInteger, ForeignKey("feed_types.id"), nullable=False)
     confirmed_bags = Column(Integer, nullable=False)

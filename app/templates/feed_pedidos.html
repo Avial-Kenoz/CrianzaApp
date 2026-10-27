@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alimentación — Salidas</title>
+  {% include '_feed_base_css.html' %}
+</head>
+<body>
+{% include '_sidebar.html' %}
+{% macro n(v, d=0) %}{% if v is none %}—{% else %}{{ ("{:,.%df}" % d).format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}{% endif %}{% endmacro %}
+<header>
+  <h1>Alimentación — Salidas de bodega</h1>
+  <a href="/views/ui/feed" title="Se elimina cuando los pedidos estén en uso">Programa semanal (antiguo)</a>
+  <div class="who">
+    <label for="who">Registra</label>
+    <select id="who"><option value="">— elegir —</option>
+      {% for u in users %}<option value="{{ u.id }}">{{ u.label }}</option>{% endfor %}
+    </select>
+  </div>
+</header>
+{% with feed_tab='salidas' %}{% include '_feed_tabs.html' %}{% endwith %}
+<div class="container">
+  {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
+  <p class="note">
+    Un pedido rellena los tarros de los carriles para que duren N días. Se emite (documento de repartición) y, cuando sale de bodega,
+    se marca <b>Salió</b>: ahí baja la bodega principal y se cargan los tarros. Si no sale, se anula.
+    No uses a la vez el programa semanal antiguo: registraría las mismas salidas dos veces.
+  </p>
+  <div style="margin-bottom:14px"><a class="btn btn-primary" href="/views/ui/feed/pedidos/nuevo">Nuevo pedido</a></div>
+
+  <div class="card">
+    <div class="card-head"><h2>Pedidos</h2></div>
+    {% if pedidos %}
+    <div class="tbl-wrap"><table>
+      <thead><tr><th class="l">Pedido</th><th class="l">Estado</th><th>Carriles</th><th>Sacos</th><th class="l">Emitió</th><th class="l">Salió</th><th></th></tr></thead>
+      <tbody>
+      {% for x in pedidos %}{% set p = x.p %}
+        <tr>
+          <td class="l"><a href="/views/ui/feed/pedidos/{{ p.id }}"><b>{{ p.code }}</b></a> <span class="muted">· {{ p.dias_n }} días</span></td>
+          <td class="l"><span class="pill {{ p.status }}">{{ {'emitido': 'emitido, por salir', 'salio': 'salió', 'anulado': 'anulado'}[p.status] }}</span></td>
+          <td>{{ x.carriles }}</td>
+          <td>{{ x.bags }}</td>
+          <td class="l">{{ p.created_at.strftime("%d-%m %H:%M") if p.created_at }} <span class="muted">{{ user_label.get(p.created_by, '') }}</span></td>
+          <td class="l">{% if p.salio_date %}{{ p.salio_date.strftime("%d-%m") }} <span class="muted">{{ user_label.get(p.salio_by, '') }}</span>{% else %}—{% endif %}</td>
+          <td><a class="btn btn-light" href="/views/ui/feed/pedidos/{{ p.id }}">Ver</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="note" style="padding:0 16px 14px">Todavía no hay pedidos.</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Bodega principal</h2><span class="sub">sacos</span></div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th class="l">Alimento</th><th>En bodega</th><th>Comprometido (pedidos emitidos)</th><th>Disponible</th></tr></thead>
+      <tbody>
+      {% for s in stock %}{% if s.bodega or s.comprometido %}
+        <tr><td class="l">{{ s.name }}</td><td>{{ s.bodega }}</td><td>{{ s.comprometido or '—' }}</td>
+            <td class="{{ 'neg' if s.disponible < 0 }}">{{ s.disponible }}</td></tr>
+      {% endif %}{% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+</div>
+{% include '_feed_who_js.html' %}
+</body>
+</html>

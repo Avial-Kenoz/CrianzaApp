@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nuevo pedido de reposición</title>
+  {% include '_feed_base_css.html' %}
+  <style>
+    .params { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; background: #fff; border-radius: 12px; padding: 12px 16px; box-shadow: 0 1px 6px rgba(0,0,0,.08); margin-bottom: 12px; font-size: .84rem; }
+    .params label { font-weight: 600; color: #374151; display: flex; align-items: center; gap: 6px; }
+    .params input { width: 58px; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 7px; font-size: .9rem; font-weight: 700; text-align: right; }
+    .params small { color: #6b7280; font-weight: 400; }
+    input.bags { width: 64px; padding: 5px 7px; border: 1px solid #d1d5db; border-radius: 7px; text-align: right; font-size: .9rem; font-weight: 700; }
+    input.bags.cambio { border-color: #f59e0b; background: #fffbeb; }
+    tr.off td { color: #9ca3af; }
+    tr.off td.l b { color: #6b7280; }
+    .unit-toggle { font-size: .78rem; color: #4b5563; display: flex; align-items: center; gap: 6px; margin-left: auto; }
+    .save-bar { position: sticky; bottom: 0; background: #fff; border-top: 1px solid #e5e7eb; padding: 12px 16px; display: flex; gap: 12px; align-items: center; justify-content: flex-end; box-shadow: 0 -2px 10px rgba(0,0,0,.06); flex-wrap: wrap; }
+    .save-bar input { flex: 1; min-width: 200px; padding: 7px 9px; border: 1px solid #d1d5db; border-radius: 7px; font-size: .84rem; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+{% macro n(v, d=0) %}{% if v is none %}—{% else %}{{ ("{:,.%df}" % d).format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}{% endif %}{% endmacro %}
+<header>
+  <h1>Nuevo pedido de reposición</h1>
+  <a href="/views/ui/feed/pedidos">← Salidas</a>
+  <div class="who">
+    <label for="who">Registra</label>
+    <select id="who"><option value="">— elegir —</option>
+      {% for u in users %}<option value="{{ u.id }}">{{ u.label }}</option>{% endfor %}
+    </select>
+  </div>
+</header>
+{% with feed_tab='salidas' %}{% include '_feed_tabs.html' %}{% endwith %}
+<div class="container">
+  <form class="params" method="get">
+    <label>Debe durar <input type="number" name="n" value="{{ n_dias }}" min="1" max="{{ max_n }}"> días</label>
+    <label>No rellenar si alcanza para <input type="number" name="min" value="{{ min }}" min="0" max="{{ max_n }}"> días</label>
+    <label>Se alimenta <input type="number" name="sem" value="{{ sem }}" min="1" max="7"> días por semana</label>
+    <button class="btn btn-light" type="submit">Recalcular</button>
+    <small>Ritmo = kg del último día con ración × días por semana ÷ 7. Saldo = tarro hoy (Inventario por estanque).</small>
+  </form>
+
+  {% for u in unidades %}
+  <div class="card unit" data-unit="{{ u.unit_id }}">
+    <div class="card-head">
+      <h2>{{ u.name }}</h2>
+      <span class="sub u-tot"></span>
+      <label class="unit-toggle"><input type="checkbox" class="u-on" {{ 'checked' if u.en_racion }}> incluir</label>
+    </div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th class="l">Carril</th><th class="l">Alimento</th><th>Saldo kg</th><th>Ritmo kg/d</th><th>Alcanza</th><th>Tope kg</th><th>Sugerido</th><th>Sacos</th><th class="l"></th></tr></thead>
+      <tbody>
+      {% for c in u.carriles %}
+        <tr class="ln" data-pond="{{ c.pond_id }}" data-feed="{{ c.feed_type_id or '' }}" data-bag="{{ c.bag_kg or '' }}"
+            data-saldo="{{ c.saldo_kg }}" data-ritmo="{{ c.ritmo_kg }}" data-sug="{{ c.sugerido }}" data-lim="{{ 1 if c.limitado else 0 }}">
+          <td class="l"><b>{{ c.name }}</b></td>
+          <td class="l">{{ c.feed_name or '—' }}{% if c.bag_kg %} <span class="muted">({{ n(c.bag_kg) }} kg)</span>{% endif %}</td>
+          <td class="{{ 'neg' if c.saldo_kg < -1 }}">{{ n(c.saldo_kg, 1) }}</td>
+          <td>{{ n(c.ritmo_kg, 1) }}</td>
+          <td>{% if c.alcanza_dias is not none %}{{ n(c.alcanza_dias) }} d{% else %}—{% endif %}</td>
+          <td>{{ n(c.tope_kg) }}</td>
+          <td>{{ c.sugerido }}</td>
+          <td>{% if c.en_pedido %}<span class="muted" title="Ya está en un pedido emitido que no ha salido">en {{ c.en_pedido }}</span>
+              {% elif c.feed_type_id and c.bag_kg %}<input class="bags" type="number" min="0" step="1" value="{{ c.sugerido }}">
+              {% else %}<span class="muted">—</span>{% endif %}</td>
+          <td class="l wrap muted">{{ c.motivo or '' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  {% endfor %}
+
+  <div class="card">
+    <div class="card-head"><h2>Total del pedido</h2><span class="sub">contra la bodega principal</span></div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th class="l">Alimento</th><th>Pedido</th><th>Disponible en bodega</th><th>Queda</th></tr></thead>
+      <tbody id="totales">
+      {% for s in stock %}
+        <tr data-feed="{{ s.feed_type_id }}" data-disp="{{ s.disponible }}" style="display:none">
+          <td class="l">{{ s.name }}</td><td class="t-ped"></td><td>{{ s.disponible }}{% if s.comprometido %} <span class="muted">({{ s.comprometido }} comprometidos)</span>{% endif %}</td><td class="t-queda"></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  <div class="save-bar">
+    <input id="note" placeholder="Nota (opcional)">
+    <span id="resumen" class="muted"></span>
+    <button class="btn btn-primary" id="emitir" onclick="emitir()">Emitir pedido</button>
+  </div>
+</div>
+{% include '_feed_who_js.html' %}
+<script>
+  function lineas() {
+    return [...document.querySelectorAll('.unit')].filter(u => u.querySelector('.u-on').checked)
+      .flatMap(u => [...u.querySelectorAll('tr.ln')].filter(tr => tr.querySelector('.bags')).map(tr => ({
+        pond_id: +tr.dataset.pond, feed_type_id: +tr.dataset.feed, bags: parseInt(tr.querySelector('.bags').value || '0', 10),
+        saldo_kg: tr.dataset.saldo, ritmo_kg: tr.dataset.ritmo, sugerido: +tr.dataset.sug, limitado: tr.dataset.lim === '1'})));
+  }
+  function totales() {
+    const tot = {};
+    document.querySelectorAll('.unit').forEach(u => {
+      const on = u.querySelector('.u-on').checked;
+      let b = 0;
+      u.querySelectorAll('tr.ln').forEach(tr => {
+        tr.classList.toggle('off', !on);
+        const i = tr.querySelector('.bags'); if (!i) return;
+        i.disabled = !on;
+        i.classList.toggle('cambio', String(parseInt(i.value || '0', 10)) !== tr.dataset.sug);
+        const v = parseInt(i.value || '0', 10) || 0;
+        if (on && v > 0) { b += v; tot[tr.dataset.feed] = (tot[tr.dataset.feed] || 0) + v; }
+      });
+      u.querySelector('.u-tot').textContent = on ? (b ? b + ' sacos' : 'sin sacos') : 'no se incluye';
+    });
+    let sacos = 0;
+    document.querySelectorAll('#totales tr').forEach(tr => {
+      const v = tot[tr.dataset.feed] || 0; sacos += v;
+      tr.style.display = v ? '' : 'none';
+      tr.querySelector('.t-ped').textContent = v;
+      const q = +tr.dataset.disp - v;
+      tr.querySelector('.t-queda').textContent = q; tr.querySelector('.t-queda').className = 't-queda' + (q < 0 ? ' neg' : '');
+    });
+    document.getElementById('resumen').textContent = sacos + ' sacos';
+  }
+  document.querySelectorAll('.bags, .u-on').forEach(i => i.addEventListener('input', totales));
+  document.querySelectorAll('.u-on').forEach(i => i.addEventListener('change', totales));
+  totales();
+
+  async function emitir() {
+    const uid = needWho(); if (!uid) return;
+    const ls = lineas().filter(l => l.bags > 0);
+    if (!ls.length) { toast('El pedido no tiene sacos', false); return; }
+    const neg = [...document.querySelectorAll('#totales .t-queda.neg')].length;
+    if (neg && !confirm('Hay alimentos con más sacos pedidos que los disponibles en bodega. ¿Emitir igual?')) return;
+    const btn = document.getElementById('emitir'); btn.disabled = true;
+    try {
+      const j = await post('/views/ui/feed/pedidos', {user_id: uid, n: {{ n_dias }}, min: {{ min }}, sem: {{ sem }},
+                                                      lineas: ls, note: document.getElementById('note').value});
+      location.href = '/views/ui/feed/pedidos/' + j.id;
+    } catch (e) { toast(e.message, false); btn.disabled = false; }
+  }
+</script>
+</body>
+</html>

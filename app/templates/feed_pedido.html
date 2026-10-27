@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pedido {{ pedido.code }}</title>
+  {% include '_feed_base_css.html' %}
+  <style>
+    .acciones { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: #fff; border-radius: 12px; padding: 12px 16px; box-shadow: 0 1px 6px rgba(0,0,0,.08); margin-bottom: 12px; font-size: .84rem; }
+    .acciones input { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 7px; font-size: .84rem; }
+    .doc-head { display: none; }
+    td.check { width: 34px; }
+    td.check span { display: inline-block; width: 16px; height: 16px; border: 1.5px solid #6b7280; border-radius: 3px; }
+    @media print {
+      .sidebar, .sidebar-overlay, #sidebar-toggle, header, .feed-tabs, .acciones, .no-print, .toast { display: none !important; }
+      .app-shell, .main-content { display: block !important; margin: 0 !important; padding: 0 !important; }
+      body { background: #fff; }
+      .container { max-width: none; padding: 0; }
+      .card { box-shadow: none; border: 1px solid #d1d5db; break-inside: avoid; }
+      .doc-head { display: block; margin-bottom: 10px; }
+      .doc-head h1 { font-size: 1.2rem; }
+      .doc-head p { font-size: .85rem; color: #374151; }
+      table { font-size: .9rem; }
+    }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+{% macro n(v, d=0) %}{% if v is none %}—{% else %}{{ ("{:,.%df}" % d).format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}{% endif %}{% endmacro %}
+<header>
+  <h1>Pedido {{ pedido.code }}</h1>
+  <a href="/views/ui/feed/pedidos">← Salidas</a>
+  <div class="who">
+    <label for="who">Registra</label>
+    <select id="who"><option value="">— elegir —</option>
+      {% for u in users %}<option value="{{ u.id }}">{{ u.label }}</option>{% endfor %}
+    </select>
+  </div>
+</header>
+{% with feed_tab='salidas' %}{% include '_feed_tabs.html' %}{% endwith %}
+<div class="container">
+  <div class="doc-head">
+    <h1>Repartición de alimento · {{ pedido.code }}</h1>
+    <p>Emitido {{ pedido.created_at.strftime("%d-%m-%Y") if pedido.created_at }} por {{ user_label.get(pedido.created_by, '—') }} · para {{ pedido.dias_n }} días · {{ bags }} sacos ({{ n(kg) }} kg){% if pedido.note %} · {{ pedido.note }}{% endif %}</p>
+  </div>
+
+  <div class="acciones">
+    <span class="pill {{ pedido.status }}">{{ {'emitido': 'emitido, por salir', 'salio': 'salió', 'anulado': 'anulado'}[pedido.status] }}</span>
+    <span>{{ bags }} sacos · {{ n(kg) }} kg · para {{ pedido.dias_n }} días</span>
+    {% if pedido.status == 'salio' %}<span class="muted">salió el {{ pedido.salio_date.strftime("%d-%m") }} · {{ user_label.get(pedido.salio_by, '') }}</span>{% endif %}
+    {% if pedido.status == 'anulado' %}<span class="muted">anulado {{ pedido.anulado_at.strftime("%d-%m") }} · {{ user_label.get(pedido.anulado_by, '') }}</span>{% endif %}
+    <span style="flex:1"></span>
+    <button class="btn btn-light" onclick="window.print()">Imprimir repartición</button>
+    {% if pedido.status == 'emitido' %}
+      <label>Salió el <input type="date" id="fecha" value="{{ today.isoformat() }}" max="{{ today.isoformat() }}" min="{{ pedido.created_at.date().isoformat() }}"></label>
+      <button class="btn btn-primary" onclick="salio()">Salió</button>
+      <button class="btn btn-danger" onclick="anular()">No salió (anular)</button>
+    {% endif %}
+  </div>
+  {% if pedido.note %}<p class="note no-print">Nota: {{ pedido.note }}</p>{% endif %}
+
+  <div class="card">
+    <div class="card-head"><h2>Para cargar</h2><span class="sub">por alimento</span></div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th class="l">Alimento</th><th>Sacos</th><th>kg</th></tr></thead>
+      <tbody>{% for t in totales %}<tr><td class="l">{{ t.feed }}</td><td><b>{{ t.bags }}</b></td><td>{{ n(t.kg) }}</td></tr>{% endfor %}</tbody>
+      <tfoot><tr><td class="l">Total</td><td>{{ bags }}</td><td>{{ n(kg) }}</td></tr></tfoot>
+    </table></div>
+  </div>
+
+  {% for u in unidades %}
+  <div class="card">
+    <div class="card-head"><h2>{{ u.name }}</h2><span class="sub">{{ u.bags }} sacos</span></div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th class="l">Carril</th><th class="l">Alimento</th><th>Sacos</th><th class="no-print">Saldo al emitir</th><th class="no-print">Ritmo kg/d</th><th class="no-print">Sugerido</th><th class="l">✓</th></tr></thead>
+      <tbody>
+      {% for c in u.carriles %}
+        <tr><td class="l"><b>{{ c.name }}</b></td><td class="l">{{ c.feed }}</td><td><b>{{ c.bags }}</b></td>
+            <td class="no-print">{{ n(c.saldo_kg, 1) }}</td><td class="no-print">{{ n(c.ritmo_kg, 1) }}</td>
+            <td class="no-print">{{ c.sugerido if c.sugerido is not none else '—' }}{% if c.limitado %} <span class="muted">(tope)</span>{% endif %}</td>
+            <td class="l check"><span></span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  {% endfor %}
+</div>
+{% include '_feed_who_js.html' %}
+<script>
+  const ID = {{ pedido.id }};
+  async function salio() {
+    const uid = needWho(); if (!uid) return;
+    const f = document.getElementById('fecha').value;
+    if (!confirm('¿Registrar que el pedido {{ pedido.code }} salió de bodega el ' + f.split('-').reverse().join('-') + '? Baja la bodega principal y carga los tarros.')) return;
+    try { await post('/views/ui/feed/pedidos/' + ID + '/salio', {user_id: uid, fecha: f}); location.reload(); }
+    catch (e) { toast(e.message, false); }
+  }
+  async function anular() {
+    const uid = needWho(); if (!uid) return;
+    if (!confirm('¿Anular el pedido {{ pedido.code }}? No salió de bodega.')) return;
+    try { await post('/views/ui/feed/pedidos/' + ID + '/anular', {user_id: uid}); location.reload(); }
+    catch (e) { toast(e.message, false); }
+  }
+  {% if imprimir %}window.addEventListener('load', () => window.print());{% endif %}
+</script>
+</body>
+</html>

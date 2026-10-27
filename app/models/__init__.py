@@ -37,6 +37,7 @@ from .feed import (
     AccountingOutboxEvent,
 )
 from .feed_terreno import FeedTerrenoCount, FeedTerrenoMove, FeedTarro
+from .feed_pedidos import FeedPedido, FeedPedidoLine
 # Reproducción (Proceso 1: selección · 2: desove · 3: incubadoras)
 from .reproductor_selections import ReproductorSelection
 from .reproductor_monitoring_logs import ReproductorMonitoringLog

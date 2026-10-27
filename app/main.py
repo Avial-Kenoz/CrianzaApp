@@ -15,6 +15,7 @@ from app.api.cultivation_declarations import router as cultivation_declarations_
 from app.api.feed_endpoints import router as feed_router
 from app.api.feed_ration_views import router as feed_ration_router
 from app.api.feed_terreno_views import router as feed_terreno_router
+from app.api.feed_pedidos_views import router as feed_pedidos_router
 from app.api.ovulation import router as ovulation_router
 from app.api.reproduccion import router as reproduccion_router, api_router as reproduccion_api_router
 from app.api.water_quality import router as water_quality_router
@@ -139,6 +140,7 @@ app.include_router(catalogs_router)
 app.include_router(feed_router)
 app.include_router(feed_ration_router)
 app.include_router(feed_terreno_router)
+app.include_router(feed_pedidos_router)
 app.include_router(views_router)
 app.include_router(cultivation_declarations_router)
 app.include_router(ovulation_router)
