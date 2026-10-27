@@ -49,17 +49,19 @@
 </header>
 {% with feed_tab='terreno' %}{% include '_feed_tabs.html' %}{% endwith %}
 <div class="container">
-  {% for a in alimentos %}
+  {% if hist.filas %}
   <div class="card">
-    <h2>{{ a.feed_name }} <small>· saldo {{ n(a.saldo) }} kg · desde el {{ since.strftime("%d-%m") if since }}</small></h2>
+    <h2>Tarro <small>· saldo {{ n(hist.total) }} kg{% if hist.saldos %} ({% for s in hist.saldos %}{{ n(s.kg) }} kg {{ s.feed_name }}{{ ", " if not loop.last }}{% endfor %}){% endif %} · desde el {{ since.strftime("%d-%m") if since }} · la ración se come primero lo más antiguo</small></h2>
     <div class="tbl-wrap"><table>
-      <thead><tr><th class="l">Fecha</th><th class="l">Movimiento</th><th>kg</th><th>Saldo</th></tr></thead>
+      <thead><tr><th class="l">Fecha</th><th class="l">Movimiento</th><th class="l">Alimento</th><th>kg</th><th class="l">Salió del tarro</th><th>Saldo</th></tr></thead>
       <tbody>
-      {% for f in a.filas %}
+      {% for f in hist.filas %}
         <tr class="{{ f.tipo }}">
           <td class="l">{{ f.fecha.strftime("%d-%m") }}</td>
           <td class="l wrap">{% if f.tipo == 'salida' %}Salida de bodega{% elif f.tipo == 'racion' %}Ración{% if f.estimado %} <span class="muted">(programada, sin confirmar)</span>{% endif %}{% else %}Ajuste: {{ f.motivo_label or f.motivo }}{% endif %}</td>
+          <td class="l">{{ f.feed_name }}{% if f.tipo == 'racion' %} <span class="muted">(programado)</span>{% endif %}</td>
           <td class="{{ 'pos' if f.kg > 0 else 'neg' }}">{{ n(f.kg, 1, true) }}</td>
+          <td class="l wrap muted">{{ f.uso_txt if f.kg < 0 else '' }}</td>
           <td class="{{ 'neg' if f.saldo < -1 }}">{{ n(f.saldo) }}</td>
         </tr>
       {% endfor %}
@@ -68,7 +70,7 @@
   </div>
   {% else %}
   <div class="card"><div class="empty">Este carril no tiene movimientos desde que se cuenta el terreno.</div></div>
-  {% endfor %}
+  {% endif %}
 
   <div class="card">
     <h2>Conteos</h2>

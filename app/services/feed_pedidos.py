@@ -84,7 +84,8 @@ def stock(db: Session) -> list:
 
 
 def sugerencia(db: Session, today: date, n_dias: int, min_dias: int, dias_semana: int) -> list:
-    """Unidades con sus carriles y los sacos sugeridos."""
+    """Unidades con sus carriles y los sacos sugeridos (del alimento de la
+    última ración; el saldo es el del tarro completo)."""
     inputs = fr.carril_inputs(db)
     ultima = ultima_racion(db)
     evs = ft.events(db)
@@ -100,7 +101,12 @@ def sugerencia(db: Session, today: date, n_dias: int, min_dias: int, dias_semana
         ftid = (u or {}).get("feed_type_id") or c.get("feed_type_id")
         f = feeds.get(ftid)
         bag = float(f.bag_kg) if f and f.bag_kg else None
-        saldo = ft.saldo(evs.get((pid, ftid), []), today) if ftid else 0.0
+        # Lo que queda en el tarro se come primero, sea del alimento que sea:
+        # cuenta entero para la cobertura, y lo que se pide es de la dieta.
+        sim = ft.simular(evs.get(pid, []), today)["saldos"]
+        saldo = sum(sim.values())
+        viejos = [(feeds[x].name if x in feeds else "sin alimento", k)
+                  for x, k in sim.items() if x != ftid and k > 1]
         ritmo = u["kg"] * dias_semana / 7.0 if u else 0.0
         alcanza = saldo / ritmo if ritmo > 0 else None
         t = tope.get(pid, ft.DEFAULT_TOPE_KG)
@@ -122,6 +128,8 @@ def sugerencia(db: Session, today: date, n_dias: int, min_dias: int, dias_semana
             "feed_name": f.name if f else None, "bag_kg": bag,
             "saldo_kg": round(saldo, 1), "ritmo_kg": round(ritmo, 1),
             "ultima": u, "alcanza_dias": alcanza, "tope_kg": t,
+            "transicion": ("tarro con {}".format(", ".join("{:.0f} kg de {}".format(k, nm) for nm, k in viejos))
+                           if viejos else None),
             "sugerido": sug, "limitado": limitado, "motivo": motivo,
             "en_pedido": en_pedido.get(pid),
         })

@@ -24,6 +24,7 @@ from app.models.feed import FeedRation, FeedType
 from app.models.ponds import Pond
 from app.models.users import User
 from app.services import feed_ration as fr
+from app.services import feed_terreno as fterr
 
 router = APIRouter(prefix="/views", tags=["feed-ration"])
 
@@ -55,7 +56,6 @@ def _build_context(db, fecha: date, today: date) -> dict:
     carriles = fr.theoretical_by_carril(db)
     programado = fr.programmed_daily_kg(db)
     since = fr.terreno_since(db)
-    terreno = fr.terreno_kg(db, since)
     limits = feed_limits_by_unit(db)
     raciones = {r.pond_id: r for r in
                 db.query(FeedRation).filter(FeedRation.ration_date == fecha).all()}
@@ -63,6 +63,11 @@ def _build_context(db, fecha: date, today: date) -> dict:
     modo = "confirmar" if fecha < today else "programar"
     users = _users(db)
     user_label = {u["id"]: u["label"] for u in users}
+    feeds = {f.id: f for f in db.query(FeedType).all()}
+    alimentos = [{"id": f.id, "name": f.name} for f in
+                 sorted((f for f in feeds.values() if f.active == 1), key=lambda f: f.name)]
+    # Saldo de los tarros (salidas − ración ± conteos), igual que Inventario por estanque.
+    tarro = fterr.tarros(db, today)
     en_racion = {(k or SIN_UNIDAD) for k in fr.ration_units(db)}
     planner = {(k or SIN_UNIDAD): v for k, v in fr.last_planner_by_unit(db).items()}
     pend_unit = {(k or SIN_UNIDAD): v for k, v in fr.pending_dates_by_unit(db, today).items()}
@@ -73,13 +78,13 @@ def _build_context(db, fecha: date, today: date) -> dict:
     # de programar): igual hay que verlos para poder confirmarlos.
     huerfanos = [pid for pid in raciones if pid not in carriles] if fecha < today else []
     if huerfanos:
-        feeds = {f.id: f.name for f in db.query(FeedType).all()}
         for p in db.query(Pond).filter(Pond.id.in_(huerfanos)).all():
             r = raciones[p.id]
             carriles[p.id] = {
                 "pond_id": p.id, "name": "{} (sin peces)".format(p.name),
                 "unit_id": r.cultivation_unit_id, "biomass_kg": 0.0, "weight_g": None,
-                "feed_name": feeds.get(r.feed_type_id), "teorica": None,
+                "feed_name": feeds[r.feed_type_id].name if r.feed_type_id in feeds else None,
+                "feed_type_id": r.feed_type_id, "teorica": None,
                 "temp_c": None, "temp_fuente": None,
             }
 
@@ -88,17 +93,27 @@ def _build_context(db, fecha: date, today: date) -> dict:
         uid = c["unit_id"] or SIN_UNIDAD
         r = raciones.get(c["pond_id"])
         teo = c["teorica"]
+        # Alimento: el de la ración de ese día o, si no hay, el último programado.
+        ftid = (r.feed_type_id if r and r.feed_type_id else c.get("feed_type_id"))
+        t = tarro.get(c["pond_id"]) or {"total": 0.0, "saldos": {}}
+        viejos = [(feeds[x].name if x in feeds else "sin alimento", k)
+                  for x, k in t["saldos"].items() if x != ftid and k > 1]
         por_unidad.setdefault(uid, []).append({
             "pond_id": c["pond_id"],
             "name": c["name"],
             "biomass_kg": c["biomass_kg"],
             "weight_g": c["weight_g"],
-            "feed_name": c["feed_name"],
+            "feed_name": feeds[ftid].name if ftid in feeds else c["feed_name"],
+            "feed_type_id": ftid,
+            "tarro_kg": t["total"] if since else None,
+            "transicion": ("quedan {} en el tarro: se comen primero".format(
+                ", ".join("{:.0f} kg de {}".format(k, nm) for nm, k in viejos)) if viejos else None),
+            "requiere_pedido": modo == "programar" and bool(ftid) and t["saldos"].get(ftid, 0.0) <= 1,
             "teorica_kg": teo["kg_day"] if teo else None,
             "teorica_pct": teo["pct"] if teo else None,
             "teorica_avisos": teo["avisos"] if teo else [],
             "programado_kg": programado.get(c["pond_id"]),
-            "terreno_kg": terreno.get(c["pond_id"]) if since else None,
+            "terreno_kg": t["total"] if since else None,
             "racion": ({"kg_planned": float(r.kg_planned), "status": r.status,
                         "kg_fed": float(r.kg_fed) if r.kg_fed is not None else None,
                         "split_mode": r.split_mode} if r else None),
@@ -180,6 +195,7 @@ def _build_context(db, fecha: date, today: date) -> dict:
         "unidades": unidades,
         "terreno_desde": since,
         "users": users,
+        "alimentos": alimentos,
         "horizon": fr.HORIZON_DAYS,
     }
 
@@ -284,6 +300,7 @@ async def racion_programar(request: Request):
         err = _pendiente_msg(db, today, unidades)
         if err:
             return JSONResponse({"ok": False, "error": err}, status_code=409)
+        activos = {f.id for f in db.query(FeedType.id).filter(FeedType.active == 1).all()}
         now = datetime.now()
         for it in items:
             try:
@@ -291,6 +308,12 @@ async def racion_programar(request: Request):
             except (TypeError, ValueError):
                 return JSONResponse({"ok": False, "error": "Carril inválido"}, status_code=400)
             c = carriles.get(pid)
+            try:
+                ftid = int(it.get("feed_type_id") or 0) or (c or {}).get("feed_type_id")
+            except (TypeError, ValueError):
+                ftid = None
+            if ftid is not None and ftid not in activos and ftid != (c or {}).get("feed_type_id"):
+                return JSONResponse({"ok": False, "error": "Alimento inválido"}, status_code=400)
             kg = _kg(it.get("kg"))
             if c is None or kg is None:
                 return JSONResponse({"ok": False, "error": "Carril o kg inválido"}, status_code=400)
@@ -302,7 +325,7 @@ async def racion_programar(request: Request):
                 r = FeedRation(ration_date=fecha, pond_id=pid)
                 db.add(r)
             r.cultivation_unit_id = c["unit_id"]
-            r.feed_type_id = c["feed_type_id"]
+            r.feed_type_id = ftid
             r.kg_planned = kg
             r.split_mode = split_mode
             r.status = "programado"
@@ -475,7 +498,7 @@ async def racion_copiar(request: Request):
             else:
                 kg = o.kg_planned
             r.cultivation_unit_id = c["unit_id"]
-            r.feed_type_id = c["feed_type_id"]
+            r.feed_type_id = o.feed_type_id or c["feed_type_id"]
             r.kg_planned = kg or Decimal("0")
             r.split_mode = o.split_mode
             r.status = "programado"

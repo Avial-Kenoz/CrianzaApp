@@ -74,6 +74,10 @@
     tr.off td.kg-out { color: #9ca3af; }
     .kg-carril { width: 80px; padding: 5px 7px; border: 1px solid #d1d5db; border-radius: 7px; text-align: right; font-weight: 700; display: none; }
     .kg-carril.falta { border-color: #dc2626; background: #fff1f2; }
+    select.feed-sel { padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 7px; font-size: .8rem; background: #fff; max-width: 190px; }
+    select.feed-sel.cambiado { border-color: #f59e0b; background: #fffbeb; }
+    .feed-note { font-size: .7rem; color: #6b7280; margin-top: 2px; max-width: 230px; white-space: normal; }
+    .feed-note.warn { color: #b45309; }
     .unit.modo-carril .kg-carril { display: inline-block; }
     .unit.modo-carril .kg-out-txt, .unit.modo-carril input.sel { display: none; }
     .unit.modo-carril tr.off td { color: inherit; }
@@ -224,6 +228,9 @@
         <span class="chip foto-{{ u.fotosintesis }}">Fotosíntesis <b>{{ {'detectada': 'detectada', 'no_detectada': 'no detectada', 'sin_dato': 'sin dato'}[u.fotosintesis] }}</b></span>
         <span class="chip{% if u.terreno_kg is not none and u.terreno_kg < 0 %} warn{% endif %}">En terreno <b>{{ n(u.terreno_kg) }}</b>{% if u.terreno_kg is not none %} kg{% endif %}</span>
         <span class="chip">Programa bodega <b>{{ n(u.programado_kg, 1) }}</b>{% if u.programado_kg %} kg/d{% endif %}</span>
+        {% set trans = u.carriles|selectattr('transicion')|list %}{% set ped = u.carriles|selectattr('requiere_pedido')|list %}
+        {% if trans %}<span class="chip warn">En transición <b>{{ trans|length }}</b> carril{{ 'es' if trans|length != 1 }} <small>· se termina lo del tarro</small></span>{% endif %}
+        {% if ped %}<span class="chip warn" title="{{ ped|map(attribute='name')|join(', ') }}">Requieren pedido <b>{{ ped|length }}</b> carril{{ 'es' if ped|length != 1 }}</span>{% endif %}
       </div>
 
       <div class="controls">
@@ -252,20 +259,26 @@
         <table>
           <thead><tr>
             <th class="l"></th><th class="l">Carril</th><th class="l">Alimento</th><th>Biomasa kg</th><th>Peso medio g</th>
-            <th>Aller kg/d</th><th>Bodega kg/d</th><th>En terreno kg</th><th>Ración kg</th>
+            <th>Aller kg/d</th><th>Bodega kg/d</th><th>Tarro kg</th><th>Ración kg</th>
           </tr></thead>
           <tbody>
           {% for c in u.carriles %}
             {% set sel = (c.racion.kg_planned > 0) if c.racion else true %}
-            <tr class="carril{% if not sel %} off{% endif %}" data-pond="{{ c.pond_id }}" data-bio="{{ c.biomass_kg }}">
+            <tr class="carril{% if not sel %} off{% endif %}" data-pond="{{ c.pond_id }}" data-bio="{{ c.biomass_kg }}" data-feed0="{{ c.feed_type_id or '' }}">
               <td class="l"><input type="checkbox" class="sel" {% if sel %}checked{% endif %} onchange="recalc(this)" {% if bloqueado %}disabled{% endif %}></td>
               <td class="l">{{ c.name }}</td>
-              <td class="l">{{ c.feed_name or '—' }}</td>
+              <td class="l"><select class="feed-sel" onchange="cambioDieta(this)" {% if bloqueado %}disabled{% endif %}>
+                  {% if not c.feed_type_id %}<option value="">— elegir —</option>{% endif %}
+                  {% for a in alimentos %}<option value="{{ a.id }}" {{ 'selected' if a.id == c.feed_type_id }}>{{ a.name }}</option>{% endfor %}
+                </select>
+                {% if c.transicion %}<div class="feed-note">{{ c.transicion }}</div>{% endif %}
+                {% if c.requiere_pedido %}<div class="feed-note warn">no hay en el tarro: requiere pedido de bodega</div>{% endif %}
+                <div class="feed-note warn cambio-note" hidden>cambio de dieta: lo que queda en el tarro se come primero; requiere pedido de bodega</div></td>
               <td>{{ n(c.biomass_kg) }}</td>
               <td>{{ n(c.weight_g) }}</td>
               <td title="{{ c.teorica_avisos|join(' · ') }}">{{ n(c.teorica_kg, 1) }}{% if c.teorica_avisos %} <span class="av">*</span>{% endif %}</td>
               <td>{{ n(c.programado_kg, 1) }}</td>
-              <td{% if c.terreno_kg is not none and c.terreno_kg < 0 %} class="neg"{% endif %}>{{ n(c.terreno_kg) }}</td>
+              <td{% if c.tarro_kg is not none and c.tarro_kg < 0 %} class="neg"{% endif %}>{{ n(c.tarro_kg) }}</td>
               <td class="kg-out"><span class="kg-out-txt">—</span><input class="kg-carril" type="number" min="0" step="0.1"
                   value="{{ '%.1f'|format(c.racion.kg_planned) if (c.racion and u.split_mode == 'carril') else '' }}"
                   oninput="this.classList.remove('falta'); recalc(this)" {% if bloqueado %}disabled{% endif %}></td>
@@ -362,6 +375,15 @@
     return j;
   }
 
+  // Cambiar el alimento de un carril es cambiar su dieta: lo que queda en el
+  // tarro se come primero y el alimento nuevo llega con un pedido de bodega.
+  function cambioDieta(sel) {
+    const tr = sel.closest('tr');
+    const cambio = sel.value !== tr.dataset.feed0;
+    sel.classList.toggle('cambiado', cambio);
+    tr.querySelector('.cambio-note').hidden = !cambio;
+  }
+
   async function programar(btn, alimentar) {
     const uid = needWho(); if (!uid) return;
     const unit = btn.closest('.unit');
@@ -373,7 +395,10 @@
         toast('Completa los kg de cada carril (0 = no alimentar)', false); return;
       }
     }
-    const items = [...unit.querySelectorAll('tr.carril')].map(r => ({pond_id: r.dataset.pond, kg: alimentar ? kgs[r.dataset.pond] : 0}));
+    const items = [...unit.querySelectorAll('tr.carril')].map(r => ({pond_id: r.dataset.pond, kg: alimentar ? kgs[r.dataset.pond] : 0,
+                                                                     feed_type_id: r.querySelector('.feed-sel') ? r.querySelector('.feed-sel').value : ''}));
+    const sinAlimento = alimentar && items.find(i => i.kg > 0 && !i.feed_type_id);
+    if (sinAlimento) { toast('Elige el alimento de cada carril (Ver carriles)', false); return; }
     if (alimentar && !items.some(i => i.kg > 0)) { toast('No hay kg que repartir: escribe el kg/día o usa "No alimentar"', false); return; }
     btn.disabled = true;
     try {

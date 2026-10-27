@@ -92,7 +92,7 @@
   {% else %}
   <p class="note">
     Saldo del tarro de cada carril = salidas de bodega − ración (confirmada; la programada sin confirmar cuenta como estimada) ± conteos, desde el {{ since.strftime("%d-%m") }}.
-    Un tarro lleva un alimento a la vez; la carga más antigua es la que se gasta primero.
+    El alimento lo decide la ración; del tarro sale primero la carga más antigua, así que al cambiar la dieta se termina lo que quedaba.
     {% if not conteo_inicial %}<b>Falta el <a href="/views/ui/feed/terreno/inicial">conteo inicial</a></b>: hasta hacerlo, el saldo arrastra lo que había antes en los tarros y los errores de ingreso.{% else %}Conteo inicial: {{ conteo_inicial[0].strftime("%d-%m-%Y") }}.{% endif %}
   </p>
 
@@ -122,11 +122,12 @@
           {% if loop.first %}
           <td class="l carril" rowspan="{{ [c.alimentos|length, 1]|max }}">{{ c.name }}
             {% if not c.con_peces %}<small>sin peces</small>{% endif %}
+            {% if c.transicion %}<small>en transición: {{ c.transicion }}</small>{% endif %}
             {% for k, t in c.avisos %}<span class="av {{ 'neg' if k == 'neg' }}">⚠ {{ t }}</span>{% endfor %}
           </td>
           {% endif %}
           {% if a %}
-          <td class="l">{{ a.feed_name or '—' }}</td>
+          <td class="l">{{ a.feed_name or '—' }}{% if a.dieta and c.alimentos|length > 1 %} <span class="est" title="alimento programado en la ración">dieta</span>{% endif %}</td>
           <td class="{{ 'neg' if a.saldo_kg < -1 else ('alto' if c.total_kg > c.tope_kg else '') }}">{{ n(a.saldo_kg, 1) }}{% if a.estimado %} <span class="est" title="incluye ración programada sin confirmar">est.</span>{% endif %}</td>
           {% else %}<td class="l muted">sin alimento</td><td>—</td>{% endif %}
           {% if loop.first %}

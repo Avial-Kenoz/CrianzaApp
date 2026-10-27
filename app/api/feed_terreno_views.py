@@ -87,7 +87,7 @@ def terreno_carril(request: Request, pond_id: int):
         moves = {}
         for m in db.query(FeedTerrenoMove).filter(FeedTerrenoMove.count_id.in_([c.id for c in conteos] or [0])).all():
             moves.setdefault(m.count_id, []).append(m)
-        ctx = {"request": request, "pond": pond, "alimentos": ft.carril_historial(db, pond_id),
+        ctx = {"request": request, "pond": pond, "hist": ft.carril_historial(db, pond_id),
                "since": ft.start_date(db), "conteos": conteos, "moves": moves, "feeds": feeds,
                "users": users, "motivo_label": ft.MOTIVO_LABEL}
         return HTMLResponse(jinja_env.get_template("feed_terreno_carril.html").render(ctx))
@@ -190,12 +190,12 @@ def terreno_inicial(request: Request):
         filas = []
         for u in st["unidades"]:
             for c in u["carriles"]:
+                sim = ft.simular(evs.get(c["pond_id"], []), fecha, momento)["saldos"]
                 for a in c["alimentos"]:
                     filas.append({"unit": u["name"], "pond_id": c["pond_id"], "name": c["name"],
                                   "feed_type_id": a["feed_type_id"], "feed_name": a["feed_name"],
                                   "bag_kg": a["bag_kg"],
-                                  "paper_kg": ft.saldo(evs.get((c["pond_id"], a["feed_type_id"]), []),
-                                                       fecha, momento)})
+                                  "paper_kg": round(sim.get(a["feed_type_id"], 0.0), 2)})
         bodega = [{"feed_type_id": f.id, "name": f.name, "bag_kg": float(f.bag_kg or 0),
                    "papel": ft.bodega_bags(db, f.id)}
                   for f in db.query(FeedType).filter(FeedType.active == 1).order_by(FeedType.name).all()]

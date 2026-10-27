@@ -218,7 +218,8 @@ def carril_inputs(db: Session) -> dict:
         a["biomass_kg"] += float(p.biomass_projected_kg or 0)
         a["n_fish"] += int(p.n_fish_cached or 0)
 
-    # Último tipo de alimento sacado de bodega por carril.
+    # Alimento del carril: el último programado en la ración (la dieta); si
+    # nunca se ha programado, el último que salió de bodega para él.
     ultimo = (db.query(FeedExecutionEvent.pond_id,
                        func.max(FeedExecutionEvent.id).label("ev_id"))
               .group_by(FeedExecutionEvent.pond_id).subquery())
@@ -230,6 +231,11 @@ def carril_inputs(db: Session) -> dict:
             .join(FeedType, FeedType.id == FeedExecutionEvent.feed_type_id)
             .all())
     }
+    from app.models.feed import FeedRation
+    for pond_id, ft_id, name in (db.query(FeedRation.pond_id, FeedType.id, FeedType.name)
+                                 .join(FeedType, FeedType.id == FeedRation.feed_type_id)
+                                 .order_by(FeedRation.ration_date, FeedRation.id).all()):
+        feed_by_pond[pond_id] = (ft_id, name)
 
     out = {}
     for pid, a in acc.items():

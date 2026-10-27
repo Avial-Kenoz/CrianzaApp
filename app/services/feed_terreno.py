@@ -8,10 +8,11 @@ Saldo de un carril y un alimento =
 Se cuenta desde terreno_since (la primera salida de bodega desde que existe la
 ración diaria): antes no hay registro de lo que se echó al agua.
 
-Un tarro tiene un alimento a la vez. Si quedan dos con saldo, es alerta: la
-mezcla con receta llega en una etapa posterior. La edad del alimento se lee por
-cargas, gastando primero la más antigua: así una carga vieja llega a cero
-aunque se rellene encima (sin la paradoja del promedio).
+El alimento se elige al programar la ración (la dieta) y es la instrucción de
+carga del tarro, pero lo que se come sale del tarro gastando primero la carga
+más antigua, sea del alimento que sea: al cambiar la dieta con saldo del
+anterior, primero se termina lo viejo (transición) y una carga vieja llega a
+cero aunque se rellene encima (sin la paradoja del promedio).
 
 Un conteo nunca pisa el papel: la diferencia queda como uno o más ajustes con
 motivo, y los que tocan la bodega principal dejan su movimiento en el libro de
@@ -74,11 +75,12 @@ def start_date(db: Session) -> Optional[date]:
 
 
 def events(db: Session, since: Optional[date] = None) -> dict:
-    """{(carril, feed_type_id): [evento]} ordenado por fecha.
+    """{carril: [evento]} ordenado por fecha.
 
-    evento = {fecha, tipo: salida|racion|ajuste, kg (con signo), estimado,
-              motivo, id}. La ración de un día programado y sin confirmar
-    cuenta como estimada (kg_planned).
+    evento = {fecha, tipo: salida|racion|ajuste, feed_type_id, kg (con signo),
+              estimado, motivo, id}. La ración de un día programado y sin
+    confirmar cuenta como estimada (kg_planned). Su feed_type_id es el
+    alimento programado, pero lo que se come sale del tarro (ver simular).
     """
     since = since or start_date(db)
     out: dict = defaultdict(list)
@@ -87,9 +89,9 @@ def events(db: Session, since: Optional[date] = None) -> dict:
     carril = _carril_of(db)
     for ev in (db.query(FeedExecutionEvent)
                .filter(func.date(FeedExecutionEvent.confirmed_at) >= since).all()):
-        out[(carril.get(ev.pond_id, ev.pond_id), ev.feed_type_id)].append({
-            "fecha": ev.confirmed_at.date(), "tipo": "salida", "kg": float(ev.confirmed_kg or 0),
-            "estimado": False, "motivo": None, "id": ev.id})
+        out[carril.get(ev.pond_id, ev.pond_id)].append({
+            "fecha": ev.confirmed_at.date(), "tipo": "salida", "feed_type_id": ev.feed_type_id,
+            "kg": float(ev.confirmed_kg or 0), "estimado": False, "motivo": None, "id": ev.id})
     for r in db.query(FeedRation).filter(FeedRation.ration_date >= since).all():
         if r.status == "alimentado":
             kg, est = float(r.kg_fed or 0), False
@@ -98,44 +100,81 @@ def events(db: Session, since: Optional[date] = None) -> dict:
         else:
             continue
         if kg:
-            out[(carril.get(r.pond_id, r.pond_id), r.feed_type_id)].append({
-                "fecha": r.ration_date, "tipo": "racion", "kg": -kg,
-                "estimado": est, "motivo": None, "id": r.id})
+            out[carril.get(r.pond_id, r.pond_id)].append({
+                "fecha": r.ration_date, "tipo": "racion", "feed_type_id": r.feed_type_id,
+                "kg": -kg, "estimado": est, "motivo": None, "id": r.id})
     for m in db.query(FeedTerrenoMove).filter(FeedTerrenoMove.move_date >= since).all():
-        out[(carril.get(m.pond_id, m.pond_id), m.feed_type_id)].append({
-            "fecha": m.move_date, "tipo": "ajuste", "kg": float(m.kg),
-            "estimado": False, "motivo": m.motivo, "id": m.id})
+        out[carril.get(m.pond_id, m.pond_id)].append({
+            "fecha": m.move_date, "tipo": "ajuste", "feed_type_id": m.feed_type_id,
+            "kg": float(m.kg), "estimado": False, "motivo": m.motivo, "id": m.id})
     orden = {"salida": 0, "ajuste": 1, "racion": 2}
     for evs in out.values():
         evs.sort(key=lambda e: (e["fecha"], orden[e["tipo"]], e["id"]))
     return out
 
 
-def saldo(evs: list, upto: date, momento: str = "despues") -> float:
-    """Saldo al día `upto`: 'antes' de alimentar ese día o 'despues'."""
-    s = 0.0
-    for e in evs:
-        if e["fecha"] > upto:
-            break
-        if e["fecha"] == upto and e["tipo"] == "racion" and momento == "antes":
-            continue
-        s += e["kg"]
-    return round(s, 2)
+def simular(evs: list, upto: Optional[date] = None, momento: str = "despues") -> dict:
+    """Recorre los movimientos de un tarro gastando primero la carga más antigua.
 
+    - Salida o ajuste positivo: nueva carga de su alimento.
+    - Ración: sale del tarro completo, lo más antiguo primero, sea cual sea el
+      alimento programado (así se hace la transición al cambiar la dieta).
+      Si el tarro no alcanza, la falta queda en el alimento programado.
+    - Ajuste negativo (conteo, vaciar, traspaso): sale de ese alimento.
 
-def cargas(evs: list) -> list:
-    """Cargas que siguen en el tarro, gastando primero la más antigua.
-
-    Carga = salida de bodega o ajuste positivo. Devuelve [{fecha, kg}] con lo
-    que queda de cada una (solo las que no se han terminado).
+    upto/momento: hasta qué día ('antes' de alimentar ese día o 'despues').
+    Devuelve {saldos: {alimento: kg}, cargas: {alimento: [{fecha, kg}]},
+    filas: [evento + consumo por alimento + saldo del tarro]}.
     """
-    entradas = [[e["fecha"], e["kg"]] for e in evs if e["kg"] > 0]
-    gasto = -sum(e["kg"] for e in evs if e["kg"] < 0)
-    for c in entradas:
-        usa = min(c[1], gasto)
-        c[1] -= usa
-        gasto -= usa
-    return [{"fecha": f, "kg": round(k, 2)} for f, k in entradas if k > TOL_KG]
+    cargas: list = []                  # [fecha, alimento, kg] en orden de llegada
+    deuda: dict = defaultdict(float)   # lo que faltó, por alimento
+    filas = []
+    for e in evs:
+        if upto is not None:
+            if e["fecha"] > upto:
+                break
+            if e["fecha"] == upto and e["tipo"] == "racion" and momento == "antes":
+                continue
+        f, kg = e["feed_type_id"], e["kg"]
+        uso: dict = defaultdict(float)
+        if kg > 0:
+            paga = min(kg, deuda[f])
+            deuda[f] -= paga
+            if kg - paga > TOL_KG:
+                cargas.append([e["fecha"], f, kg - paga])
+        else:
+            falta = -kg
+            for c in cargas:
+                if falta <= 0:
+                    break
+                if e["tipo"] != "racion" and c[1] != f:
+                    continue
+                usa = min(c[2], falta)
+                c[2] -= usa
+                falta -= usa
+                uso[c[1]] += usa
+            cargas = [c for c in cargas if c[2] > TOL_KG]
+            if falta > TOL_KG:
+                deuda[f] += falta
+                uso[f] += falta
+        total = sum(c[2] for c in cargas) - sum(deuda.values())
+        filas.append(dict(e, uso=dict(uso), saldo=round(total, 2)))
+    saldos: dict = defaultdict(float)
+    por_alimento: dict = defaultdict(list)
+    for fch, f, k in cargas:
+        saldos[f] += k
+        por_alimento[f].append({"fecha": fch, "kg": round(k, 2)})
+    for f, d in deuda.items():
+        if d > TOL_KG:
+            saldos[f] -= d
+    return {"saldos": {f: round(v, 2) for f, v in saldos.items()},
+            "cargas": dict(por_alimento), "filas": filas}
+
+
+def saldo(evs: list, upto: date, momento: str = "despues", feed_type_id=None) -> float:
+    """Saldo del tarro (o de un alimento) al día `upto`."""
+    s = simular(evs, upto, momento)["saldos"]
+    return round(s.get(feed_type_id, 0.0) if feed_type_id is not None else sum(s.values()), 2)
 
 
 def ritmo_by_carril(db: Session, today: date) -> dict:
@@ -179,7 +218,7 @@ def bodega_bags(db: Session, feed_type_id: int) -> int:
 def estado(db: Session, today: date) -> dict:
     since = start_date(db)
     evs = events(db, since)
-    inputs = fr.carril_inputs(db)
+    inputs = fr.carril_inputs(db)          # su feed_type_id es la dieta programada
     ritmo = ritmo_by_carril(db, today)
     tope = topes(db)
     feeds = {f.id: f for f in db.query(FeedType).all()}
@@ -190,8 +229,18 @@ def estado(db: Session, today: date) -> dict:
               .order_by(FeedTerrenoCount.count_date, FeedTerrenoCount.id).all()):
         ult_conteo[(c.pond_id, c.feed_type_id)] = c
 
-    carriles = set(inputs) | {k[0] for k in evs}
+    carriles = set(inputs) | set(evs)
     ponds = {p.id: p for p in db.query(Pond).filter(Pond.id.in_(carriles)).all()} if carriles else {}
+
+    def fname(f):
+        return feeds[f].name if f in feeds else "Sin alimento"
+
+    def bag(f):
+        return float(feeds[f].bag_kg) if f in feeds and feeds[f].bag_kg else None
+
+    def conteo(pid, f):
+        uc = ult_conteo.get((pid, f))
+        return {"fecha": uc.count_date, "kg": float(uc.counted_kg), "id": uc.id} if uc else None
 
     por_unidad: dict = defaultdict(list)
     alertas = []
@@ -200,39 +249,40 @@ def estado(db: Session, today: date) -> dict:
         if p is None:
             continue
         inp = inputs.get(pid) or {}
+        dieta = inp.get("feed_type_id")
+        ev = evs.get(pid, [])
+        sim = simular(ev, today)
+        estimado = any(e["estimado"] for e in ev)
         alimentos = []
-        for (cp, ft), ev in evs.items():
-            if cp != pid:
-                continue
-            s = saldo(ev, today)
-            cg = cargas(ev)
-            uc = ult_conteo.get((pid, ft))
-            if abs(s) <= TOL_KG and not cg and ft != inp.get("feed_type_id"):
+        for f, s in sim["saldos"].items():
+            cg = sim["cargas"].get(f) or []
+            if abs(s) <= TOL_KG and f != dieta:
                 continue
             alimentos.append({
-                "feed_type_id": ft,
-                "feed_name": feeds[ft].name if ft in feeds else "Sin alimento",
-                "bag_kg": float(feeds[ft].bag_kg) if ft in feeds and feeds[ft].bag_kg else None,
-                "saldo_kg": s,
-                "estimado": any(e["estimado"] for e in ev),
+                "feed_type_id": f, "feed_name": fname(f), "bag_kg": bag(f),
+                "saldo_kg": s, "estimado": estimado, "dieta": f == dieta,
                 "carga_antigua": cg[0]["fecha"] if cg else None,
                 "dias_carga": (today - cg[0]["fecha"]).days if cg else None,
-                "ultimo_conteo": ({"fecha": uc.count_date, "kg": float(uc.counted_kg), "id": uc.id}
-                                  if uc else None),
+                "ultimo_conteo": conteo(pid, f),
             })
-        if inp.get("feed_type_id") and not any(a["feed_type_id"] == inp["feed_type_id"] for a in alimentos):
-            ft = inp["feed_type_id"]
-            alimentos.append({"feed_type_id": ft, "feed_name": inp.get("feed_name"),
-                              "bag_kg": float(feeds[ft].bag_kg) if feeds[ft].bag_kg else None,
-                              "saldo_kg": 0.0, "estimado": False, "carga_antigua": None,
-                              "dias_carga": None, "ultimo_conteo": None})
-        alimentos.sort(key=lambda a: (-abs(a["saldo_kg"]), a["feed_name"] or ""))
+        if dieta and not any(a["feed_type_id"] == dieta for a in alimentos):
+            alimentos.append({"feed_type_id": dieta, "feed_name": fname(dieta), "bag_kg": bag(dieta),
+                              "saldo_kg": 0.0, "estimado": False, "dieta": True, "carga_antigua": None,
+                              "dias_carga": None, "ultimo_conteo": conteo(pid, dieta)})
         if not alimentos:
             continue        # nunca ha recibido alimento (Jaula, Tranque): nada que contar
+        # Primero lo que se está comiendo (la carga más antigua); al final la dieta nueva.
+        alimentos.sort(key=lambda a: (a["carga_antigua"] is None, a["carga_antigua"] or today, a["feed_name"]))
         total = round(sum(a["saldo_kg"] for a in alimentos), 2)
         rit = ritmo.get(pid)
         cobertura = (total / rit) if rit and rit > 0 and total > 0 else None
         t = tope.get(pid, DEFAULT_TOPE_KG)
+        viejos = [a for a in alimentos if a["feed_type_id"] != dieta and a["saldo_kg"] > 1]
+        en_dieta = next((a["saldo_kg"] for a in alimentos if a["feed_type_id"] == dieta), 0.0)
+        transicion = None
+        if viejos and dieta:
+            transicion = "quedan {} antes de pasar a {}".format(
+                ", ".join("{:.0f} kg de {}".format(a["saldo_kg"], a["feed_name"]) for a in viejos), fname(dieta))
 
         avisos = []
         if total < -1:
@@ -241,17 +291,18 @@ def estado(db: Session, today: date) -> dict:
             avisos.append(("tope", "tiene inventario inusual: {:.0f} kg (tope del tarro {:.0f} kg)".format(total, t)))
         elif cobertura and cobertura > COBERTURA_MAX_DIAS:
             avisos.append(("cobertura", "tiene para {:.0f} días (más de {})".format(cobertura, COBERTURA_MAX_DIAS)))
-        if sum(1 for a in alimentos if a["saldo_kg"] > 1) > 1:
-            avisos.append(("mezcla", "tiene saldo de dos alimentos: vaciar o terminar uno antes de rellenar"))
+        if viejos and dieta and en_dieta <= TOL_KG and pid in inputs:
+            avisos.append(("pedido", "pasa a {}: no hay en el tarro, requiere pedido de bodega".format(fname(dieta))))
         if any(a["feed_type_id"] is None and abs(a["saldo_kg"]) > TOL_KG for a in alimentos):
             avisos.append(("sin_alimento", "tiene ración registrada sin tipo de alimento"))
-        vieja = max((a["dias_carga"] or 0) for a in alimentos) if alimentos else 0
+        vieja = max((a["dias_carga"] or 0) for a in alimentos)
         if vieja > CARGA_VIEJA_DIAS:
             avisos.append(("vieja", "tiene alimento abierto hace {} días".format(vieja)))
 
         uid = p.cultivation_unit_id or 0
         c = {"pond_id": pid, "name": p.name, "con_peces": pid in inputs,
-             "alimentos": alimentos, "total_kg": total, "ritmo_kg": rit,
+             "alimentos": alimentos, "total_kg": total, "ritmo_kg": rit, "dieta": dieta,
+             "dieta_name": fname(dieta) if dieta else None, "transicion": transicion,
              "cobertura_dias": cobertura, "tope_kg": t, "tope_propio": pid in tope,
              "avisos": avisos}
         por_unidad[uid].append(c)
@@ -271,22 +322,30 @@ def estado(db: Session, today: date) -> dict:
                                         FeedTerrenoCount.annulled_at.is_(None)).first()}
 
 
-def carril_historial(db: Session, pond_id: int) -> dict:
-    """Movimientos del tarro de un carril con el saldo corrido, por alimento."""
-    evs = events(db)
-    feeds = {f.id: f.name for f in db.query(FeedType).all()}
-    out = []
-    for (cp, ft), ev in evs.items():
-        if cp != pond_id:
-            continue
-        s, filas = 0.0, []
-        for e in ev:
-            s += e["kg"]
-            filas.append(dict(e, saldo=round(s, 2), motivo_label=MOTIVO_LABEL.get(e["motivo"])))
-        out.append({"feed_type_id": ft, "feed_name": feeds.get(ft, "Sin alimento"),
-                    "filas": filas, "saldo": round(s, 2)})
-    out.sort(key=lambda a: -abs(a["saldo"]))
+def tarros(db: Session, today: date) -> dict:
+    """{carril: {total, saldos: {alimento: kg}, viejos: [(alimento, kg)]}} al cierre de hoy,
+    para la ración y los pedidos."""
+    out = {}
+    for pid, ev in events(db).items():
+        s = simular(ev, today)["saldos"]
+        out[pid] = {"total": round(sum(s.values()), 2), "saldos": s}
     return out
+
+
+def carril_historial(db: Session, pond_id: int) -> dict:
+    """Movimientos del tarro de un carril, con lo que se consumió de cada
+    alimento en cada ración y el saldo del tarro."""
+    feeds = {f.id: f.name for f in db.query(FeedType).all()}
+    sim = simular(events(db).get(pond_id, []))
+    filas = []
+    for e in sim["filas"]:
+        uso = ", ".join("{:.1f} kg {}".format(k, feeds.get(f, "sin alimento"))
+                        for f, k in e["uso"].items() if k > TOL_KG)
+        filas.append(dict(e, feed_name=feeds.get(e["feed_type_id"], "Sin alimento"),
+                          motivo_label=MOTIVO_LABEL.get(e["motivo"]), uso_txt=uso))
+    saldos = [{"feed_name": feeds.get(f, "Sin alimento"), "kg": k}
+              for f, k in sim["saldos"].items() if abs(k) > TOL_KG]
+    return {"filas": filas, "saldos": saldos, "total": round(sum(sim["saldos"].values()), 2)}
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +367,8 @@ def _ledger(db: Session, feed_type_id: int, bags: int, bag_kg: Decimal, move_id:
 
 
 def paper_kg(db: Session, pond_id: int, feed_type_id: Optional[int], fecha: date, momento: str) -> float:
-    return saldo(events(db).get((pond_id, feed_type_id), []), fecha, momento)
+    """Saldo de un alimento en el tarro según el sistema."""
+    return simular(events(db).get(pond_id, []), fecha, momento)["saldos"].get(feed_type_id, 0.0)
 
 
 def registrar_conteo(db: Session, *, pond_id: int, feed_type_id: Optional[int], fecha: date,

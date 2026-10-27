@@ -65,7 +65,7 @@
           <td>{% if c.en_pedido %}<span class="muted" title="Ya está en un pedido emitido que no ha salido">en {{ c.en_pedido }}</span>
               {% elif c.feed_type_id and c.bag_kg %}<input class="bags" type="number" min="0" step="1" value="{{ c.sugerido }}">
               {% else %}<span class="muted">—</span>{% endif %}</td>
-          <td class="l wrap muted">{{ c.motivo or '' }}</td>
+          <td class="l wrap muted">{{ c.motivo or '' }}{% if c.transicion %}{{ ' · ' if c.motivo }}{{ c.transicion }}, se come primero{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>
