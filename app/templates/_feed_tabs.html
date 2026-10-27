@@ -1,0 +1,35 @@
+{# Pestañas de Alimentación. Uso:
+   {% with feed_tab='racion' %}{% include '_feed_tabs.html' %}{% endwith %}
+   feed_tab: racion | terreno | bodega | salidas #}
+<style>
+  .feed-tabs { display: flex; gap: 2px; padding: 0 14px; background: #fff; border-bottom: 1px solid #e5e7eb; overflow-x: auto; position: relative; z-index: 1; }
+  .feed-tabs a { display: inline-flex; align-items: center; gap: 6px; padding: 11px 16px 9px; font-size: .86rem; font-weight: 600; color: #4b5563; text-decoration: none; border-bottom: 3px solid transparent; white-space: nowrap; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .feed-tabs a:hover { color: #111827; background: #f9fafb; }
+  .feed-tabs a.on { color: #0f766e; border-bottom-color: #0f766e; }
+  .feed-tabs .ft-count { font-size: .7rem; font-weight: 700; background: #fff7ed; color: #b45309; border-radius: 9px; padding: 1px 7px; }
+  .feed-tabs .ft-count:empty { display: none; }
+  .feed-tabs .ft-dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; }
+</style>
+<nav class="feed-tabs" aria-label="Alimentación">
+  <a href="/views/ui/feed/racion" class="{{ 'on' if feed_tab == 'racion' }}" id="ft-racion">Ración diaria</a>
+  <a href="/views/ui/feed/terreno" class="{{ 'on' if feed_tab == 'terreno' }}" title="Tarros de cada carril">Inventario por estanque <span class="ft-count" id="ft-terreno-avisos"></span></a>
+  <a href="/views/ui/inventory" class="{{ 'on' if feed_tab == 'bodega' }}" title="Stock, ingresos por guía y cuadres">Bodega</a>
+  <a href="/views/ui/feed" class="{{ 'on' if feed_tab == 'salidas' }}" title="Programa semanal y confirmación de salidas">Salidas</a>
+</nav>
+<script>
+  (function () {
+    if (!window.fetch) return;
+    fetch('/views/ui/feed/racion/pendientes').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      var el = document.getElementById('ft-racion');
+      if (!d || !d.n || !el) return;
+      var dot = document.createElement('span'); dot.className = 'ft-dot'; el.appendChild(dot);
+      el.setAttribute('title', d.n === 1 ? 'Hay 1 día de ración por confirmar' : 'Hay ' + d.n + ' días de ración por confirmar');
+    }).catch(function () {});
+    fetch('/views/ui/feed/terreno/avisos').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      var el = document.getElementById('ft-terreno-avisos');
+      if (!d || !d.n || !el) return;
+      el.textContent = d.n;
+      el.parentNode.setAttribute('title', d.n === 1 ? '1 aviso en los tarros' : d.n + ' avisos en los tarros');
+    }).catch(function () {});
+  })();
+</script>

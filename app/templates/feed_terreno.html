@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alimentación — Inventario en terreno</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    header { background: #111827; color: #fff; padding: 16px 22px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    header h1 { font-size: 1.1rem; font-weight: 700; }
+    header a { color: #9ca3af; font-size: .82rem; text-decoration: none; }
+    header a:hover { color: #fff; }
+    .who { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: .82rem; color: #d1d5db; }
+    .who select { padding: 6px 8px; border-radius: 7px; border: 1px solid #374151; background: #1f2937; color: #fff; font-size: .82rem; }
+    .container { padding: 14px 14px 32px; max-width: 1280px; }
+    .flash { border-radius: 10px; padding: 10px 12px; font-size: .86rem; margin-bottom: 12px; }
+    .flash.warn { color: #9a3412; background: #fff7ed; border: 1px solid #fdba74; }
+    .flash.info { color: #1e3a8a; background: #eef6ff; border: 1px solid #bfdbfe; }
+    .flash ul { margin: 6px 0 0 18px; }
+    .flash li { margin: 2px 0; }
+    .flash a { color: inherit; font-weight: 700; }
+    .note { font-size: .78rem; color: #6b7280; margin-bottom: 12px; line-height: 1.45; }
+
+    .unit { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); margin-bottom: 12px; overflow: hidden; }
+    .unit-head { padding: 12px 16px 8px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .unit-name { font-size: 1rem; font-weight: 700; }
+    .unit-tot { font-size: .8rem; color: #4b5563; }
+    .unit-pend { font-size: .74rem; font-weight: 700; color: #b91c1c; background: #fff1f2; border-radius: 9px; padding: 2px 8px; }
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    th { text-align: right; font-size: .7rem; text-transform: uppercase; letter-spacing: .03em; color: #6b7280; font-weight: 700; padding: 6px 10px; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+    td { text-align: right; padding: 7px 10px; border-bottom: 1px solid #f3f4f6; white-space: nowrap; }
+    th.l, td.l { text-align: left; }
+    tr.first td { border-top: 1px solid #e5e7eb; }
+    td.carril { font-weight: 700; }
+    td.carril small { display: block; font-weight: 400; color: #9ca3af; font-size: .7rem; }
+    .neg { color: #b91c1c; font-weight: 700; }
+    .alto { color: #b45309; font-weight: 700; }
+    .muted { color: #9ca3af; }
+    .est { font-size: .68rem; color: #9ca3af; }
+    .tope { border: none; background: none; color: #374151; cursor: pointer; font-size: .82rem; border-bottom: 1px dashed #9ca3af; }
+    .tope.def { color: #9ca3af; }
+    .av { display: block; font-size: .72rem; color: #b45309; white-space: normal; text-align: left; }
+    .av.neg { color: #b91c1c; }
+    .acc { display: flex; gap: 6px; justify-content: flex-end; }
+    .btn { border: none; border-radius: 8px; font-size: .78rem; font-weight: 700; padding: 6px 11px; cursor: pointer; text-decoration: none; display: inline-block; }
+    .btn:disabled { background: #9ca3af !important; cursor: not-allowed; }
+    .btn-primary { background: #0f766e; color: #fff; }
+    .btn-primary:hover { background: #0b5f59; }
+    .btn-light { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+    .btn-light:hover { border-color: #0f766e; }
+
+    dialog { border: none; border-radius: 14px; padding: 0; width: min(560px, 94vw); box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+    dialog::backdrop { background: rgba(17,24,39,.45); }
+    .dlg-head { padding: 14px 18px; border-bottom: 1px solid #e5e7eb; font-weight: 700; }
+    .dlg-head small { display: block; font-weight: 400; color: #6b7280; font-size: .78rem; margin-top: 2px; }
+    .dlg-body { padding: 14px 18px; display: grid; gap: 10px; font-size: .84rem; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .row label { font-weight: 600; color: #4b5563; min-width: 110px; }
+    .row input, .row select, .row textarea { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 7px; font-size: .84rem; }
+    .row textarea { flex: 1; min-height: 38px; }
+    .kpis { display: flex; gap: 8px; flex-wrap: wrap; }
+    .kpi { background: #f3f4f6; border-radius: 8px; padding: 6px 10px; font-size: .76rem; color: #4b5563; }
+    .kpi b { display: block; font-size: .95rem; color: #111827; }
+    .kpi.dif-neg b { color: #b91c1c; } .kpi.dif-pos b { color: #b45309; }
+    .dlg-foot { padding: 12px 18px; border-top: 1px solid #e5e7eb; display: flex; gap: 8px; justify-content: flex-end; background: #fafafa; }
+    .toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 18px; border-radius: 10px; font-size: .87rem; font-weight: 700; box-shadow: 0 4px 16px rgba(0,0,0,.18); z-index: 9999; display: none; color: #fff; }
+    .toast.ok { background: #0f766e; } .toast.err { background: #b91c1c; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+{% macro n(v, d=0) %}{% if v is none %}—{% else %}{{ ("{:,.%df}" % d).format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}{% endif %}{% endmacro %}
+
+<header>
+  <h1>Alimentación — Inventario en terreno</h1>
+  <a href="/views/ui/feed/terreno/inicial">Conteo inicial</a>
+  <div class="who">
+    <label for="who">Registra</label>
+    <select id="who">
+      <option value="">— elegir —</option>
+      {% for u in users %}<option value="{{ u.id }}">{{ u.label }}</option>{% endfor %}
+    </select>
+  </div>
+</header>
+{% with feed_tab='terreno' %}{% include '_feed_tabs.html' %}{% endwith %}
+
+<div class="container">
+  {% if not since %}
+    <div class="flash info">Todavía no hay salidas de bodega desde que existe la ración diaria: el inventario en terreno parte con la próxima salida.</div>
+  {% else %}
+  <p class="note">
+    Saldo del tarro de cada carril = salidas de bodega − ración (confirmada; la programada sin confirmar cuenta como estimada) ± conteos, desde el {{ since.strftime("%d-%m") }}.
+    Un tarro lleva un alimento a la vez; la carga más antigua es la que se gasta primero.
+    {% if not conteo_inicial %}<b>Falta el <a href="/views/ui/feed/terreno/inicial">conteo inicial</a></b>: hasta hacerlo, el saldo arrastra lo que había antes en los tarros y los errores de ingreso.{% else %}Conteo inicial: {{ conteo_inicial[0].strftime("%d-%m-%Y") }}.{% endif %}
+  </p>
+
+  {% if alertas %}
+  <div class="flash warn"><b>{{ alertas|length }} aviso{{ 's' if alertas|length != 1 }} en los tarros</b>
+    <ul>{% for a in alertas %}<li><a href="#c{{ a.pond_id }}">{{ a.texto }}</a></li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  {% for u in unidades %}
+  <div class="unit">
+    <div class="unit-head">
+      <span class="unit-name">{{ u.name }}</span>
+      <span class="unit-tot">{{ n(u.total_kg) }} kg en tarros</span>
+      {% if u.pendientes %}<span class="unit-pend" title="Mientras no se confirmen, la ración programada cuenta como estimada">ración sin confirmar: {% for d in u.pendientes %}{{ d.strftime("%d-%m") }}{{ ", " if not loop.last }}{% endfor %}</span>{% endif %}
+    </div>
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr>
+        <th class="l">Carril</th><th class="l">Alimento</th><th>Saldo kg</th><th>Ritmo kg/d</th><th>Alcanza</th>
+        <th>Carga más antigua</th><th>Último conteo</th><th>Tope kg</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for c in u.carriles %}
+        {% for a in c.alimentos or [none] %}
+        <tr id="{{ 'c%d' % c.pond_id if loop.first }}" class="{{ 'first' if loop.first }}">
+          {% if loop.first %}
+          <td class="l carril" rowspan="{{ [c.alimentos|length, 1]|max }}">{{ c.name }}
+            {% if not c.con_peces %}<small>sin peces</small>{% endif %}
+            {% for k, t in c.avisos %}<span class="av {{ 'neg' if k == 'neg' }}">⚠ {{ t }}</span>{% endfor %}
+          </td>
+          {% endif %}
+          {% if a %}
+          <td class="l">{{ a.feed_name or '—' }}</td>
+          <td class="{{ 'neg' if a.saldo_kg < -1 else ('alto' if c.total_kg > c.tope_kg else '') }}">{{ n(a.saldo_kg, 1) }}{% if a.estimado %} <span class="est" title="incluye ración programada sin confirmar">est.</span>{% endif %}</td>
+          {% else %}<td class="l muted">sin alimento</td><td>—</td>{% endif %}
+          {% if loop.first %}
+          <td rowspan="{{ [c.alimentos|length, 1]|max }}">{{ n(c.ritmo_kg, 1) }}</td>
+          <td rowspan="{{ [c.alimentos|length, 1]|max }}" class="{{ 'alto' if c.cobertura_dias and c.cobertura_dias > cobertura_max }}">{% if c.cobertura_dias %}{{ n(c.cobertura_dias) }} días{% else %}—{% endif %}</td>
+          {% endif %}
+          <td>{% if a and a.carga_antigua %}{{ a.carga_antigua.strftime("%d-%m") }} <span class="muted">({{ a.dias_carga }} d)</span>{% else %}—{% endif %}</td>
+          <td>{% if a and a.ultimo_conteo %}{{ a.ultimo_conteo.fecha.strftime("%d-%m") }} · {{ n(a.ultimo_conteo.kg, 1) }} kg{% else %}<span class="muted">nunca</span>{% endif %}</td>
+          {% if loop.first %}
+          <td rowspan="{{ [c.alimentos|length, 1]|max }}"><button class="tope{{ ' def' if not c.tope_propio }}" onclick='editarTope({{ c.pond_id }}, {{ c.name|tojson }}, {{ c.tope_kg }})' title="Capacidad del tarro (tope para el aviso)">{{ n(c.tope_kg) }}</button></td>
+          {% endif %}
+          <td>
+            <div class="acc">
+            {% if a %}
+              <button class="btn btn-primary" onclick='abrirConteo({{ {"pond_id": c.pond_id, "name": c.name, "feed_type_id": a.feed_type_id, "feed_name": a.feed_name, "bag_kg": a.bag_kg}|tojson }}, false)'>Contar</button>
+              <button class="btn btn-light" onclick='abrirConteo({{ {"pond_id": c.pond_id, "name": c.name, "feed_type_id": a.feed_type_id, "feed_name": a.feed_name, "bag_kg": a.bag_kg}|tojson }}, true)' title="Registrar que el tarro quedó vacío y adónde se fue lo que tenía">Vaciar</button>
+            {% endif %}
+            {% if loop.first %}<a class="btn btn-light" href="/views/ui/feed/terreno/carril/{{ c.pond_id }}">Movimientos</a>{% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>
+
+<dialog id="dlg">
+  <div class="dlg-head"><span id="dlg-title">Contar tarro</span><small id="dlg-sub"></small></div>
+  <div class="dlg-body">
+    <div class="row">
+      <label for="c-fecha">Fecha</label><input type="date" id="c-fecha" max="{{ today.isoformat() }}" min="{{ since.isoformat() if since }}">
+      <select id="c-momento">
+        <option value="despues">al cierre (ya se alimentó)</option>
+        <option value="antes">antes de alimentar</option>
+      </select>
+    </div>
+    <div class="row" id="row-contado">
+      <label for="c-kg">Hay en el tarro</label><input type="number" id="c-kg" min="0" step="0.1" style="width:100px"> kg
+    </div>
+    <div class="kpis">
+      <div class="kpi">Según el sistema<b id="k-papel">—</b></div>
+      <div class="kpi">Contado<b id="k-contado">—</b></div>
+      <div class="kpi" id="k-dif-box">Diferencia<b id="k-dif">—</b></div>
+    </div>
+    <div id="motivos"></div>
+    <div class="row"><label for="c-note">Nota</label><textarea id="c-note" placeholder="opcional"></textarea></div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn btn-light" onclick="document.getElementById('dlg').close()">Cancelar</button>
+    <button class="btn btn-primary" id="c-save" onclick="guardarConteo()">Guardar</button>
+  </div>
+</dialog>
+<div id="toast" class="toast"></div>
+
+{% include '_terreno_motivos.html' %}
+<script>
+  const TODAY = "{{ today.isoformat() }}";
+  const MOTIVOS = {{ motivos|tojson }};
+  const CARRILES = {{ carriles_destino|tojson }};
+  const who = document.getElementById('who');
+  try { const v = localStorage.getItem('racion_who'); if (v && [...who.options].some(o => o.value === v)) who.value = v; } catch (e) {}
+  who.addEventListener('change', () => { try { localStorage.setItem('racion_who', who.value); } catch (e) {} });
+
+  function toast(msg, ok) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'toast ' + (ok ? 'ok' : 'err'); t.style.display = 'block';
+    setTimeout(() => { t.style.display = 'none'; }, 4000);
+  }
+  function needWho() {
+    if (!who.value) { toast('Elige quién registra (arriba a la derecha)', false); who.focus(); return null; }
+    return who.value;
+  }
+  async function post(url, body) {
+    const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    let j = {}; try { j = await r.json(); } catch (e) {}
+    if (!r.ok || !j.ok) throw new Error(j.error || ('Error ' + r.status));
+    return j;
+  }
+  function fmt(v, sign) {
+    if (v === null || v === undefined || isNaN(v)) return '—';
+    return (sign && v > 0 ? '+' : '') + v.toLocaleString('es-CL', {maximumFractionDigits: 1}) + ' kg';
+  }
+
+  let cur = null, papel = null, editor = null;
+  const $ = id => document.getElementById(id);
+
+  function abrirConteo(c, vaciar) {
+    cur = c; cur.vaciar = vaciar;
+    $('dlg-title').textContent = (vaciar ? 'Vaciar tarro · ' : 'Contar tarro · ') + c.name;
+    $('dlg-sub').textContent = (c.feed_name || 'Sin alimento') + (vaciar ? ' — el tarro queda en 0: indica adónde se fue lo que tenía' : '');
+    $('c-fecha').value = TODAY; $('c-momento').value = 'despues';
+    $('c-kg').value = vaciar ? '0' : ''; $('row-contado').style.display = vaciar ? 'none' : '';
+    $('c-note').value = '';
+    editor = MotivoEditor($('motivos'), {motivos: MOTIVOS.filter(m => !vaciar || m.sign < 0), carriles: CARRILES,
+                                         bagKg: c.bag_kg, pondId: c.pond_id, onChange: () => {}});
+    $('dlg').showModal();
+    cargarPapel();
+    if (!vaciar) setTimeout(() => $('c-kg').focus(), 50);
+  }
+
+  async function cargarPapel() {
+    papel = null; $('k-papel').textContent = '…';
+    try {
+      const j = await post('/views/ui/feed/terreno/papel', {pond_id: cur.pond_id, feed_type_id: cur.feed_type_id,
+                                                            fecha: $('c-fecha').value, momento: $('c-momento').value});
+      papel = j.paper_kg;
+    } catch (e) { toast(e.message, false); }
+    recalc();
+  }
+
+  function recalc() {
+    $('k-papel').textContent = fmt(papel);
+    const v = $('c-kg').value.trim();
+    const kg = v === '' ? null : parseFloat(v.replace(',', '.'));
+    $('k-contado').textContent = fmt(kg);
+    const dif = (kg === null || papel === null) ? null : Math.round((kg - papel) * 100) / 100;
+    $('k-dif').textContent = fmt(dif, true);
+    $('k-dif-box').className = 'kpi' + (dif < -0.05 ? ' dif-neg' : dif > 0.05 ? ' dif-pos' : '');
+    if (dif !== null) editor.setDif(dif); else editor.clear();
+  }
+  $('c-kg').addEventListener('input', () => { editor.clear(); recalc(); });
+  $('c-fecha').addEventListener('change', () => { editor.clear(); cargarPapel(); });
+  $('c-momento').addEventListener('change', () => { editor.clear(); cargarPapel(); });
+
+  async function guardarConteo() {
+    const uid = needWho(); if (!uid) return;
+    if ($('c-kg').value.trim() === '') { toast('Indica cuánto hay en el tarro', false); $('c-kg').focus(); return; }
+    if (Math.abs(editor.restante()) >= 0.05) { toast('Falta explicar la diferencia con uno o más motivos', false); return; }
+    const btn = $('c-save'); btn.disabled = true;
+    try {
+      await post('/views/ui/feed/terreno/conteo', {
+        user_id: uid, pond_id: cur.pond_id, feed_type_id: cur.feed_type_id, fecha: $('c-fecha').value,
+        momento: $('c-momento').value, counted_kg: parseFloat($('c-kg').value.replace(',', '.')),
+        lineas: editor.payload(), note: $('c-note').value});
+      toast(cur.name + ': ' + (cur.vaciar ? 'tarro vaciado' : 'conteo registrado'), true);
+      setTimeout(() => location.reload(), 600);
+    } catch (e) { toast(e.message, false); btn.disabled = false; }
+  }
+
+  async function editarTope(pondId, name, actual) {
+    const uid = needWho(); if (!uid) return;
+    const v = prompt('Tope del tarro de ' + name + ' (kg). Sobre este saldo se avisa "inventario inusual".', actual);
+    if (v === null) return;
+    const kg = parseFloat(v.replace(',', '.'));
+    if (!(kg > 0)) { toast('Tope inválido', false); return; }
+    try { await post('/views/ui/feed/terreno/tope', {user_id: uid, pond_id: pondId, capacity_kg: kg}); location.reload(); }
+    catch (e) { toast(e.message, false); }
+  }
+</script>
+</body>
+</html>

@@ -309,6 +309,7 @@
 <header>
   <h1>Inventario de Alimento</h1>
 </header>
+{% with feed_tab='bodega' %}{% include '_feed_tabs.html' %}{% endwith %}
 
 <div class="page-wrap">
   {% if success %}

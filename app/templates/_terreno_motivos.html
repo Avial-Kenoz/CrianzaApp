@@ -1,0 +1,105 @@
+{# Editor de motivos de un conteo: reparte la diferencia contado − papel.
+   Uso: MotivoEditor(contenedor, {motivos, carriles, bagKg, pondId, onChange}).
+   Los motivos que tocan la bodega principal van en sacos enteros. #}
+<style>
+  .mot-line { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .mot-line select, .mot-line input { padding: 5px 7px; border: 1px solid #d1d5db; border-radius: 7px; font-size: .8rem; background: #fff; }
+  .mot-line .mot-sel { max-width: 290px; }
+  .mot-line .mot-cant { width: 78px; text-align: right; }
+  .mot-line .mot-unit { font-size: .74rem; color: #6b7280; }
+  .mot-line .mot-del { border: none; background: none; color: #9ca3af; cursor: pointer; font-size: 1rem; }
+  .mot-line .mot-del:hover { color: #b91c1c; }
+  .mot-add { margin-top: 6px; font-size: .76rem; border: 1px dashed #9ca3af; background: #fff; color: #374151; border-radius: 7px; padding: 3px 9px; cursor: pointer; }
+  .mot-rest { font-size: .76rem; font-weight: 700; margin-top: 6px; }
+  .mot-rest.ok { color: #0f766e; } .mot-rest.bad { color: #b45309; }
+</style>
+<script>
+function MotivoEditor(box, opt) {
+  const M = {}; opt.motivos.forEach(m => { M[m.key] = m; });
+  let dif = 0;
+  const lines = document.createElement('div');
+  const add = document.createElement('button'); add.type = 'button'; add.className = 'mot-add'; add.textContent = '+ motivo';
+  const rest = document.createElement('div'); rest.className = 'mot-rest';
+  box.innerHTML = ''; box.append(lines, add, rest);
+
+  function fmt(v) { return (v > 0 ? '+' : '') + v.toLocaleString('es-CL', {maximumFractionDigits: 1}); }
+  function ayer() { const d = new Date(Date.now() - 864e5); return d.toISOString().slice(0, 10); }
+
+  function signedKg(l) {
+    const m = M[l.querySelector('.mot-sel').value]; if (!m) return 0;
+    const v = parseFloat((l.querySelector('.mot-cant').value || '').replace(',', '.')) || 0;
+    return m.sign * (m.bodega ? Math.round(v) * (opt.bagKg || 0) : v);
+  }
+  function suma() { return [...lines.children].reduce((s, l) => s + signedKg(l), 0); }
+  function restante() { return Math.round((dif - suma()) * 100) / 100; }
+
+  function refresh() {
+    const r = restante();
+    if (Math.abs(dif) < 0.05 && !lines.children.length) { rest.textContent = 'Cuadra con el papel: no hay diferencia que explicar.'; rest.className = 'mot-rest ok'; }
+    else if (Math.abs(r) < 0.05) { rest.textContent = 'Diferencia explicada.'; rest.className = 'mot-rest ok'; }
+    else { rest.textContent = 'Falta explicar ' + fmt(r) + ' kg'; rest.className = 'mot-rest bad'; }
+    add.style.display = Math.abs(dif) < 0.05 && !lines.children.length ? 'none' : '';
+    if (opt.onChange) opt.onChange();
+  }
+
+  function addLine() {
+    const l = document.createElement('div'); l.className = 'mot-line';
+    const sel = document.createElement('select'); sel.className = 'mot-sel';
+    const sgn = Math.sign(restante()) || Math.sign(dif);
+    sel.innerHTML = '<option value="">— motivo —</option>' + opt.motivos
+      .filter(m => !sgn || m.sign === sgn)
+      .map(m => '<option value="' + m.key + '">' + (m.sign < 0 ? '− ' : '+ ') + m.label + '</option>').join('');
+    const cant = document.createElement('input'); cant.className = 'mot-cant'; cant.type = 'number'; cant.min = '0'; cant.step = '0.1';
+    const unit = document.createElement('span'); unit.className = 'mot-unit'; unit.textContent = 'kg';
+    const extra = document.createElement('span');
+    const del = document.createElement('button'); del.type = 'button'; del.className = 'mot-del'; del.textContent = '✕'; del.title = 'Quitar';
+    l.append(sel, cant, unit, extra, del);
+    lines.append(l);
+
+    sel.addEventListener('change', () => {
+      const m = M[sel.value]; extra.innerHTML = '';
+      cant.value = '';
+      const sinEsta = Math.abs(dif - (suma() - signedKg(l)));
+      if (m && m.bodega) {
+        unit.textContent = opt.bagKg ? 'sacos de ' + opt.bagKg + ' kg' : 'sacos'; cant.step = '1';
+        if (opt.bagKg) cant.value = Math.floor(sinEsta / opt.bagKg) || '';
+      } else {
+        unit.textContent = 'kg'; cant.step = '0.1';
+        if (m) cant.value = Math.round(sinEsta * 10) / 10 || '';
+      }
+      if (m && m.fecha) extra.innerHTML = 'día <input type="date" class="mot-fecha" value="' + ayer() + '">';
+      if (m && m.destino) extra.innerHTML = 'a <select class="mot-dest"><option value="">— carril —</option>' +
+        opt.carriles.filter(c => c.id !== opt.pondId).map(c => '<option value="' + c.id + '">' + c.name + '</option>').join('') + '</select>';
+      refresh();
+    });
+    cant.addEventListener('input', refresh);
+    del.addEventListener('click', () => { l.remove(); refresh(); });
+    return l;
+  }
+  add.addEventListener('click', () => { addLine(); refresh(); });
+
+  return {
+    setDif(v) { dif = Math.round(v * 100) / 100; refresh(); },
+    clear() { lines.innerHTML = ''; refresh(); },
+    restante, suma,
+    payload() {
+      return [...lines.children].map(l => {
+        const m = M[l.querySelector('.mot-sel').value];
+        if (!m) return null;
+        const v = l.querySelector('.mot-cant').value;
+        const o = {motivo: m.key};
+        if (m.bodega) o.sacos = parseInt(v || '0', 10); else o.kg = parseFloat((v || '0').replace(',', '.'));
+        const f = l.querySelector('.mot-fecha'); if (f) o.consumo_date = f.value;
+        const d = l.querySelector('.mot-dest'); if (d) o.destino_pond_id = d.value;
+        return o;
+      }).filter(Boolean);
+    },
+    bodegaSacos() {   // efecto en la bodega principal, por saco (+ vuelve, − sale)
+      return [...lines.children].reduce((s, l) => {
+        const m = M[l.querySelector('.mot-sel').value];
+        return m && m.bodega ? s + m.bodega * (parseInt(l.querySelector('.mot-cant').value || '0', 10)) : s;
+      }, 0);
+    },
+  };
+}
+</script>

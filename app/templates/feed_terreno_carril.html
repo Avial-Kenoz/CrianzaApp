@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tarro {{ pond.name }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+    header { background: #111827; color: #fff; padding: 16px 22px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    header h1 { font-size: 1.1rem; font-weight: 700; }
+    header a { color: #9ca3af; font-size: .82rem; text-decoration: none; }
+    header a:hover { color: #fff; }
+    .who { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: .82rem; color: #d1d5db; }
+    .who select { padding: 6px 8px; border-radius: 7px; border: 1px solid #374151; background: #1f2937; color: #fff; font-size: .82rem; }
+    .container { padding: 14px 14px 32px; max-width: 1100px; }
+    .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); margin-bottom: 12px; overflow: hidden; }
+    .card h2 { font-size: .95rem; padding: 12px 16px 8px; }
+    .card h2 small { font-weight: 400; color: #6b7280; font-size: .8rem; }
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    th { text-align: right; font-size: .7rem; text-transform: uppercase; color: #6b7280; font-weight: 700; padding: 6px 12px; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+    td { text-align: right; padding: 6px 12px; border-bottom: 1px solid #f3f4f6; white-space: nowrap; }
+    th.l, td.l { text-align: left; }
+    td.l.wrap { white-space: normal; }
+    .pos { color: #0f766e; } .neg { color: #b91c1c; }
+    .muted { color: #9ca3af; }
+    tr.salida td { background: #f0fdfa; }
+    tr.ajuste td { background: #fffbeb; }
+    tr.anulado td { color: #9ca3af; text-decoration: line-through; }
+    .empty { padding: 16px; color: #6b7280; font-size: .85rem; }
+    .btn { border: 1px solid #d1d5db; background: #fff; border-radius: 7px; font-size: .74rem; font-weight: 700; padding: 4px 9px; cursor: pointer; color: #b91c1c; }
+    .toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 18px; border-radius: 10px; font-size: .87rem; font-weight: 700; z-index: 9999; display: none; color: #fff; }
+    .toast.ok { background: #0f766e; } .toast.err { background: #b91c1c; }
+  </style>
+</head>
+<body>
+{% include '_sidebar.html' %}
+{% macro n(v, d=1, sign=false) %}{% if v is none %}—{% else %}{{ ("{:+,.%df}" % d if sign else "{:,.%df}" % d).format(v).replace(",", "X").replace(".", ",").replace("X", ".") }}{% endif %}{% endmacro %}
+<header>
+  <h1>Tarro · {{ pond.name }}</h1>
+  <a href="/views/ui/feed/terreno#c{{ pond.id }}">← Inventario en terreno</a>
+  <div class="who">
+    <label for="who">Registra</label>
+    <select id="who"><option value="">— elegir —</option>
+      {% for id, label in users.items() %}<option value="{{ id }}">{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+</header>
+{% with feed_tab='terreno' %}{% include '_feed_tabs.html' %}{% endwith %}
+<div class="container">
+  {% for a in alimentos %}
+  <div class="card">
+    <h2>{{ a.feed_name }} <small>· saldo {{ n(a.saldo) }} kg · desde el {{ since.strftime("%d-%m") if since }}</small></h2>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th class="l">Fecha</th><th class="l">Movimiento</th><th>kg</th><th>Saldo</th></tr></thead>
+      <tbody>
+      {% for f in a.filas %}
+        <tr class="{{ f.tipo }}">
+          <td class="l">{{ f.fecha.strftime("%d-%m") }}</td>
+          <td class="l wrap">{% if f.tipo == 'salida' %}Salida de bodega{% elif f.tipo == 'racion' %}Ración{% if f.estimado %} <span class="muted">(programada, sin confirmar)</span>{% endif %}{% else %}Ajuste: {{ f.motivo_label or f.motivo }}{% endif %}</td>
+          <td class="{{ 'pos' if f.kg > 0 else 'neg' }}">{{ n(f.kg, 1, true) }}</td>
+          <td class="{{ 'neg' if f.saldo < -1 }}">{{ n(f.saldo) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  {% else %}
+  <div class="card"><div class="empty">Este carril no tiene movimientos desde que se cuenta el terreno.</div></div>
+  {% endfor %}
+
+  <div class="card">
+    <h2>Conteos</h2>
+    {% if conteos %}
+    <div class="tbl-wrap"><table>
+      <thead><tr><th class="l">Fecha</th><th class="l">Alimento</th><th>Sistema</th><th>Contado</th><th>Diferencia</th><th class="l">Motivos</th><th class="l">Registró</th><th></th></tr></thead>
+      <tbody>
+      {% for c in conteos %}
+        <tr class="{{ 'anulado' if c.annulled_at }}">
+          <td class="l">{{ c.count_date.strftime("%d-%m") }} <span class="muted">{{ 'antes' if c.momento == 'antes' else 'cierre' }}</span>{% if c.is_initial %} <span class="muted">· inicial</span>{% endif %}</td>
+          <td class="l">{{ feeds.get(c.feed_type_id, 'Sin alimento') }}</td>
+          <td>{{ n(c.paper_kg|float) }}</td>
+          <td>{{ n(c.counted_kg|float) }}</td>
+          <td>{{ n((c.counted_kg - c.paper_kg)|float, 1, true) }}</td>
+          <td class="l wrap">{% for m in moves.get(c.id, []) %}{{ motivo_label.get(m.motivo, m.motivo) }} {{ n(m.kg|float, 1, true) }}{% if m.bodega_bags %} ({{ m.bodega_bags|abs }} sacos {{ 'vuelven a' if m.bodega_bags > 0 else 'salen de' }} bodega){% endif %}{% if m.consumo_date %} · {{ m.consumo_date.strftime("%d-%m") }}{% endif %}{{ "; " if not loop.last }}{% endfor %}{% if c.note %} <span class="muted">— {{ c.note }}</span>{% endif %}{% if c.annulled_at %} <b>anulado</b>{% endif %}</td>
+          <td class="l">{{ users.get(c.created_by, '—') }}</td>
+          <td>{% if not c.annulled_at %}<button class="btn" onclick="anular({{ c.id }})">Anular</button>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<div class="empty">Sin conteos.</div>{% endif %}
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script>
+  const who = document.getElementById('who');
+  try { const v = localStorage.getItem('racion_who'); if (v && [...who.options].some(o => o.value === v)) who.value = v; } catch (e) {}
+  who.addEventListener('change', () => { try { localStorage.setItem('racion_who', who.value); } catch (e) {} });
+  function toast(msg, ok) { const t = document.getElementById('toast'); t.textContent = msg; t.className = 'toast ' + (ok ? 'ok' : 'err'); t.style.display = 'block'; setTimeout(() => { t.style.display = 'none'; }, 4000); }
+  async function anular(id) {
+    if (!who.value) { toast('Elige quién registra (arriba a la derecha)', false); return; }
+    if (!confirm('¿Anular este conteo? Se borran sus ajustes y lo que movió en la bodega principal.')) return;
+    const r = await fetch('/views/ui/feed/terreno/conteo/' + id + '/anular', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({user_id: who.value})});
+    let j = {}; try { j = await r.json(); } catch (e) {}
+    if (r.ok && j.ok) { toast('Conteo anulado', true); setTimeout(() => location.reload(), 600); } else toast(j.error || 'Error', false);
+  }
+</script>
+</body>
+</html>
